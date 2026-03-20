@@ -26,6 +26,7 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
+import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -236,6 +237,12 @@ function buildContainerArgs(
     args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
   } else {
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+  }
+
+  // EasyBits MCP: pass API key to container
+  const ebKey = readEnvFile(['EASYBITS_API_KEY']).EASYBITS_API_KEY;
+  if (ebKey) {
+    args.push('-e', `EASYBITS_API_KEY=${ebKey}`);
   }
 
   // Runtime-specific args for host gateway resolution
