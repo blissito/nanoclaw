@@ -72,7 +72,7 @@ let messageLoopRunning = false;
 
 function groupTriggerPattern(trigger: string): RegExp {
   return new RegExp(
-    `^${trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`,
+    `${trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`,
     'i',
   );
 }
