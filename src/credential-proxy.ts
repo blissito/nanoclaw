@@ -72,11 +72,17 @@ export function startCredentialProxy(
           delete headers['x-api-key'];
           headers['x-api-key'] = secrets.ANTHROPIC_API_KEY;
         } else {
-          // OAuth mode: strip placeholder api-key and inject Bearer token
-          delete headers['x-api-key'];
-          delete headers['authorization'];
-          if (oauthToken) {
-            headers['authorization'] = `Bearer ${oauthToken}`;
+          // OAuth mode: container CLI exchanges placeholder for a temp API key
+          // via /api/oauth/claude_cli/create_api_key. We inject the real Bearer
+          // token only on that exchange request; subsequent requests carry the
+          // temp key the CLI received, which is valid as-is.
+          const isExchange = req.url?.includes('/api/oauth/claude_cli/create_api_key');
+          if (isExchange || headers['authorization']) {
+            delete headers['x-api-key'];
+            delete headers['authorization'];
+            if (oauthToken) {
+              headers['authorization'] = `Bearer ${oauthToken}`;
+            }
           }
         }
 
