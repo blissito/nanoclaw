@@ -402,6 +402,7 @@ function buildAllowedTools(containerInput: ContainerInput, mcpServerPath: string
     'Bash',
     'Read', 'Write', 'Edit', 'Glob', 'Grep',
     'WebSearch', 'WebFetch',
+    'Agent',
     'Task', 'TaskOutput', 'TaskStop',
     'TeamCreate', 'TeamDelete', 'SendMessage',
     'TodoWrite', 'ToolSearch', 'Skill',
