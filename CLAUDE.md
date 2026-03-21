@@ -71,6 +71,10 @@ The container buildkit caches the build context aggressively. `--no-cache` alone
 - Production running on DigitalOcean droplet (systemd, `/home/nanoclaw/app`)
 - Container agents detach on service restart (not killed) — must `docker kill` stale containers manually
 
+## Parallel Sub-agents (Agent tool)
+
+Tested and working: adding `'Agent'` to `buildAllowedTools()` in `container/agent-runner/src/index.ts` enables Claude Code's Agent tool inside containers. Sub-agents spawn as `claude` CLI processes (already installed globally in the image). Each sub-agent uses ~100-150MB RAM, so the 2GB droplet is tight for 2-3 parallel agents. Currently **disabled** — re-enable when there's a compelling use case (e.g., parallel codebase exploration). For web research tasks, sequential `WebSearch` is fast enough. When re-enabling, also add a progress message instruction to `groups/global/CLAUDE.md` so users get feedback while sub-agents work.
+
 ## Next Steps
 
 - **1-to-1 WhatsApp support** — route private messages as individual "groups" with their own memory, enabling B2C use cases (clinics, real estate, restaurants)
