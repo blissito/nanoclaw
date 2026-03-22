@@ -234,7 +234,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             ? result.result
             : JSON.stringify(result.result);
         // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-        const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+        const cleaned = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+        // Strip self-prefix the agent may add (e.g. "Ghosty: hello" → "hello")
+        const triggerName = group.trigger.replace(/^@/, '');
+        const prefixRe = new RegExp(`^(?:${ASSISTANT_NAME}|${triggerName}):\\s*`, 'i');
+        const text = cleaned.replace(prefixRe, '').trim();
         logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
         if (text) {
           await channel.sendMessage(chatJid, text);
@@ -646,7 +650,10 @@ async function main(): Promise<void> {
         return channel.sendImage(jid, filePath, caption);
       }
       // Fallback: send caption as text if channel doesn't support images
-      return channel.sendMessage(jid, caption || '[Image not supported on this channel]');
+      return channel.sendMessage(
+        jid,
+        caption || '[Image not supported on this channel]',
+      );
     },
     registeredGroups: () => registeredGroups,
     registerGroup,
