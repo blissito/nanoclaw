@@ -65,6 +65,18 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_task_run_logs ON task_run_logs(task_id, run_at);
 
+    CREATE TABLE IF NOT EXISTS image_generations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_folder TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'text2img',
+      model TEXT NOT NULL DEFAULT 'gpt-image-1',
+      cost_usd REAL NOT NULL DEFAULT 0.08,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_image_gen_group ON image_generations(group_folder);
+    CREATE INDEX IF NOT EXISTS idx_image_gen_date ON image_generations(created_at);
+
     CREATE TABLE IF NOT EXISTS router_state (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -632,6 +644,74 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     };
   }
   return result;
+}
+
+// --- Image generation tracking ---
+
+export function trackImageGeneration(params: {
+  group_folder: string;
+  prompt: string;
+  type: 'text2img' | 'edit';
+  model?: string;
+  cost_usd?: number;
+}): void {
+  db.prepare(
+    `INSERT INTO image_generations (group_folder, prompt, type, model, cost_usd, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    params.group_folder,
+    params.prompt,
+    params.type,
+    params.model || 'gpt-image-1',
+    params.cost_usd ?? 0.08,
+    new Date().toISOString(),
+  );
+}
+
+export interface ImageGenStats {
+  total_images: number;
+  total_cost_usd: number;
+  by_type: { type: string; count: number; cost: number }[];
+  by_group: { group_folder: string; count: number; cost: number }[];
+}
+
+export function getImageGenStats(sinceDate?: string): ImageGenStats {
+  const whereClause = sinceDate ? 'WHERE created_at >= ?' : '';
+  const params = sinceDate ? [sinceDate] : [];
+
+  const totals = db
+    .prepare(
+      `SELECT COUNT(*) as total_images, COALESCE(SUM(cost_usd), 0) as total_cost_usd
+       FROM image_generations ${whereClause}`,
+    )
+    .get(...params) as { total_images: number; total_cost_usd: number };
+
+  const byType = db
+    .prepare(
+      `SELECT type, COUNT(*) as count, COALESCE(SUM(cost_usd), 0) as cost
+       FROM image_generations ${whereClause}
+       GROUP BY type`,
+    )
+    .all(...params) as { type: string; count: number; cost: number }[];
+
+  const byGroup = db
+    .prepare(
+      `SELECT group_folder, COUNT(*) as count, COALESCE(SUM(cost_usd), 0) as cost
+       FROM image_generations ${whereClause}
+       GROUP BY group_folder`,
+    )
+    .all(...params) as {
+    group_folder: string;
+    count: number;
+    cost: number;
+  }[];
+
+  return {
+    total_images: totals.total_images,
+    total_cost_usd: totals.total_cost_usd,
+    by_type: byType,
+    by_group: byGroup,
+  };
 }
 
 // --- JSON migration ---

@@ -61,4 +61,23 @@ with open(sys.argv[1], 'wb') as f:
     f.write(base64.b64decode(b64))
 " "$OUTPUT_FILE" <<< "$RESPONSE"
 
+# Track generation via IPC (non-fatal)
+{
+  GEN_TYPE="text2img"
+  [[ -n "$SOURCE_IMAGE" ]] && GEN_TYPE="edit"
+  IPC_DIR="/workspace/ipc/messages"
+  mkdir -p "$IPC_DIR"
+  TRACK_FILE="${IPC_DIR}/imgtrack-$(date +%s%3N).json"
+  python3 -c "
+import json, sys
+json.dump({
+    'type': 'track_image_gen',
+    'gen_type': sys.argv[1],
+    'prompt': sys.argv[2],
+    'model': 'gpt-image-1',
+    'cost_usd': 0.08
+}, open(sys.argv[3], 'w'))
+" "$GEN_TYPE" "$PROMPT" "$TRACK_FILE"
+} || true
+
 echo "$OUTPUT_FILE"

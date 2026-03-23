@@ -11,7 +11,13 @@ import {
   TIMEZONE,
 } from './config.js';
 import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import {
+  createTask,
+  deleteTask,
+  getTaskById,
+  trackImageGeneration,
+  updateTask,
+} from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
@@ -89,10 +95,17 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
                   // Strip self-prefix the agent may add (e.g. "Ghosty: hello")
-                  const triggerName = targetGroup?.trigger?.replace(/^@/, '') || '';
-                  const prefixRe = new RegExp(`^(?:${ASSISTANT_NAME}|${triggerName}):\\s*`, 'i');
+                  const triggerName =
+                    targetGroup?.trigger?.replace(/^@/, '') || '';
+                  const prefixRe = new RegExp(
+                    `^(?:${ASSISTANT_NAME}|${triggerName}):\\s*`,
+                    'i',
+                  );
                   const cleanedText = data.text.replace(prefixRe, '').trim();
-                  await deps.sendMessage(data.chatJid, cleanedText || data.text);
+                  await deps.sendMessage(
+                    data.chatJid,
+                    cleanedText || data.text,
+                  );
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC message sent',
@@ -103,6 +116,18 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     'Unauthorized IPC message attempt blocked',
                   );
                 }
+              } else if (data.type === 'track_image_gen') {
+                trackImageGeneration({
+                  group_folder: sourceGroup,
+                  prompt: data.prompt || '',
+                  type: data.gen_type === 'edit' ? 'edit' : 'text2img',
+                  model: data.model,
+                  cost_usd: data.cost_usd,
+                });
+                logger.info(
+                  { sourceGroup, gen_type: data.gen_type },
+                  'Image generation tracked',
+                );
               } else if (
                 data.type === 'image' &&
                 data.chatJid &&
