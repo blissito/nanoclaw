@@ -46,8 +46,22 @@ server.tool(
     text: z.string().describe('The message text to send (used as caption when sending an image)'),
     sender: z.string().optional().describe('Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.'),
     image_path: z.string().optional().describe('Absolute path to an image file (e.g. /workspace/group/generated-123.png). When provided, sends a native image with the text as caption.'),
+    audio_path: z.string().optional().describe('Absolute path to an audio file (e.g. /workspace/group/tts-123.ogg). When provided, sends a native voice note. Text is ignored.'),
   },
   async (args) => {
+    if (args.audio_path) {
+      const filename = path.basename(args.audio_path);
+      const data = {
+        type: 'audio',
+        chatJid,
+        filename,
+        groupFolder,
+        timestamp: new Date().toISOString(),
+      };
+      writeIpcFile(MESSAGES_DIR, data);
+      return { content: [{ type: 'text' as const, text: 'Audio queued for delivery.' }] };
+    }
+
     if (args.image_path) {
       const filename = path.basename(args.image_path);
       const data = {

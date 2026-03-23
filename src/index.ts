@@ -668,6 +668,14 @@ async function main(): Promise<void> {
       }
       return Promise.resolve(); // silently skip if channel doesn't support reactions
     },
+    sendAudio: (jid, filePath) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      if (channel.sendAudio) {
+        return channel.sendAudio(jid, filePath);
+      }
+      return Promise.resolve();
+    },
     registeredGroups: () => registeredGroups,
     registerGroup,
     syncGroups: async (force: boolean) => {

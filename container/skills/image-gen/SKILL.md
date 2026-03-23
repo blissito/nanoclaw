@@ -1,7 +1,7 @@
 ---
 name: image-gen
-description: Generate, edit, or face-swap images using OpenAI gpt-image-1 and fal.ai
-allowed-tools: Bash(generate-image:*),Bash(face-swap:*)
+description: Generate, edit, face-swap images, and text-to-speech using OpenAI and fal.ai
+allowed-tools: Bash(generate-image:*),Bash(face-swap:*),Bash(text-to-speech:*)
 ---
 
 # Image Generation, Editing & Face Swap
@@ -46,12 +46,35 @@ face-swap /workspace/group/attachments/img-FACE.jpg /workspace/group/attachments
 - Second argument: the photo where the face will be PLACED (target body/scene)
 - Takes ~10-20 seconds to process
 
+## text-to-speech (voice replies)
+
+When the user asks you to respond with voice, or when a voice reply feels natural (e.g. they sent a voice note), generate audio:
+
+```bash
+# Default voice (nova - warm female, great for Spanish)
+text-to-speech "Hola, aquí tienes tu resumen de hoy"
+
+# Other voices: alloy, echo, fable, onyx, nova, shimmer
+text-to-speech "Hello world" echo
+```
+
+Send as a native voice note:
+```
+mcp__nanoclaw__send_message({ text: "voice", audio_path: "/workspace/group/tts-123.ogg" })
+```
+
+**When to use voice:** Only when the user explicitly asks for audio, or when replying to a voice note and a voice reply feels natural. Default to text.
+
 ## Output & delivery
 
-Both scripts save to `/workspace/group/` and print the path. Send the result as a native image:
+All scripts save to `/workspace/group/` and print the path. Send results as native media:
 
 ```
-mcp__nanoclaw__send_message({ text: "Here's your image!", image_path: "/workspace/group/faceswap-123.png" })
+# Image
+mcp__nanoclaw__send_message({ text: "Here's your image!", image_path: "/workspace/group/generated-123.png" })
+
+# Voice note
+mcp__nanoclaw__send_message({ text: "voice", audio_path: "/workspace/group/tts-123.ogg" })
 ```
 
 ## Important

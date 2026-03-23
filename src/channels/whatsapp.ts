@@ -260,7 +260,10 @@ export class WhatsAppChannel implements Channel {
                   content = `[Voice: ${transcript}]`;
                 }
               } catch (err) {
-                logger.warn({ err, jid: chatJid }, 'Voice transcription failed');
+                logger.warn(
+                  { err, jid: chatJid },
+                  'Voice transcription failed',
+                );
               }
             }
 
@@ -383,6 +386,24 @@ export class WhatsAppChannel implements Channel {
     } catch (err) {
       this.outgoingQueue.push({ kind: 'image', jid, filePath, caption });
       logger.warn({ jid, filePath, err }, 'Failed to send image, queued');
+    }
+  }
+
+  async sendAudio(jid: string, filePath: string): Promise<void> {
+    if (!this.connected) {
+      logger.warn({ jid, filePath }, 'WA disconnected, audio dropped');
+      return;
+    }
+    try {
+      const buffer = fs.readFileSync(filePath);
+      await this.sock.sendMessage(jid, {
+        audio: buffer,
+        mimetype: 'audio/ogg; codecs=opus',
+        ptt: true,
+      });
+      logger.info({ jid, filePath }, 'Audio sent');
+    } catch (err) {
+      logger.warn({ jid, filePath, err }, 'Failed to send audio');
     }
   }
 
