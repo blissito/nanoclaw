@@ -356,6 +356,11 @@ function getAllMcpServers(containerInput: ContainerInput, mcpServerPath: string)
         NANOCLAW_CHAT_JID: containerInput.chatJid,
         NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
         NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+        SES_REGION: process.env.SES_REGION || '',
+        SES_KEY: process.env.SES_KEY || '',
+        SES_SECRET: process.env.SES_SECRET || '',
+        SES_FROM_EMAIL: process.env.SES_FROM_EMAIL || '',
+        SES_FROM_NAME: process.env.SES_FROM_NAME || '',
       },
     },
     easybits: {

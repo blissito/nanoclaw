@@ -268,11 +268,34 @@ function buildContainerArgs(
   }
 
   // AWS: pass credentials to container (Polly TTS)
-  const awsEnv = readEnvFile(['AWS_BEDROCK_ACCESS_KEY_ID', 'AWS_BEDROCK_SECRET_ACCESS_KEY', 'AWS_BEDROCK_REGION']);
+  const awsEnv = readEnvFile([
+    'AWS_BEDROCK_ACCESS_KEY_ID',
+    'AWS_BEDROCK_SECRET_ACCESS_KEY',
+    'AWS_BEDROCK_REGION',
+  ]);
   if (awsEnv.AWS_BEDROCK_ACCESS_KEY_ID) {
-    args.push('-e', `AWS_BEDROCK_ACCESS_KEY_ID=${awsEnv.AWS_BEDROCK_ACCESS_KEY_ID}`);
-    args.push('-e', `AWS_BEDROCK_SECRET_ACCESS_KEY=${awsEnv.AWS_BEDROCK_SECRET_ACCESS_KEY}`);
-    args.push('-e', `AWS_BEDROCK_REGION=${awsEnv.AWS_BEDROCK_REGION || 'us-east-1'}`);
+    args.push(
+      '-e',
+      `AWS_BEDROCK_ACCESS_KEY_ID=${awsEnv.AWS_BEDROCK_ACCESS_KEY_ID}`,
+    );
+    args.push(
+      '-e',
+      `AWS_BEDROCK_SECRET_ACCESS_KEY=${awsEnv.AWS_BEDROCK_SECRET_ACCESS_KEY}`,
+    );
+    args.push(
+      '-e',
+      `AWS_BEDROCK_REGION=${awsEnv.AWS_BEDROCK_REGION || 'us-east-1'}`,
+    );
+  }
+
+  // AWS SES: pass credentials to container (email sending)
+  const sesEnv = readEnvFile(['SES_REGION', 'SES_KEY', 'SES_SECRET', 'SES_FROM_EMAIL', 'SES_FROM_NAME']);
+  if (sesEnv.SES_KEY) {
+    args.push('-e', `SES_REGION=${sesEnv.SES_REGION || 'us-east-2'}`);
+    args.push('-e', `SES_KEY=${sesEnv.SES_KEY}`);
+    args.push('-e', `SES_SECRET=${sesEnv.SES_SECRET || ''}`);
+    args.push('-e', `SES_FROM_EMAIL=${sesEnv.SES_FROM_EMAIL || ''}`);
+    args.push('-e', `SES_FROM_NAME=${sesEnv.SES_FROM_NAME || ''}`);
   }
 
   // Smatch MCP: pass credentials to container

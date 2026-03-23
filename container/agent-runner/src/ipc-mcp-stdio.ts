@@ -9,6 +9,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
+import https from 'https';
+import crypto from 'crypto';
 import { CronExpressionParser } from 'cron-parser';
 
 const IPC_DIR = '/workspace/ipc';
@@ -390,6 +392,117 @@ Use available_groups.json to find the JID for a group. The folder name must be c
     return {
       content: [{ type: 'text' as const, text: `Group "${args.name}" registered. It will start receiving messages immediately.` }],
     };
+  },
+);
+
+// --- AWS SES email sending (raw HTTPS, no SDK dependency) ---
+
+function awsSign(key: Buffer, msg: string): Buffer {
+  return crypto.createHmac('sha256', key).update(msg).digest();
+}
+
+function awsSha256(msg: string): string {
+  return crypto.createHash('sha256').update(msg).digest('hex');
+}
+
+function sendSesEmail(to: string, subject: string, bodyHtml: string, bodyText?: string): Promise<string> {
+  const region = process.env.SES_REGION || 'us-east-2';
+  const accessKey = process.env.SES_KEY!;
+  const secretKey = process.env.SES_SECRET!;
+  const fromEmail = process.env.SES_FROM_EMAIL!;
+  const fromName = process.env.SES_FROM_NAME || 'Ghosty';
+
+  const host = `email.${region}.amazonaws.com`;
+  const now = new Date();
+  const amzDate = now.toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+  const dateStamp = amzDate.slice(0, 8);
+
+  const params = new URLSearchParams();
+  params.append('Action', 'SendEmail');
+  params.append('Source', `${fromName} <${fromEmail}>`);
+  params.append('Destination.ToAddresses.member.1', to);
+  params.append('Message.Subject.Data', subject);
+  params.append('Message.Subject.Charset', 'UTF-8');
+  if (bodyHtml) {
+    params.append('Message.Body.Html.Data', bodyHtml);
+    params.append('Message.Body.Html.Charset', 'UTF-8');
+  }
+  params.append('Message.Body.Text.Data', bodyText || subject);
+  params.append('Message.Body.Text.Charset', 'UTF-8');
+
+  const body = params.toString();
+  const payloadHash = awsSha256(body);
+
+  const canonicalHeaders = `content-type:application/x-www-form-urlencoded\nhost:${host}\nx-amz-date:${amzDate}\n`;
+  const signedHeaders = 'content-type;host;x-amz-date';
+  const canonicalRequest = `POST\n/\n\n${canonicalHeaders}\n${signedHeaders}\n${payloadHash}`;
+
+  const credScope = `${dateStamp}/${region}/ses/aws4_request`;
+  const stringToSign = `AWS4-HMAC-SHA256\n${amzDate}\n${credScope}\n${awsSha256(canonicalRequest)}`;
+
+  let signingKey = awsSign(Buffer.from('AWS4' + secretKey), dateStamp);
+  signingKey = awsSign(signingKey, region);
+  signingKey = awsSign(signingKey, 'ses');
+  signingKey = awsSign(signingKey, 'aws4_request');
+  const signature = crypto.createHmac('sha256', signingKey).update(stringToSign).digest('hex');
+
+  const authHeader = `AWS4-HMAC-SHA256 Credential=${accessKey}/${credScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: host,
+      method: 'POST',
+      path: '/',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Host': host,
+        'X-Amz-Date': amzDate,
+        'Authorization': authHeader,
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          const match = data.match(/<MessageId>(.+?)<\/MessageId>/);
+          resolve(match ? match[1] : 'sent');
+        } else {
+          reject(new Error(`SES error ${res.statusCode}: ${data}`));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+server.tool(
+  'send_email',
+  'Send an email via AWS SES. Use for sending reports, notifications, or any content the user requests via email. Supports HTML body for rich formatting.',
+  {
+    to: z.string().describe('Recipient email address'),
+    subject: z.string().describe('Email subject line'),
+    body_html: z.string().describe('Email body in HTML format'),
+    body_text: z.string().optional().describe('Plain text fallback (defaults to subject if omitted)'),
+  },
+  async (args) => {
+    if (!process.env.SES_KEY || !process.env.SES_FROM_EMAIL) {
+      return {
+        content: [{ type: 'text' as const, text: 'Email not configured: SES credentials missing.' }],
+        isError: true,
+      };
+    }
+    try {
+      const messageId = await sendSesEmail(args.to, args.subject, args.body_html, args.body_text);
+      return { content: [{ type: 'text' as const, text: `Email sent to ${args.to} (MessageId: ${messageId})` }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Failed to send email: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
   },
 );
 
