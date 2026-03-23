@@ -22,7 +22,15 @@ When the user sends a photo and wants it modified, pass the attachment path:
 generate-image "put this person on a tropical beach" /workspace/group/attachments/img-1234.jpg
 ```
 
-The source image path comes from the `[Image: attachments/img-xxx.jpg]` reference in the user's message.
+## Combine multiple images
+
+When the user wants to combine elements from multiple photos (e.g. "put the person from photo 1 into photo 2", "replace the brand in this photo with my product"), pass all images:
+
+```bash
+generate-image "put the person from the first image into the scene of the second image" /workspace/group/attachments/img-1234.jpg /workspace/group/attachments/img-5678.jpg
+```
+
+Up to 10 source images are supported. The images can come from different messages — look through the conversation history for `[Image: attachments/img-xxx.jpg]` references to find all relevant attachment paths.
 
 ## Output
 
