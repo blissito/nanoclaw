@@ -5,7 +5,7 @@
 set -euo pipefail
 
 TEXT="${1:?Usage: text-to-speech \"text to speak\" [voice]}"
-VOICE="${2:-nova}"
+VOICE="${2:-onyx}"
 OUTPUT_DIR="/workspace/group"
 OUTPUT_FILE="${OUTPUT_DIR}/tts-$(date +%s%3N).ogg"
 

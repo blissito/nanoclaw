@@ -51,12 +51,14 @@ face-swap /workspace/group/attachments/img-FACE.jpg /workspace/group/attachments
 When the user asks you to respond with voice, or when a voice reply feels natural (e.g. they sent a voice note), generate audio:
 
 ```bash
-# Default voice (nova - warm female, great for Spanish)
+# Default voice (onyx - deep male voice)
 text-to-speech "Hola, aquí tienes tu resumen de hoy"
 
 # Other voices: alloy, echo, fable, onyx, nova, shimmer
-text-to-speech "Hello world" echo
+text-to-speech "Hello world" nova
 ```
+
+**IMPORTANT:** When generating speech, ALWAYS write the text in Mexican Spanish with natural, casual Mexican expressions. Use "güey", "chido", "neta", "órale", etc. where appropriate. Sound like a real Mexican, not like a textbook.
 
 Send as a native voice note:
 ```
