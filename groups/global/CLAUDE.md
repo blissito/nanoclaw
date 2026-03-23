@@ -74,3 +74,20 @@ When asked to create documents, reports, presentations, landing pages, or any pu
 For presentations: same flow with `create_presentation`, `update_presentation` (slides), `get_slide_screenshot`, and `deploy_presentation`.
 
 DO NOT generate images for content that should be a document. Images are for art, photos, and visual assets — not for text-heavy content like reports or proposals.
+
+### Page sizing rules (CRITICAL)
+
+Each document page is rendered at a FIXED letter size (816×1056px) inside a flipbook viewer. Your HTML MUST fit within this area:
+- Set `overflow: hidden` on the page root — content that overflows is cut off or bleeds into adjacent pages
+- Do NOT try to cram too much content into one page. Split into more pages if needed
+- Test with `get_page_screenshot` after writing each page — if content is cut off or overflows, fix it immediately
+- Images must have `max-width: 100%; height: auto; object-fit: cover` to avoid blowout
+- Use relative units (%, rem) not fixed px widths larger than 750px
+
+### Fixing existing documents
+
+When a user shares an easybits.cloud link and asks you to fix/improve it:
+1. Use `list_documents` or `list_websites` to find the document ID
+2. Read each page with `get_page_html` and screenshot with `get_page_screenshot`
+3. Fix issues with `set_page_html`, `set_section_html`, or `replace_html`
+4. Verify each fix with `get_page_screenshot` before moving on
