@@ -5,11 +5,13 @@ import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
   DATA_DIR,
+  DEFAULT_TRIGGER,
+  getTriggerPattern,
+  TRIGGER_PATTERN,
   IDLE_TIMEOUT,
   MAX_MESSAGES_PER_PROMPT,
   POLL_INTERVAL,
   TIMEZONE,
-  TRIGGER_PATTERN,
 } from './config.js';
 import { NanoClawHandlers, startCredentialProxy } from './credential-proxy.js';
 import './channels/index.js';
@@ -88,12 +90,6 @@ let lastAgentTimestamp: Record<string, string> = {};
 let cursorBeforePipe: Record<string, string> = {};
 let messageLoopRunning = false;
 
-function groupTriggerPattern(trigger: string): RegExp {
-  return new RegExp(
-    `${trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`,
-    'i',
-  );
-}
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
@@ -341,11 +337,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // For non-main groups, check if trigger is required and present
   if (!isMainGroup && group.requiresTrigger !== false) {
+    const triggerPattern = getTriggerPattern(group.trigger);
     const allowlistCfg = loadSenderAllowlist();
-    const triggerRe = groupTriggerPattern(group.trigger);
     const hasTrigger = missedMessages.some(
       (m) =>
-        (triggerRe.test(m.content.trim()) || m.content.includes('[Sticker:')) &&
+        (triggerPattern.test(m.content.trim()) ||
+          m.content.includes('[Sticker:')) &&
         (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
     );
     if (!hasTrigger) {
@@ -728,7 +725,7 @@ async function startMessageLoop(): Promise<void> {
   }
   messageLoopRunning = true;
 
-  logger.info(`NanoClaw running (trigger: @${ASSISTANT_NAME})`);
+  logger.info(`NanoClaw running (default trigger: ${DEFAULT_TRIGGER})`);
 
   while (true) {
     try {
@@ -842,11 +839,11 @@ async function startMessageLoop(): Promise<void> {
           // Non-trigger messages accumulate in DB and get pulled as
           // context when a trigger eventually arrives.
           if (needsTrigger) {
+            const triggerPattern = getTriggerPattern(group.trigger);
             const allowlistCfg = loadSenderAllowlist();
-            const triggerRe = groupTriggerPattern(group.trigger);
             const hasTrigger = groupMessages.some(
               (m) =>
-                (triggerRe.test(m.content.trim()) ||
+                (triggerPattern.test(m.content.trim()) ||
                   m.content.includes('[Sticker:')) &&
                 (m.is_from_me ||
                   isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
