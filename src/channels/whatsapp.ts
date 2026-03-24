@@ -488,8 +488,10 @@ export class WhatsAppChannel implements Channel {
       const mimeMap: Record<string, string> = {
         '.pdf': 'application/pdf',
         '.doc': 'application/msword',
-        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        '.docx':
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        '.xlsx':
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         '.csv': 'text/csv',
         '.txt': 'text/plain',
       };

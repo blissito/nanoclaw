@@ -31,7 +31,12 @@ export interface IpcDeps {
     emoji: string,
   ) => Promise<void>;
   sendAudio: (jid: string, filePath: string) => Promise<void>;
-  sendDocument: (jid: string, filePath: string, filename: string, caption: string) => Promise<void>;
+  sendDocument: (
+    jid: string,
+    filePath: string,
+    filename: string,
+    caption: string,
+  ) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -222,7 +227,11 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       data.caption || '',
                     );
                     logger.info(
-                      { chatJid: data.chatJid, sourceGroup, filename: data.filename },
+                      {
+                        chatJid: data.chatJid,
+                        sourceGroup,
+                        filename: data.filename,
+                      },
                       'IPC document sent',
                     );
                   }

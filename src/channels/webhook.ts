@@ -40,7 +40,12 @@ export class WebhookChannel implements Channel {
   private callbackUrl: string;
   private opts: ChannelOpts;
 
-  constructor(opts: ChannelOpts, port: number, secret: string, callbackUrl: string) {
+  constructor(
+    opts: ChannelOpts,
+    port: number,
+    secret: string,
+    callbackUrl: string,
+  ) {
     this.opts = opts;
     this.port = port;
     this.secret = secret;
@@ -84,7 +89,9 @@ export class WebhookChannel implements Channel {
           return;
         }
 
-        const fullJid = jid.startsWith(JID_PREFIX) ? jid : `${JID_PREFIX}${jid}`;
+        const fullJid = jid.startsWith(JID_PREFIX)
+          ? jid
+          : `${JID_PREFIX}${jid}`;
 
         const message: NewMessage = {
           id: `wh_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -96,7 +103,13 @@ export class WebhookChannel implements Channel {
         };
 
         // Deliver metadata for chat discovery
-        this.opts.onChatMetadata(fullJid, message.timestamp, sender_name, CHANNEL_NAME, false);
+        this.opts.onChatMetadata(
+          fullJid,
+          message.timestamp,
+          sender_name,
+          CHANNEL_NAME,
+          false,
+        );
 
         // Deliver message to Nanoclaw message loop
         this.opts.onMessage(fullJid, message);
@@ -138,7 +151,10 @@ export class WebhookChannel implements Channel {
         },
         (res) => {
           if (res.statusCode && res.statusCode >= 400) {
-            logger.warn({ status: res.statusCode, jid }, '[webhook] Callback failed');
+            logger.warn(
+              { status: res.statusCode, jid },
+              '[webhook] Callback failed',
+            );
           }
         },
       );
