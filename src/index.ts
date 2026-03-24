@@ -668,6 +668,17 @@ async function main(): Promise<void> {
       }
       return Promise.resolve(); // silently skip if channel doesn't support reactions
     },
+    sendDocument: (jid, filePath, filename, caption) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      if (channel.sendDocument) {
+        return channel.sendDocument(jid, filePath, filename, caption);
+      }
+      return channel.sendMessage(
+        jid,
+        caption || '[Document not supported on this channel]',
+      );
+    },
     sendAudio: (jid, filePath) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);

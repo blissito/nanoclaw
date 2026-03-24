@@ -70,6 +70,12 @@ When asked to create documents, reports, presentations, landing pages, or any pu
 3. *Write quality HTML* — use `set_page_html` to write each page. Invest in editorial quality: clean typography, visual hierarchy, proper spacing, real content (not lorem ipsum). Think like a designer, not a developer.
 4. *Review with screenshots* — use `get_page_screenshot` to check the result visually. If it doesn't look professional, iterate with `set_section_html` or `replace_html`.
 5. *Deploy* — `deploy_document` to publish and share the URL.
+6. *PDF download* — if the user wants the PDF file, use `get_document_pdf` which returns the PDF as base64 data. Decode it, save to a file, then send it with `send_message` using `document_path`:
+   ```bash
+   # Example: decode base64 PDF and save
+   echo '<base64data>' | base64 -d > cotizacion.pdf
+   ```
+   Then call `send_message` with `document_path="/workspace/group/cotizacion.pdf"` and `text="Tu cotización"` to deliver it as a native document attachment in the chat.
 
 For presentations: same flow with `create_presentation`, `update_presentation` (slides), `get_slide_screenshot`, and `deploy_presentation`.
 

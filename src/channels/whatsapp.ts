@@ -296,15 +296,34 @@ export class WhatsAppChannel implements Channel {
                 const mime = normalized.documentMessage.mimetype || '';
                 const fileName = normalized.documentMessage.fileName || '';
                 const ext = path.extname(fileName).toLowerCase();
-                const isText = mime.startsWith('text/') || ['.md', '.txt', '.csv', '.json', '.xml', '.yaml', '.yml', '.toml', '.ini', '.log'].includes(ext);
+                const isText =
+                  mime.startsWith('text/') ||
+                  [
+                    '.md',
+                    '.txt',
+                    '.csv',
+                    '.json',
+                    '.xml',
+                    '.yaml',
+                    '.yml',
+                    '.toml',
+                    '.ini',
+                    '.log',
+                  ].includes(ext);
                 const isPdf = mime === 'application/pdf' || ext === '.pdf';
 
                 if (isPdf || isText) {
                   const buffer = await downloadMediaMessage(msg, 'buffer', {});
-                  const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
+                  const groupDir = path.join(
+                    GROUPS_DIR,
+                    groups[chatJid].folder,
+                  );
                   const attachDir = path.join(groupDir, 'attachments');
                   fs.mkdirSync(attachDir, { recursive: true });
-                  const filename = path.basename(fileName || `doc-${Date.now()}${isPdf ? '.pdf' : ext || '.txt'}`);
+                  const filename = path.basename(
+                    fileName ||
+                      `doc-${Date.now()}${isPdf ? '.pdf' : ext || '.txt'}`,
+                  );
                   const filePath = path.join(attachDir, filename);
                   fs.writeFileSync(filePath, buffer as Buffer);
                   const sizeKB = Math.round((buffer as Buffer).length / 1024);
@@ -318,10 +337,16 @@ export class WhatsAppChannel implements Channel {
                     const docRef = `[Document: attachments/${filename} (${sizeKB}KB)]\n\n${textContent}`;
                     content = caption ? `${caption}\n\n${docRef}` : docRef;
                   }
-                  logger.info({ jid: chatJid, filename, mime }, 'Downloaded document attachment');
+                  logger.info(
+                    { jid: chatJid, filename, mime },
+                    'Downloaded document attachment',
+                  );
                 }
               } catch (err) {
-                logger.warn({ err, jid: chatJid }, 'Failed to download document attachment');
+                logger.warn(
+                  { err, jid: chatJid },
+                  'Failed to download document attachment',
+                );
               }
             }
 
@@ -444,6 +469,40 @@ export class WhatsAppChannel implements Channel {
     } catch (err) {
       this.outgoingQueue.push({ kind: 'image', jid, filePath, caption });
       logger.warn({ jid, filePath, err }, 'Failed to send image, queued');
+    }
+  }
+
+  async sendDocument(
+    jid: string,
+    filePath: string,
+    filename: string,
+    caption: string,
+  ): Promise<void> {
+    if (!this.connected) {
+      logger.warn({ jid, filePath }, 'WA disconnected, document dropped');
+      return;
+    }
+    try {
+      const buffer = fs.readFileSync(filePath);
+      const ext = path.extname(filePath).toLowerCase();
+      const mimeMap: Record<string, string> = {
+        '.pdf': 'application/pdf',
+        '.doc': 'application/msword',
+        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        '.csv': 'text/csv',
+        '.txt': 'text/plain',
+      };
+      const mimetype = mimeMap[ext] || 'application/octet-stream';
+      await this.sock.sendMessage(jid, {
+        document: buffer,
+        mimetype,
+        fileName: filename,
+        caption,
+      });
+      logger.info({ jid, filePath, filename }, 'Document sent');
+    } catch (err) {
+      logger.warn({ jid, filePath, err }, 'Failed to send document');
     }
   }
 

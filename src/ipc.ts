@@ -31,6 +31,7 @@ export interface IpcDeps {
     emoji: string,
   ) => Promise<void>;
   sendAudio: (jid: string, filePath: string) => Promise<void>;
+  sendDocument: (jid: string, filePath: string, filename: string, caption: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -187,6 +188,48 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   logger.warn(
                     { chatJid: data.chatJid, sourceGroup },
                     'Unauthorized IPC audio attempt blocked',
+                  );
+                }
+              } else if (
+                data.type === 'document' &&
+                data.chatJid &&
+                data.filename
+              ) {
+                const targetGroup = registeredGroups[data.chatJid];
+                if (
+                  isMain ||
+                  (targetGroup && targetGroup.folder === sourceGroup)
+                ) {
+                  if (
+                    data.filename.includes('/') ||
+                    data.filename.includes('..')
+                  ) {
+                    logger.warn(
+                      { filename: data.filename, sourceGroup },
+                      'Rejected document with unsafe filename',
+                    );
+                  } else {
+                    const folder = targetGroup?.folder || sourceGroup;
+                    const absPath = path.join(
+                      GROUPS_DIR,
+                      folder,
+                      data.filename,
+                    );
+                    await deps.sendDocument(
+                      data.chatJid,
+                      absPath,
+                      data.originalName || data.filename,
+                      data.caption || '',
+                    );
+                    logger.info(
+                      { chatJid: data.chatJid, sourceGroup, filename: data.filename },
+                      'IPC document sent',
+                    );
+                  }
+                } else {
+                  logger.warn(
+                    { chatJid: data.chatJid, sourceGroup },
+                    'Unauthorized IPC document attempt blocked',
                   );
                 }
               } else if (data.type === 'track_image_gen') {

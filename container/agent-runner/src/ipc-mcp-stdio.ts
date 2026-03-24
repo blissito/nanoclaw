@@ -43,14 +43,30 @@ const server = new McpServer({
 
 server.tool(
   'send_message',
-  "Send a message or image to the user or group immediately while you're still running. Use this for progress updates, to send multiple messages, or to deliver generated images. You can call this multiple times.",
+  "Send a message, image, document, or audio to the user or group immediately while you're still running. Use this for progress updates, to send multiple messages, to deliver generated images, or to send document files (PDF, etc.). You can call this multiple times.",
   {
     text: z.string().describe('The message text to send (used as caption when sending an image)'),
     sender: z.string().optional().describe('Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.'),
     image_path: z.string().optional().describe('Absolute path to an image file (e.g. /workspace/group/generated-123.png). When provided, sends a native image with the text as caption.'),
     audio_path: z.string().optional().describe('Absolute path to an audio file (e.g. /workspace/group/tts-123.ogg). When provided, sends a native voice note. Text is ignored.'),
+    document_path: z.string().optional().describe('Absolute path to a document file (e.g. /workspace/group/cotizacion.pdf). When provided, sends the file as a native document attachment. Text is used as caption.'),
   },
   async (args) => {
+    if (args.document_path) {
+      const filename = path.basename(args.document_path);
+      const data = {
+        type: 'document',
+        chatJid,
+        filename,
+        originalName: filename,
+        caption: args.text || '',
+        groupFolder,
+        timestamp: new Date().toISOString(),
+      };
+      writeIpcFile(MESSAGES_DIR, data);
+      return { content: [{ type: 'text' as const, text: 'Document queued for delivery.' }] };
+    }
+
     if (args.audio_path) {
       const filename = path.basename(args.audio_path);
       const data = {
