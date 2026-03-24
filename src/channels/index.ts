@@ -11,3 +11,6 @@
 
 // whatsapp
 import './whatsapp.js';
+
+// webhook (generic HTTP channel for Formmy, dashboards, etc.)
+import './webhook.js';
