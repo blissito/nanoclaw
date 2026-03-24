@@ -290,6 +290,41 @@ export class WhatsAppChannel implements Channel {
               }
             }
 
+            // Document attachment handling (PDF, text files, markdown, etc.)
+            if (normalized?.documentMessage) {
+              try {
+                const mime = normalized.documentMessage.mimetype || '';
+                const fileName = normalized.documentMessage.fileName || '';
+                const ext = path.extname(fileName).toLowerCase();
+                const isText = mime.startsWith('text/') || ['.md', '.txt', '.csv', '.json', '.xml', '.yaml', '.yml', '.toml', '.ini', '.log'].includes(ext);
+                const isPdf = mime === 'application/pdf' || ext === '.pdf';
+
+                if (isPdf || isText) {
+                  const buffer = await downloadMediaMessage(msg, 'buffer', {});
+                  const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
+                  const attachDir = path.join(groupDir, 'attachments');
+                  fs.mkdirSync(attachDir, { recursive: true });
+                  const filename = path.basename(fileName || `doc-${Date.now()}${isPdf ? '.pdf' : ext || '.txt'}`);
+                  const filePath = path.join(attachDir, filename);
+                  fs.writeFileSync(filePath, buffer as Buffer);
+                  const sizeKB = Math.round((buffer as Buffer).length / 1024);
+                  const caption = normalized.documentMessage.caption || '';
+
+                  if (isPdf) {
+                    const pdfRef = `[PDF: attachments/${filename} (${sizeKB}KB)]\nUse: pdf-reader extract attachments/${filename}`;
+                    content = caption ? `${caption}\n\n${pdfRef}` : pdfRef;
+                  } else {
+                    const textContent = (buffer as Buffer).toString('utf-8');
+                    const docRef = `[Document: attachments/${filename} (${sizeKB}KB)]\n\n${textContent}`;
+                    content = caption ? `${caption}\n\n${docRef}` : docRef;
+                  }
+                  logger.info({ jid: chatJid, filename, mime }, 'Downloaded document attachment');
+                }
+              } catch (err) {
+                logger.warn({ err, jid: chatJid }, 'Failed to download document attachment');
+              }
+            }
+
             // Skip protocol messages with no text content (encryption keys, read receipts, etc.)
             if (!content) continue;
 
