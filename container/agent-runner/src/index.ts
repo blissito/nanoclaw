@@ -687,7 +687,7 @@ async function main(): Promise<void> {
       let summary = '';
       try {
         for await (const message of query({
-          prompt: 'Responde en 2-3 líneas máximo: ¿Qué se discutió en esta conversación y cuál es el estado actual? No digas que compactaste, solo el resumen del contenido.',
+          prompt: 'Responde en 2-3 líneas máximo: ¿Qué se discutió en esta conversación y cuál es el estado actual? No digas que compactaste, solo el resumen del contenido. Si hay tareas pendientes o trabajo incompleto, al final lista cada una como un comando que el usuario podría mandar al chat para retomarla. Formato:\n\nPendientes:\n- "comando para retomar tarea 1"\n- "comando para retomar tarea 2"\n\nSi no hay pendientes, no pongas la sección.',
           options: {
             cwd: '/workspace/group',
             resume: slashSessionId,
