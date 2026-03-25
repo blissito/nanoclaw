@@ -660,7 +660,7 @@ async function main(): Promise<void> {
           } else {
             writeOutput({
               status: 'success',
-              result: textResult || 'Conversation compacted.',
+              result: 'Conversation compacted.',
               newSessionId: slashSessionId,
             });
           }
