@@ -748,6 +748,14 @@ async function main(): Promise<void> {
         caption || '[Document not supported on this channel]',
       );
     },
+    sendSticker: (jid, filePath) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      if (channel.sendSticker) {
+        return channel.sendSticker(jid, filePath);
+      }
+      return Promise.resolve();
+    },
     sendAudio: (jid, filePath) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);

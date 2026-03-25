@@ -53,6 +53,7 @@ export class WhatsAppChannel implements Channel {
   private outgoingQueue: Array<
     | { kind: 'text'; jid: string; text: string }
     | { kind: 'image'; jid: string; filePath: string; caption: string }
+    | { kind: 'sticker'; jid: string; filePath: string }
   > = [];
   private flushing = false;
   private groupSyncTimerStarted = false;
@@ -355,6 +356,28 @@ export class WhatsAppChannel implements Channel {
               }
             }
 
+            // Sticker handling — download and save for reuse
+            if (normalized?.stickerMessage) {
+              try {
+                const buffer = await downloadMediaMessage(msg, 'buffer', {});
+                const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
+                const stickerDir = path.join(groupDir, 'stickers');
+                fs.mkdirSync(stickerDir, { recursive: true });
+                const filename = `sticker-${Date.now()}.webp`;
+                const filePath = path.join(stickerDir, filename);
+                fs.writeFileSync(filePath, buffer as Buffer);
+                content = content
+                  ? `${content}\n[Sticker: stickers/${filename}]`
+                  : `[Sticker: stickers/${filename}]`;
+                logger.info(
+                  { jid: chatJid, filename },
+                  'Sticker saved',
+                );
+              } catch (err) {
+                logger.warn({ err, jid: chatJid }, 'Sticker download failed');
+              }
+            }
+
             // Skip protocol messages with no text content (encryption keys, read receipts, etc.)
             if (!content) continue;
 
@@ -479,6 +502,22 @@ export class WhatsAppChannel implements Channel {
     } catch (err) {
       this.outgoingQueue.push({ kind: 'image', jid, filePath, caption });
       logger.warn({ jid, filePath, err }, 'Failed to send image, queued');
+    }
+  }
+
+  async sendSticker(jid: string, filePath: string): Promise<void> {
+    if (!this.connected) {
+      this.outgoingQueue.push({ kind: 'sticker', jid, filePath });
+      logger.info({ jid, filePath }, 'WA disconnected, sticker queued');
+      return;
+    }
+    try {
+      const buffer = fs.readFileSync(filePath);
+      await this.sock.sendMessage(jid, { sticker: buffer });
+      logger.info({ jid, filePath }, 'Sticker sent');
+    } catch (err) {
+      this.outgoingQueue.push({ kind: 'sticker', jid, filePath });
+      logger.warn({ jid, filePath, err }, 'Failed to send sticker, queued');
     }
   }
 
@@ -684,6 +723,13 @@ export class WhatsAppChannel implements Channel {
           logger.info(
             { jid: item.jid, filePath: item.filePath },
             'Queued image sent',
+          );
+        } else if (item.kind === 'sticker') {
+          const buffer = fs.readFileSync(item.filePath);
+          await this.sock.sendMessage(item.jid, { sticker: buffer });
+          logger.info(
+            { jid: item.jid, filePath: item.filePath },
+            'Queued sticker sent',
           );
         } else {
           await this.sock.sendMessage(item.jid, { text: item.text });

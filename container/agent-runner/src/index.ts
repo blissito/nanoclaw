@@ -421,6 +421,8 @@ function buildAllowedTools(containerInput: ContainerInput, mcpServerPath: string
  * allowing agent teams subagents to run to completion.
  * Also pipes IPC messages into the stream during the query.
  */
+const FALLBACK_MODEL = 'claude-haiku-4-5-20251001';
+
 async function runQuery(
   prompt: string,
   sessionId: string | undefined,
@@ -501,6 +503,7 @@ async function runQuery(
   for await (const message of query({
     prompt: stream,
     options: {
+      fallbackModel: FALLBACK_MODEL,
       cwd: '/workspace/group',
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
@@ -702,6 +705,7 @@ async function main(): Promise<void> {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
       const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
       }

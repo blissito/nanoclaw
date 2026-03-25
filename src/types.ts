@@ -98,6 +98,8 @@ export interface Channel {
     filename: string,
     caption: string,
   ): Promise<void>;
+  // Optional: send a sticker (WebP image).
+  sendSticker?(jid: string, filePath: string): Promise<void>;
   // Optional: react to a message with an emoji.
   sendReaction?(jid: string, messageId: string, emoji: string): Promise<void>;
   // Optional: typing indicator. Channels that support it implement it.

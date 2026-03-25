@@ -3,12 +3,9 @@
  * Containers connect here instead of directly to the Anthropic API.
  * The proxy injects real credentials so containers never see them.
  *
- * Two auth modes:
- *   API key:  Proxy injects x-api-key on every request.
- *   OAuth:    Container CLI exchanges its placeholder token for a temp
- *             API key via /api/oauth/claude_cli/create_api_key.
- *             Proxy injects real OAuth token on that exchange request;
- *             subsequent requests carry the temp key which is valid as-is.
+ * Primary: OAuth (Max plan).
+ * Fallback: If upstream returns 429 (rate limit) and an API key is
+ *           configured, retries with API key + claude-haiku-4-5-20251001.
  */
 import { createServer, Server } from 'http';
 import { request as httpsRequest } from 'https';
@@ -23,6 +20,8 @@ export interface ProxyConfig {
   authMode: AuthMode;
 }
 
+const FALLBACK_MODEL = 'claude-haiku-4-5-20251001';
+
 export function startCredentialProxy(
   port: number,
   host = '127.0.0.1',
@@ -34,6 +33,7 @@ export function startCredentialProxy(
     'ANTHROPIC_BASE_URL',
   ]);
 
+  // Primary: OAuth (Max plan). Fallback to API key only if no OAuth token.
   const authMode: AuthMode =
     secrets.CLAUDE_CODE_OAUTH_TOKEN || secrets.ANTHROPIC_AUTH_TOKEN
       ? 'oauth'
@@ -42,6 +42,7 @@ export function startCredentialProxy(
         : 'oauth';
   const oauthToken =
     secrets.CLAUDE_CODE_OAUTH_TOKEN || secrets.ANTHROPIC_AUTH_TOKEN;
+  const canFallback = authMode === 'oauth' && !!secrets.ANTHROPIC_API_KEY;
 
   const upstreamUrl = new URL(
     secrets.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
@@ -49,56 +50,156 @@ export function startCredentialProxy(
   const isHttps = upstreamUrl.protocol === 'https:';
   const makeRequest = isHttps ? httpsRequest : httpRequest;
 
+  function buildUpstreamOpts(
+    reqUrl: string | undefined,
+    method: string | undefined,
+    headers: Record<string, string | number | string[] | undefined>,
+  ): RequestOptions {
+    return {
+      hostname: upstreamUrl.hostname,
+      port: upstreamUrl.port || (isHttps ? 443 : 80),
+      path: reqUrl,
+      method,
+      headers,
+    };
+  }
+
+  function injectOAuth(
+    headers: Record<string, string | number | string[] | undefined>,
+    reqUrl: string | undefined,
+  ): void {
+    const isExchange = reqUrl?.includes(
+      '/api/oauth/claude_cli/create_api_key',
+    );
+    if (isExchange || headers['authorization']) {
+      delete headers['x-api-key'];
+      delete headers['authorization'];
+      if (oauthToken) {
+        headers['authorization'] = `Bearer ${oauthToken}`;
+      }
+    }
+  }
+
+  function injectApiKey(
+    headers: Record<string, string | number | string[] | undefined>,
+  ): void {
+    delete headers['x-api-key'];
+    delete headers['authorization'];
+    headers['x-api-key'] = secrets.ANTHROPIC_API_KEY;
+  }
+
+  function swapModelInBody(body: Buffer): Buffer {
+    try {
+      const parsed = JSON.parse(body.toString());
+      if (parsed.model) {
+        parsed.model = FALLBACK_MODEL;
+        return Buffer.from(JSON.stringify(parsed));
+      }
+    } catch {
+      // Not JSON or no model field — send as-is
+    }
+    return body;
+  }
+
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
       const chunks: Buffer[] = [];
       req.on('data', (c) => chunks.push(c));
       req.on('end', () => {
         const body = Buffer.concat(chunks);
-        const headers: Record<string, string | number | string[] | undefined> =
-          {
-            ...(req.headers as Record<string, string>),
-            host: upstreamUrl.host,
-            'content-length': body.length,
-          };
+        const baseHeaders: Record<
+          string,
+          string | number | string[] | undefined
+        > = {
+          ...(req.headers as Record<string, string>),
+          host: upstreamUrl.host,
+          'content-length': body.length,
+        };
 
         // Strip hop-by-hop headers that must not be forwarded by proxies
-        delete headers['connection'];
-        delete headers['keep-alive'];
-        delete headers['transfer-encoding'];
+        delete baseHeaders['connection'];
+        delete baseHeaders['keep-alive'];
+        delete baseHeaders['transfer-encoding'];
+
+        const headers = { ...baseHeaders };
 
         if (authMode === 'api-key') {
-          // API key mode: inject x-api-key on every request
-          delete headers['x-api-key'];
-          headers['x-api-key'] = secrets.ANTHROPIC_API_KEY;
+          injectApiKey(headers);
         } else {
-          // OAuth mode: container CLI exchanges placeholder for a temp API key
-          // via /api/oauth/claude_cli/create_api_key. We inject the real Bearer
-          // token only on that exchange request; subsequent requests carry the
-          // temp key the CLI received, which is valid as-is.
-          const isExchange = req.url?.includes(
-            '/api/oauth/claude_cli/create_api_key',
-          );
-          if (isExchange || headers['authorization']) {
-            delete headers['x-api-key'];
-            delete headers['authorization'];
-            if (oauthToken) {
-              headers['authorization'] = `Bearer ${oauthToken}`;
-            }
-          }
+          injectOAuth(headers, req.url);
         }
 
+        // Determine if this is a retryable request (messages endpoint, not exchange)
+        const isMessagesEndpoint =
+          req.url?.includes('/v1/messages') && req.method === 'POST';
+        const shouldRetryOn429 = canFallback && isMessagesEndpoint;
+
+        if (!shouldRetryOn429) {
+          // No fallback possible — pipe directly (fast path)
+          const upstream = makeRequest(
+            buildUpstreamOpts(req.url, req.method, headers),
+            (upRes) => {
+              res.writeHead(upRes.statusCode!, upRes.headers);
+              upRes.pipe(res);
+            },
+          );
+          upstream.on('error', (err) => {
+            logger.error({ err, url: req.url }, 'Credential proxy upstream error');
+            if (!res.headersSent) {
+              res.writeHead(502);
+              res.end('Bad Gateway');
+            }
+          });
+          upstream.write(body);
+          upstream.end();
+          return;
+        }
+
+        // Retryable path — buffer response to check for 429
         const upstream = makeRequest(
-          {
-            hostname: upstreamUrl.hostname,
-            port: upstreamUrl.port || (isHttps ? 443 : 80),
-            path: req.url,
-            method: req.method,
-            headers,
-          } as RequestOptions,
+          buildUpstreamOpts(req.url, req.method, headers),
           (upRes) => {
-            res.writeHead(upRes.statusCode!, upRes.headers);
-            upRes.pipe(res);
+            if (upRes.statusCode !== 429) {
+              // Not rate limited — forward normally
+              res.writeHead(upRes.statusCode!, upRes.headers);
+              upRes.pipe(res);
+              return;
+            }
+
+            // Rate limited — consume the response and retry with API key + Haiku
+            const discardChunks: Buffer[] = [];
+            upRes.on('data', (c) => discardChunks.push(c));
+            upRes.on('end', () => {
+              logger.warn(
+                { url: req.url, fallbackModel: FALLBACK_MODEL },
+                'Rate limited on OAuth, retrying with API key + Haiku',
+              );
+
+              const fallbackBody = swapModelInBody(body);
+              const fallbackHeaders = { ...baseHeaders };
+              injectApiKey(fallbackHeaders);
+              fallbackHeaders['content-length'] = fallbackBody.length;
+
+              const retry = makeRequest(
+                buildUpstreamOpts(req.url, req.method, fallbackHeaders),
+                (retryRes) => {
+                  res.writeHead(retryRes.statusCode!, retryRes.headers);
+                  retryRes.pipe(res);
+                },
+              );
+              retry.on('error', (err) => {
+                logger.error(
+                  { err, url: req.url },
+                  'Credential proxy fallback upstream error',
+                );
+                if (!res.headersSent) {
+                  res.writeHead(502);
+                  res.end('Bad Gateway');
+                }
+              });
+              retry.write(fallbackBody);
+              retry.end();
+            });
           },
         );
 
@@ -119,7 +220,7 @@ export function startCredentialProxy(
     });
 
     server.listen(port, host, () => {
-      logger.info({ port, host, authMode }, 'Credential proxy started');
+      logger.info({ port, host, authMode, canFallback }, 'Credential proxy started');
       resolve(server);
     });
 

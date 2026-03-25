@@ -31,6 +31,7 @@ export interface IpcDeps {
     emoji: string,
   ) => Promise<void>;
   sendAudio: (jid: string, filePath: string) => Promise<void>;
+  sendSticker: (jid: string, filePath: string) => Promise<void>;
   sendDocument: (
     jid: string,
     filePath: string,
@@ -193,6 +194,48 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   logger.warn(
                     { chatJid: data.chatJid, sourceGroup },
                     'Unauthorized IPC audio attempt blocked',
+                  );
+                }
+              } else if (
+                data.type === 'sticker' &&
+                data.chatJid &&
+                data.filename
+              ) {
+                const targetGroup = registeredGroups[data.chatJid];
+                if (
+                  isMain ||
+                  (targetGroup && targetGroup.folder === sourceGroup)
+                ) {
+                  if (
+                    data.filename.includes('/') ||
+                    data.filename.includes('..')
+                  ) {
+                    logger.warn(
+                      { filename: data.filename, sourceGroup },
+                      'Rejected sticker with unsafe filename',
+                    );
+                  } else {
+                    const folder = targetGroup?.folder || sourceGroup;
+                    // Support subdir (e.g. "stickers") for organized file storage
+                    const subdir =
+                      data.subdir &&
+                      !data.subdir.includes('/') &&
+                      !data.subdir.includes('..')
+                        ? data.subdir
+                        : '';
+                    const absPath = subdir
+                      ? path.join(GROUPS_DIR, folder, subdir, data.filename)
+                      : path.join(GROUPS_DIR, folder, data.filename);
+                    await deps.sendSticker(data.chatJid, absPath);
+                    logger.info(
+                      { chatJid: data.chatJid, sourceGroup },
+                      'IPC sticker sent',
+                    );
+                  }
+                } else {
+                  logger.warn(
+                    { chatJid: data.chatJid, sourceGroup },
+                    'Unauthorized IPC sticker attempt blocked',
                   );
                 }
               } else if (

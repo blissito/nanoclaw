@@ -50,8 +50,24 @@ server.tool(
     image_path: z.string().optional().describe('Absolute path to an image file (e.g. /workspace/group/generated-123.png). When provided, sends a native image with the text as caption.'),
     audio_path: z.string().optional().describe('Absolute path to an audio file (e.g. /workspace/group/tts-123.ogg). When provided, sends a native voice note. Text is ignored.'),
     document_path: z.string().optional().describe('Absolute path to a document file (e.g. /workspace/group/cotizacion.pdf). When provided, sends the file as a native document attachment. Text is used as caption.'),
+    sticker_path: z.string().optional().describe('Absolute path to a WebP sticker file (e.g. /workspace/group/stickers/saludo.webp). Sends a native WhatsApp sticker. Must be 512x512 WebP.'),
   },
   async (args) => {
+    if (args.sticker_path) {
+      const filename = path.basename(args.sticker_path);
+      const subdir = path.basename(path.dirname(args.sticker_path));
+      const data = {
+        type: 'sticker',
+        chatJid,
+        filename,
+        subdir: subdir !== 'group' ? subdir : undefined,
+        groupFolder,
+        timestamp: new Date().toISOString(),
+      };
+      writeIpcFile(MESSAGES_DIR, data);
+      return { content: [{ type: 'text' as const, text: 'Sticker queued for delivery.' }] };
+    }
+
     if (args.document_path) {
       const filename = path.basename(args.document_path);
       const data = {

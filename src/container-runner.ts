@@ -249,9 +249,15 @@ function buildEnvFile(containerName: string): string | null {
     'AWS_BEDROCK_REGION',
   ]);
   if (awsEnv.AWS_BEDROCK_ACCESS_KEY_ID) {
-    envLines.push(`AWS_BEDROCK_ACCESS_KEY_ID=${awsEnv.AWS_BEDROCK_ACCESS_KEY_ID}`);
-    envLines.push(`AWS_BEDROCK_SECRET_ACCESS_KEY=${awsEnv.AWS_BEDROCK_SECRET_ACCESS_KEY}`);
-    envLines.push(`AWS_BEDROCK_REGION=${awsEnv.AWS_BEDROCK_REGION || 'us-east-1'}`);
+    envLines.push(
+      `AWS_BEDROCK_ACCESS_KEY_ID=${awsEnv.AWS_BEDROCK_ACCESS_KEY_ID}`,
+    );
+    envLines.push(
+      `AWS_BEDROCK_SECRET_ACCESS_KEY=${awsEnv.AWS_BEDROCK_SECRET_ACCESS_KEY}`,
+    );
+    envLines.push(
+      `AWS_BEDROCK_REGION=${awsEnv.AWS_BEDROCK_REGION || 'us-east-1'}`,
+    );
   }
 
   const sesEnv = readEnvFile([
