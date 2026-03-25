@@ -68,9 +68,7 @@ export function startCredentialProxy(
     headers: Record<string, string | number | string[] | undefined>,
     reqUrl: string | undefined,
   ): void {
-    const isExchange = reqUrl?.includes(
-      '/api/oauth/claude_cli/create_api_key',
-    );
+    const isExchange = reqUrl?.includes('/api/oauth/claude_cli/create_api_key');
     if (isExchange || headers['authorization']) {
       delete headers['x-api-key'];
       delete headers['authorization'];
@@ -144,7 +142,10 @@ export function startCredentialProxy(
             },
           );
           upstream.on('error', (err) => {
-            logger.error({ err, url: req.url }, 'Credential proxy upstream error');
+            logger.error(
+              { err, url: req.url },
+              'Credential proxy upstream error',
+            );
             if (!res.headersSent) {
               res.writeHead(502);
               res.end('Bad Gateway');
@@ -220,7 +221,10 @@ export function startCredentialProxy(
     });
 
     server.listen(port, host, () => {
-      logger.info({ port, host, authMode, canFallback }, 'Credential proxy started');
+      logger.info(
+        { port, host, authMode, canFallback },
+        'Credential proxy started',
+      );
       resolve(server);
     });
 

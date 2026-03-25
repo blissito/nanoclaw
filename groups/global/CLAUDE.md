@@ -38,6 +38,29 @@ Text inside `<internal>` tags is logged but not sent to the user. If you've alre
 
 When working as a sub-agent or teammate, only use `send_message` if instructed to by the main agent.
 
+## GitHub
+
+You have `gh` CLI and `git` available. You can read any public repo without authentication:
+- `gh repo view owner/repo`
+- `gh api repos/owner/repo/contents/path` (read files via API without cloning)
+- `git clone https://github.com/owner/repo` (full clone)
+- `gh search repos "query"`, `gh search code "query"`
+- `gh issue list -R owner/repo`, `gh pr list -R owner/repo`
+
+### Writing to repos (user provides token)
+
+When a user provides a GitHub token to push code or create PRs:
+
+1. *Save credentials* — `echo "TOKEN" > /workspace/group/.github-token` and repo in `/workspace/group/.github-repo`
+2. *Authenticate* — `gh auth login --with-token < /workspace/group/.github-token && gh auth setup-git`
+3. *Clone* — `gh repo clone <repo> /workspace/group/repo` (or `git pull` if already cloned)
+4. *Work* — create a branch, make changes, commit, push
+5. *Open PR* — `gh pr create --title "..." --body "..."`
+
+On subsequent sessions, check if `.github-token` exists and authenticate automatically before any git operation.
+
+SECURITY: Never echo or display the token. Never include it in messages to the user. If the user sends the token in chat, acknowledge receipt without repeating it.
+
 ## Your Workspace
 
 Files you create are saved in `/workspace/group/`. Use this for notes, research, or anything that should persist.

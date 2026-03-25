@@ -165,10 +165,7 @@ export class FormmyWhatsAppChannel implements Channel {
     await new Promise<void>((resolve) => {
       this.server!.listen(this.port, () => {
         this.connected = true;
-        logger.info(
-          { port: this.port },
-          '[formmy-whatsapp] Channel listening',
-        );
+        logger.info({ port: this.port }, '[formmy-whatsapp] Channel listening');
         resolve();
       });
     });
@@ -239,9 +236,7 @@ export class FormmyWhatsAppChannel implements Channel {
   async disconnect(): Promise<void> {
     this.connected = false;
     if (this.server) {
-      await new Promise<void>((resolve) =>
-        this.server!.close(() => resolve()),
-      );
+      await new Promise<void>((resolve) => this.server!.close(() => resolve()));
       this.server = null;
     }
     logger.info('[formmy-whatsapp] Channel disconnected');
@@ -289,7 +284,8 @@ export class FormmyWhatsAppChannel implements Channel {
           const attachDir = path.join(groupDir, 'attachments');
           fs.mkdirSync(attachDir, { recursive: true });
           const filename =
-            media.filename || `doc-${Date.now()}${extFromMime(media.mime_type)}`;
+            media.filename ||
+            `doc-${Date.now()}${extFromMime(media.mime_type)}`;
           fs.writeFileSync(path.join(attachDir, filename), buffer);
           const sizeKB = Math.round(buffer.length / 1024);
           const caption = media.caption || existingContent || '';
@@ -378,26 +374,28 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 function downloadFile(url: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const transport = url.startsWith('https') ? https : http;
-    transport.get(url, (res) => {
-      // Follow redirects
-      if (
-        res.statusCode &&
-        res.statusCode >= 300 &&
-        res.statusCode < 400 &&
-        res.headers.location
-      ) {
-        downloadFile(res.headers.location).then(resolve).catch(reject);
-        return;
-      }
-      if (res.statusCode && res.statusCode >= 400) {
-        reject(new Error(`HTTP ${res.statusCode} downloading ${url}`));
-        return;
-      }
-      const chunks: Buffer[] = [];
-      res.on('data', (chunk) => chunks.push(chunk as Buffer));
-      res.on('end', () => resolve(Buffer.concat(chunks)));
-      res.on('error', reject);
-    }).on('error', reject);
+    transport
+      .get(url, (res) => {
+        // Follow redirects
+        if (
+          res.statusCode &&
+          res.statusCode >= 300 &&
+          res.statusCode < 400 &&
+          res.headers.location
+        ) {
+          downloadFile(res.headers.location).then(resolve).catch(reject);
+          return;
+        }
+        if (res.statusCode && res.statusCode >= 400) {
+          reject(new Error(`HTTP ${res.statusCode} downloading ${url}`));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk) => chunks.push(chunk as Buffer));
+        res.on('end', () => resolve(Buffer.concat(chunks)));
+        res.on('error', reject);
+      })
+      .on('error', reject);
   });
 }
 
@@ -424,5 +422,11 @@ registerChannel(CHANNEL_NAME, (opts: ChannelOpts) => {
     return null; // Credentials missing -- skip
   }
 
-  return new FormmyWhatsAppChannel(opts, port, secret, callbackUrl, integrationId);
+  return new FormmyWhatsAppChannel(
+    opts,
+    port,
+    secret,
+    callbackUrl,
+    integrationId,
+  );
 });

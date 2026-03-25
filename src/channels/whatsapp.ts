@@ -369,10 +369,7 @@ export class WhatsAppChannel implements Channel {
                 content = content
                   ? `${content}\n[Sticker: stickers/${filename}]`
                   : `[Sticker: stickers/${filename}]`;
-                logger.info(
-                  { jid: chatJid, filename },
-                  'Sticker saved',
-                );
+                logger.info({ jid: chatJid, filename }, 'Sticker saved');
               } catch (err) {
                 logger.warn({ err, jid: chatJid }, 'Sticker download failed');
               }
