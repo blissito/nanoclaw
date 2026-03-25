@@ -9,6 +9,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
+import http from 'http';
 import https from 'https';
 import crypto from 'crypto';
 import { CronExpressionParser } from 'cron-parser';
@@ -424,6 +425,47 @@ Use available_groups.json to find the JID for a group. The folder name must be c
     return {
       content: [{ type: 'text' as const, text: `Group "${args.name}" registered. It will start receiving messages immediately.` }],
     };
+  },
+);
+
+server.tool(
+  'get_invite_link',
+  'Get the WhatsApp group invite link for this chat. Returns a https://chat.whatsapp.com/... URL that can be shared with others to join the group. Only works for WhatsApp groups.',
+  {},
+  async () => {
+    const baseUrl = process.env.ANTHROPIC_BASE_URL;
+    if (!baseUrl) {
+      return {
+        content: [{ type: 'text' as const, text: 'No proxy URL configured.' }],
+        isError: true,
+      };
+    }
+
+    try {
+      const url = `${baseUrl}/nanoclaw/invite-link?jid=${encodeURIComponent(chatJid)}`;
+      const httpGet = url.startsWith('https') ? https.get.bind(https) : http.get.bind(http);
+      const res = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+        httpGet(url, (resp: http.IncomingMessage) => {
+          let data = '';
+          resp.on('data', (c: Buffer) => data += c);
+          resp.on('end', () => resolve({ status: resp.statusCode || 500, body: data }));
+        }).on('error', reject);
+      });
+
+      const parsed = JSON.parse(res.body);
+      if (parsed.link) {
+        return { content: [{ type: 'text' as const, text: parsed.link }] };
+      }
+      return {
+        content: [{ type: 'text' as const, text: parsed.error || 'Could not generate invite link. The bot may not be an admin in this group.' }],
+        isError: true,
+      };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
   },
 );
 

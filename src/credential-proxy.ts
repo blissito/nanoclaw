@@ -22,9 +22,14 @@ export interface ProxyConfig {
 
 const FALLBACK_MODEL = 'claude-haiku-4-5-20251001';
 
+export interface NanoClawHandlers {
+  getInviteLink?: (jid: string) => Promise<string | null>;
+}
+
 export function startCredentialProxy(
   port: number,
   host = '127.0.0.1',
+  handlers: NanoClawHandlers = {},
 ): Promise<Server> {
   const secrets = readEnvFile([
     'ANTHROPIC_API_KEY',
@@ -101,6 +106,33 @@ export function startCredentialProxy(
 
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
+      // NanoClaw internal endpoints (not proxied to Anthropic)
+      if (req.url?.startsWith('/nanoclaw/')) {
+        const url = new URL(req.url, `http://${req.headers.host}`);
+
+        if (url.pathname === '/nanoclaw/invite-link' && req.method === 'GET') {
+          const jid = url.searchParams.get('jid');
+          if (!jid || !handlers.getInviteLink) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Missing jid or handler not ready' }));
+            return;
+          }
+          handlers.getInviteLink(jid).then((link) => {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ link }));
+          }).catch((err) => {
+            logger.error({ err, jid }, 'Error getting invite link');
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Internal error' }));
+          });
+          return;
+        }
+
+        res.writeHead(404);
+        res.end('Not Found');
+        return;
+      }
+
       const chunks: Buffer[] = [];
       req.on('data', (c) => chunks.push(c));
       req.on('end', () => {

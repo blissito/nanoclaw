@@ -9,7 +9,7 @@ import {
   TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
-import { startCredentialProxy } from './credential-proxy.js';
+import { NanoClawHandlers, startCredentialProxy } from './credential-proxy.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -575,9 +575,11 @@ async function main(): Promise<void> {
   restoreRemoteControl();
 
   // Start credential proxy (containers route API calls through this)
+  const nanoClawHandlers: NanoClawHandlers = {};
   const proxyServer = await startCredentialProxy(
     CREDENTIAL_PROXY_PORT,
     PROXY_BIND_HOST,
+    nanoClawHandlers,
   );
 
   // Graceful shutdown handlers
@@ -711,6 +713,13 @@ async function main(): Promise<void> {
       if (text) await channel.sendMessage(jid, text);
     },
   });
+  // Wire up NanoClaw HTTP handlers now that channels are connected
+  nanoClawHandlers.getInviteLink = async (jid) => {
+    const channel = findChannel(channels, jid);
+    if (!channel || !channel.getInviteLink) return null;
+    return channel.getInviteLink(jid);
+  };
+
   startIpcWatcher({
     sendMessage: (jid, text) => {
       const channel = findChannel(channels, jid);
