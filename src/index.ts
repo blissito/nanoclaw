@@ -289,7 +289,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     const triggerRe = groupTriggerPattern(group.trigger);
     const hasTrigger = missedMessages.some(
       (m) =>
-        triggerRe.test(m.content.trim()) &&
+        (triggerRe.test(m.content.trim()) || m.content.includes('[Sticker:')) &&
         (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
     );
     if (!hasTrigger) {
@@ -580,7 +580,7 @@ async function startMessageLoop(): Promise<void> {
             const triggerRe = groupTriggerPattern(group.trigger);
             const hasTrigger = groupMessages.some(
               (m) =>
-                triggerRe.test(m.content.trim()) &&
+                (triggerRe.test(m.content.trim()) || m.content.includes('[Sticker:')) &&
                 (m.is_from_me ||
                   isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
             );
