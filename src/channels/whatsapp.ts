@@ -477,13 +477,19 @@ export class WhatsAppChannel implements Channel {
       const names = mentionMatches.map((m) => m.slice(1)); // strip @
       const members = findMembersByName(jid, names);
       if (members.length > 0) {
-        mentions = members.map((m) => m.jid);
+        const resolved = await Promise.all(
+          members.map((m) => this.translateJid(m.jid)),
+        );
+        mentions = resolved.filter((j) => j.endsWith('@s.whatsapp.net'));
       }
     }
 
     try {
       await this.sock.sendMessage(jid, { text: prefixed, mentions });
-      logger.info({ jid, length: prefixed.length, mentions: mentions?.length ?? 0 }, 'Message sent');
+      logger.info(
+        { jid, length: prefixed.length, mentions: mentions?.length ?? 0 },
+        'Message sent',
+      );
     } catch (err) {
       // If send fails, queue it for retry on reconnect
       this.outgoingQueue.push({ kind: 'text', jid, text: prefixed });
