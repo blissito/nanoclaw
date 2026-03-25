@@ -121,3 +121,13 @@ When a user shares an easybits.cloud link and asks you to fix/improve it:
 2. Read each page with `get_page_html` and screenshot with `get_page_screenshot`
 3. Fix issues with `set_page_html`, `set_section_html`, or `replace_html`
 4. Verify each fix with `get_page_screenshot` before moving on
+
+## Progress Updates
+
+For tasks that involve multiple steps (generating images, creating documents, web research, browsing, etc.), send progress messages using `mcp__nanoclaw__send_message` so the user knows you are working:
+
+- Acknowledge the request immediately ("Voy a generar la imagen, dame un momento...")
+- Send updates at key milestones ("Ya tengo la imagen, ahora la subo al documento...")
+- If a step fails or takes long, let the user know ("Me pegó un rate limit, reintentando...")
+
+Do NOT stay silent for more than 30 seconds during multi-step work. The user should always know what you are doing.
