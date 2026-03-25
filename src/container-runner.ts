@@ -243,6 +243,9 @@ function buildEnvFile(containerName: string): string | null {
   const falKey = readEnvFile(['FAL_KEY']).FAL_KEY;
   if (falKey) envLines.push(`FAL_KEY=${falKey}`);
 
+  const mpToken = readEnvFile(['MP_ACCESS_TOKEN']).MP_ACCESS_TOKEN;
+  if (mpToken) envLines.push(`MP_ACCESS_TOKEN=${mpToken}`);
+
   const awsEnv = readEnvFile([
     'AWS_BEDROCK_ACCESS_KEY_ID',
     'AWS_BEDROCK_SECRET_ACCESS_KEY',

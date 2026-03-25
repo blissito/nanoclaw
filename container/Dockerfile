@@ -58,6 +58,10 @@ RUN npm run build
 COPY skills/pdf-reader/pdf-reader /usr/local/bin/pdf-reader
 RUN chmod +x /usr/local/bin/pdf-reader
 
+# Install mercadopago CLI
+COPY skills/mercadopago/mercadopago /usr/local/bin/mercadopago
+RUN chmod +x /usr/local/bin/mercadopago
+
 # Create workspace directories
 RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input
 
