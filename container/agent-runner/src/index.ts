@@ -681,8 +681,47 @@ async function main(): Promise<void> {
       log('WARNING: compact_boundary was not observed. Compaction may not have completed.');
     }
 
-    // Only emit final session marker if no result was emitted yet and no error occurred
-    if (!resultEmitted && !hadError) {
+    // After successful compaction, ask for a brief session summary
+    if (!hadError && compactBoundarySeen && slashSessionId) {
+      log('Requesting post-compact session summary...');
+      let summary = '';
+      try {
+        for await (const message of query({
+          prompt: 'Responde en 2-3 líneas máximo: ¿Qué se discutió en esta conversación y cuál es el estado actual? No digas que compactaste, solo el resumen del contenido.',
+          options: {
+            cwd: '/workspace/group',
+            resume: slashSessionId,
+            systemPrompt: undefined,
+            allowedTools: [],
+            env: sdkEnv,
+            permissionMode: 'bypassPermissions' as const,
+            allowDangerouslySkipPermissions: true,
+            settingSources: ['project', 'user'] as const,
+          },
+        })) {
+          if (message.type === 'assistant' && 'message' in message) {
+            const content = (message as { message: { content: Array<{ type: string; text?: string }> } }).message.content;
+            for (const block of content) {
+              if (block.type === 'text' && block.text) summary += block.text;
+            }
+          }
+          if (message.type === 'result' && 'result' in message) {
+            const resultText = (message as { result?: string }).result;
+            if (resultText) summary = resultText;
+          }
+        }
+      } catch (err) {
+        log(`Summary request failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      writeOutput({
+        status: 'success',
+        result: summary
+          ? `Compactado. Resumen: ${summary}`
+          : 'Conversation compacted.',
+        newSessionId: slashSessionId,
+      });
+    } else if (!resultEmitted && !hadError) {
       writeOutput({
         status: 'success',
         result: compactBoundarySeen
