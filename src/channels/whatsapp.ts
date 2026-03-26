@@ -648,7 +648,10 @@ export class WhatsAppChannel implements Channel {
 
   async updateProfilePicture(jid: string, filePath: string): Promise<void> {
     if (!this.connected) {
-      logger.warn({ jid, filePath }, 'WA disconnected, profile picture update dropped');
+      logger.warn(
+        { jid, filePath },
+        'WA disconnected, profile picture update dropped',
+      );
       return;
     }
     const buffer = fs.readFileSync(filePath);

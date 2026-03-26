@@ -305,7 +305,10 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     data.filename,
                   );
                   await deps.updateProfilePicture(data.chatJid, absPath);
-                  logger.info({ sourceGroup, chatJid: data.chatJid }, 'Profile picture updated via IPC');
+                  logger.info(
+                    { sourceGroup, chatJid: data.chatJid },
+                    'Profile picture updated via IPC',
+                  );
                 }
               } else if (data.type === 'track_image_gen') {
                 trackImageGeneration({
