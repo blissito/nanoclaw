@@ -64,13 +64,14 @@ clone-voice /workspace/group/extracted-audio.ogg "nombre-de-la-voz"
 ### From YouTube link
 When someone sends a YouTube URL and says "clona la voz de este video", "baja este video", "descarga el audio" or similar:
 
-**IMPORTANT:** YouTube blocks ALL requests without cookies. NEVER try without cookies. ALWAYS use this exact command:
+**IMPORTANT:** YouTube blocks ALL requests without cookies. NEVER try without cookies. ALWAYS copy cookies first (source is read-only), then use yt-dlp:
 
 ```bash
-yt-dlp --cookies /workspace/youtube-cookies.txt --remote-components ejs:github -x --audio-format wav -o "/workspace/group/yt-audio.%(ext)s" "YOUTUBE_URL"
+cp /workspace/youtube-cookies.txt /tmp/yt-cookies.txt
+yt-dlp --cookies /tmp/yt-cookies.txt --remote-components ejs:github -x --audio-format wav -o "/workspace/group/yt-audio.%(ext)s" "YOUTUBE_URL"
 ```
 
-The cookies file is pre-mounted at `/workspace/youtube-cookies.txt`. Do NOT try cobalt, invidious, or any other workaround — they all fail. Use yt-dlp with cookies directly.
+The cookies file is pre-mounted at `/workspace/youtube-cookies.txt` (read-only). You MUST copy it to `/tmp/` first because yt-dlp needs to write to it. Do NOT try cobalt, invidious, or any other workaround — they all fail. Use yt-dlp with cookies directly.
 
 Then clone:
 ```bash
