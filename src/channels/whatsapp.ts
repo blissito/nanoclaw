@@ -473,14 +473,13 @@ export class WhatsAppChannel implements Channel {
     // Resolve @mentions to JIDs for real WhatsApp tagging
     const mentionMatches = prefixed.match(/@[\w\u00C0-\u024F]+/g);
     let mentions: string[] | undefined;
-    if (mentionMatches) {
-      const names = mentionMatches.map((m) => m.slice(1)); // strip @
-      const members = findMembersByName(jid, names);
-      if (members.length > 0) {
-        const resolved = await Promise.all(
-          members.map((m) => this.translateJid(m.jid)),
-        );
-        mentions = resolved.filter((j) => j.endsWith('@s.whatsapp.net'));
+    if (mentionMatches && jid.endsWith('@g.us')) {
+      const names = mentionMatches.map((m) => m.slice(1).toLowerCase());
+      // Use DB pushNames to find JIDs, then pass them directly as mentions
+      // (WhatsApp accepts both LID and phone JIDs in the mentions array)
+      const dbMembers = findMembersByName(jid, names);
+      if (dbMembers.length > 0) {
+        mentions = dbMembers.map((m) => m.jid);
       }
     }
 
