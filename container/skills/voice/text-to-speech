@@ -16,6 +16,9 @@ declare -A VOICES=(
   [brian]="XgQWNZcJ8SRkxXwwhPTo"
   [daniel]="T7BErSAR6r6NDaGdTLKB"
   [enrique]="gbTn1bmCvNgk0QEAVyfM"
+  [maya]="nbcvT3C2tyOd2OsRAtUf"
+  [cristina]="nTkjq09AuYgsNR8E4sDe"
+  [regina]="9Godp7dNohUvXk6qp0gS"
 )
 
 # Check for custom cloned voice in group config

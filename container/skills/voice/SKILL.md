@@ -19,6 +19,9 @@ Pick the voice that fits the moment:
 | `brian` | Warm, soft, podcast | Long explanations, calm tone |
 | `daniel` | Young, natural, casual | Casual banter, young audience |
 | `enrique` | Rich, credible, narrator | Serious narration, formal reports |
+| `maya` | Dynamic, Mexican female | Female storytelling, energetic |
+| `cristina` | Young, conversational, Mexican female | Female casual chat |
+| `regina` | Sweet, friendly, Mexican female | Female warm/professional |
 | `custom` | Cloned voice | When group has a custom cloned voice |
 
 ```bash
