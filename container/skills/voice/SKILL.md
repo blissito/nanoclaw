@@ -65,9 +65,11 @@ clone-voice /workspace/group/extracted-audio.ogg "nombre-de-la-voz"
 When someone sends a YouTube URL and says "clona la voz de este video" or similar:
 
 ```bash
-yt-dlp -x --audio-format wav -o "/workspace/group/yt-audio.%(ext)s" "YOUTUBE_URL"
+yt-dlp --cookies /workspace/youtube-cookies.txt --remote-components ejs:github -x --audio-format wav -o "/workspace/group/yt-audio.%(ext)s" "YOUTUBE_URL"
 clone-voice /workspace/group/yt-audio.wav "nombre-de-la-voz"
 ```
+
+**Important:** Always include `--cookies /workspace/youtube-cookies.txt` and `--remote-components ejs:github` — YouTube blocks without them.
 
 For best results, pick a video with clear speech (no music, no background noise). If the video has music, try to find a clip with just talking.
 

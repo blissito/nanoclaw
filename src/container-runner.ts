@@ -202,6 +202,16 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // YouTube cookies for yt-dlp (optional, read-only)
+  const ytCookies = path.join(projectRoot, 'data', 'youtube-cookies.txt');
+  if (fs.existsSync(ytCookies)) {
+    mounts.push({
+      hostPath: ytCookies,
+      containerPath: '/workspace/youtube-cookies.txt',
+      readonly: true,
+    });
+  }
+
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
     const validatedMounts = validateAdditionalMounts(
