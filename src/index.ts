@@ -839,6 +839,21 @@ async function main(): Promise<void> {
         caption || '[Document not supported on this channel]',
       );
     },
+    sendVideo: (jid, filePath, caption) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      if (channel.sendVideo) {
+        return channel.sendVideo(jid, filePath, caption);
+      }
+      // Fallback: send as document if channel doesn't support native video
+      if (channel.sendDocument) {
+        return channel.sendDocument(jid, filePath, filePath.split('/').pop() || 'video.mp4', caption);
+      }
+      return channel.sendMessage(
+        jid,
+        caption || '[Video not supported on this channel]',
+      );
+    },
     sendSticker: (jid, filePath) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);

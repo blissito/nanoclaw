@@ -31,6 +31,7 @@ export interface IpcDeps {
     emoji: string,
   ) => Promise<void>;
   sendAudio: (jid: string, filePath: string) => Promise<void>;
+  sendVideo: (jid: string, filePath: string, caption: string) => Promise<void>;
   sendSticker: (jid: string, filePath: string) => Promise<void>;
   sendDocument: (
     jid: string,
@@ -195,6 +196,47 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   logger.warn(
                     { chatJid: data.chatJid, sourceGroup },
                     'Unauthorized IPC audio attempt blocked',
+                  );
+                }
+              } else if (
+                data.type === 'video' &&
+                data.chatJid &&
+                data.filename
+              ) {
+                const targetGroup = registeredGroups[data.chatJid];
+                if (
+                  isMain ||
+                  (targetGroup && targetGroup.folder === sourceGroup)
+                ) {
+                  if (
+                    data.filename.includes('/') ||
+                    data.filename.includes('..')
+                  ) {
+                    logger.warn(
+                      { filename: data.filename, sourceGroup },
+                      'Rejected video with unsafe filename',
+                    );
+                  } else {
+                    const folder = targetGroup?.folder || sourceGroup;
+                    const absPath = path.join(
+                      GROUPS_DIR,
+                      folder,
+                      data.filename,
+                    );
+                    await deps.sendVideo(
+                      data.chatJid,
+                      absPath,
+                      data.caption || '',
+                    );
+                    logger.info(
+                      { chatJid: data.chatJid, sourceGroup },
+                      'IPC video sent',
+                    );
+                  }
+                } else {
+                  logger.warn(
+                    { chatJid: data.chatJid, sourceGroup },
+                    'Unauthorized IPC video attempt blocked',
                   );
                 }
               } else if (

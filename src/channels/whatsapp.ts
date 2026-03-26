@@ -54,6 +54,7 @@ export class WhatsAppChannel implements Channel {
   private outgoingQueue: Array<
     | { kind: 'text'; jid: string; text: string }
     | { kind: 'image'; jid: string; filePath: string; caption: string }
+    | { kind: 'video'; jid: string; filePath: string; caption: string }
     | { kind: 'sticker'; jid: string; filePath: string }
   > = [];
   private flushing = false;
@@ -544,6 +545,26 @@ export class WhatsAppChannel implements Channel {
     }
   }
 
+  async sendVideo(
+    jid: string,
+    filePath: string,
+    caption: string,
+  ): Promise<void> {
+    if (!this.connected) {
+      this.outgoingQueue.push({ kind: 'video', jid, filePath, caption });
+      logger.info({ jid, filePath }, 'WA disconnected, video queued');
+      return;
+    }
+    try {
+      const buffer = fs.readFileSync(filePath);
+      await this.sock.sendMessage(jid, { video: buffer, caption });
+      logger.info({ jid, filePath }, 'Video sent');
+    } catch (err) {
+      this.outgoingQueue.push({ kind: 'video', jid, filePath, caption });
+      logger.warn({ jid, filePath, err }, 'Failed to send video, queued');
+    }
+  }
+
   async sendSticker(jid: string, filePath: string): Promise<void> {
     if (!this.connected) {
       this.outgoingQueue.push({ kind: 'sticker', jid, filePath });
@@ -786,6 +807,16 @@ export class WhatsAppChannel implements Channel {
           logger.info(
             { jid: item.jid, filePath: item.filePath },
             'Queued image sent',
+          );
+        } else if (item.kind === 'video') {
+          const buffer = fs.readFileSync(item.filePath);
+          await this.sock.sendMessage(item.jid, {
+            video: buffer,
+            caption: item.caption,
+          });
+          logger.info(
+            { jid: item.jid, filePath: item.filePath },
+            'Queued video sent',
           );
         } else if (item.kind === 'sticker') {
           const buffer = fs.readFileSync(item.filePath);

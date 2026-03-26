@@ -50,6 +50,7 @@ server.tool(
     sender: z.string().optional().describe('Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.'),
     image_path: z.string().optional().describe('Absolute path to an image file (e.g. /workspace/group/generated-123.png). When provided, sends a native image with the text as caption.'),
     audio_path: z.string().optional().describe('Absolute path to an audio file (e.g. /workspace/group/tts-123.ogg). When provided, sends a native voice note. Text is ignored.'),
+    video_path: z.string().optional().describe('Absolute path to a video file (e.g. /workspace/group/video-123.mp4). When provided, sends a native inline video. Text is used as caption.'),
     document_path: z.string().optional().describe('Absolute path to a document file (e.g. /workspace/group/cotizacion.pdf). When provided, sends the file as a native document attachment. Text is used as caption.'),
     sticker_path: z.string().optional().describe('Absolute path to a WebP sticker file (e.g. /workspace/group/stickers/saludo.webp). Sends a native WhatsApp sticker. Must be 512x512 WebP.'),
   },
@@ -67,6 +68,20 @@ server.tool(
       };
       writeIpcFile(MESSAGES_DIR, data);
       return { content: [{ type: 'text' as const, text: 'Sticker queued for delivery.' }] };
+    }
+
+    if (args.video_path) {
+      const filename = path.basename(args.video_path);
+      const data = {
+        type: 'video',
+        chatJid,
+        filename,
+        caption: args.text || '',
+        groupFolder,
+        timestamp: new Date().toISOString(),
+      };
+      writeIpcFile(MESSAGES_DIR, data);
+      return { content: [{ type: 'text' as const, text: 'Video queued for delivery.' }] };
     }
 
     if (args.document_path) {

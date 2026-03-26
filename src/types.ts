@@ -89,6 +89,8 @@ export interface Channel {
   disconnect(): Promise<void>;
   // Optional: send a native image with caption.
   sendImage?(jid: string, filePath: string, caption: string): Promise<void>;
+  // Optional: send a native video.
+  sendVideo?(jid: string, filePath: string, caption: string): Promise<void>;
   // Optional: send a voice note.
   sendAudio?(jid: string, filePath: string): Promise<void>;
   // Optional: send a document/file (PDF, etc.).

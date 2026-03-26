@@ -56,6 +56,7 @@ beforeEach(() => {
     sendImage: async () => {},
     sendReaction: async () => {},
     sendAudio: async () => {},
+    sendVideo: async () => {},
     sendSticker: async () => {},
     sendDocument: async () => {},
     registeredGroups: () => groups,

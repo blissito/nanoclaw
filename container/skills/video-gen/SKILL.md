@@ -26,10 +26,10 @@ Then call `generate-video`. Then send the result.
 
 ## Output & delivery
 
-The script saves an `.mp4` to `/workspace/group/` and prints the path. Send as a document (WhatsApp plays mp4 inline):
+The script saves an `.mp4` to `/workspace/group/` and prints the path. Send as a native video:
 
 ```
-mcp__nanoclaw__send_message({ text: "Listo:", document_path: "/workspace/group/video-1234.mp4" })
+mcp__nanoclaw__send_message({ text: "Listo:", video_path: "/workspace/group/video-1234.mp4" })
 ```
 
 ## Specs
