@@ -62,16 +62,27 @@ clone-voice /workspace/group/extracted-audio.ogg "nombre-de-la-voz"
 ```
 
 ### From YouTube link
-When someone sends a YouTube URL and says "clona la voz de este video" or similar:
+When someone sends a YouTube URL and says "clona la voz de este video", "baja este video", "descarga el audio" or similar:
+
+**IMPORTANT:** YouTube blocks ALL requests without cookies. NEVER try without cookies. ALWAYS use this exact command:
 
 ```bash
 yt-dlp --cookies /workspace/youtube-cookies.txt --remote-components ejs:github -x --audio-format wav -o "/workspace/group/yt-audio.%(ext)s" "YOUTUBE_URL"
+```
+
+The cookies file is pre-mounted at `/workspace/youtube-cookies.txt`. Do NOT try cobalt, invidious, or any other workaround — they all fail. Use yt-dlp with cookies directly.
+
+Then clone:
+```bash
 clone-voice /workspace/group/yt-audio.wav "nombre-de-la-voz"
 ```
 
-**Important:** Always include `--cookies /workspace/youtube-cookies.txt` and `--remote-components ejs:github` — YouTube blocks without them.
+**Warn the user first:** YouTube download + voice cloning takes ~1-2 minutes. Send a message before starting:
+```
+mcp__nanoclaw__send_message({ text: "Descargando audio de YouTube y clonando la voz, dame 1-2 min..." })
+```
 
-For best results, pick a video with clear speech (no music, no background noise). If the video has music, try to find a clip with just talking.
+For best results, pick a video with clear speech (no music, no background noise).
 
 ### After cloning
 This uploads the audio to ElevenLabs, creates a cloned voice, and saves it to the group config. Future calls with `text-to-speech "text" custom` will use the cloned voice.
