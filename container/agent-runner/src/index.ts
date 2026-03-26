@@ -391,6 +391,7 @@ function getAllMcpServers(containerInput: ContainerInput, mcpServerPath: string)
       args: ['-y', '@brightdata/mcp'],
       env: {
         API_TOKEN: process.env.BRIGHTDATA_API_TOKEN || '',
+        GROUPS: 'geo,social,business,ecommerce,finance',
       },
     },
   };
