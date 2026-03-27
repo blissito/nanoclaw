@@ -229,6 +229,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     chatJid,
     getOrRecoverCursor(chatJid),
     ASSISTANT_NAME,
+    MAX_MESSAGES_PER_PROMPT,
   );
 
   if (missedMessages.length === 0) return true;
@@ -864,6 +865,7 @@ async function startMessageLoop(): Promise<void> {
             chatJid,
             getOrRecoverCursor(chatJid),
             ASSISTANT_NAME,
+            MAX_MESSAGES_PER_PROMPT,
           );
           const messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
@@ -947,6 +949,7 @@ function recoverPendingMessages(): void {
       chatJid,
       getOrRecoverCursor(chatJid),
       ASSISTANT_NAME,
+      MAX_MESSAGES_PER_PROMPT,
     );
     if (pending.length > 0) {
       logger.info(
