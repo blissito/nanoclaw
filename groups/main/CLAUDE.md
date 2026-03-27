@@ -238,9 +238,31 @@ You can read and write to `/workspace/project/groups/global/CLAUDE.md` for facts
 
 ---
 
+## Cross-Group Commands ("dile a X que...")
+
+When the user says things like "dile a probandobot que...", "tell nanoprueba to...", or "inject into pia: ...", you must:
+
+1. **Resolve the group**: Find the target group's JID from `available_groups.json` or the `registered_groups` table. Match by name, folder, or alias (e.g., "pia" = "siiqtec", "probandobot" = the test bot group).
+2. **Schedule an immediate task**: Use `schedule_task` with:
+   - `prompt`: The instruction (what the target agent should do)
+   - `schedule_type`: `"once"`
+   - `schedule_value`: Current ISO timestamp (`new Date().toISOString()`)
+   - `target_group_jid`: The resolved JID
+   - `context_mode`: `"group"` (so the target agent has its own memory and files)
+3. **Confirm briefly**: Tell the user it was sent. Don't over-explain the mechanism.
+
+Example:
+```
+User: "dile a probandobot que salude con voz sexy"
+→ schedule_task(prompt: "Saluda con voz sexy y sorprendida a lo último que postearon", schedule_type: "once", schedule_value: "2026-03-27T16:06:00Z", target_group_jid: "...", context_mode: "group")
+→ Reply: "Enviado a ProbandoBot 😏"
+```
+
+**Important**: Always use a valid ISO timestamp for `schedule_value`, never relative words like "ahora" or "now". The scheduler picks it up on its next poll cycle.
+
 ## Scheduling for Other Groups
 
-When scheduling tasks for other groups, use the `target_group_jid` parameter with the group's JID from `registered_groups.json`:
+When scheduling recurring tasks for other groups, use the `target_group_jid` parameter with the group's JID:
 - `schedule_task(prompt: "...", schedule_type: "cron", schedule_value: "0 9 * * 1", target_group_jid: "120363336345536173@g.us")`
 
 The task will run in that group's context with access to their files and memory.
