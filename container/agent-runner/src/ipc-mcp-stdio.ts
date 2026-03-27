@@ -161,6 +161,7 @@ server.tool(
   'React to a message with an emoji. Use message IDs from the conversation context. Great for acknowledging messages (👍), confirming actions (✅), or showing appreciation (❤️🔥).',
   {
     message_id: z.string().describe('The message ID to react to (from the conversation context)'),
+    participant: z.string().optional().describe('The sender_jid of the message to react to (required for group chats)'),
     emoji: z.string().describe('Emoji to react with (e.g., "👍", "❤️", "✅", "🔥", "😂")'),
   },
   async (args) => {
@@ -168,6 +169,7 @@ server.tool(
       type: 'reaction',
       chatJid,
       messageId: args.message_id,
+      participant: args.participant || undefined,
       emoji: args.emoji,
       groupFolder,
       timestamp: new Date().toISOString(),

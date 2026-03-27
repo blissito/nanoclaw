@@ -820,11 +820,11 @@ async function main(): Promise<void> {
         caption || '[Image not supported on this channel]',
       );
     },
-    sendReaction: (jid, messageId, emoji) => {
+    sendReaction: (jid, messageId, emoji, participant) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       if (channel.sendReaction) {
-        return channel.sendReaction(jid, messageId, emoji);
+        return channel.sendReaction(jid, messageId, emoji, participant);
       }
       return Promise.resolve(); // silently skip if channel doesn't support reactions
     },

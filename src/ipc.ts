@@ -29,6 +29,7 @@ export interface IpcDeps {
     jid: string,
     messageId: string,
     emoji: string,
+    participant?: string,
   ) => Promise<void>;
   sendAudio: (jid: string, filePath: string) => Promise<void>;
   sendVideo: (jid: string, filePath: string, caption: string) => Promise<void>;
@@ -146,6 +147,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     data.chatJid,
                     data.messageId,
                     data.emoji,
+                    data.participant,
                   );
                   logger.info(
                     {

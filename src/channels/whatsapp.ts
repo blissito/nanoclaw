@@ -294,10 +294,7 @@ export class WhatsAppChannel implements Channel {
                   'buffer',
                   {},
                 );
-                const groupDir = path.join(
-                  GROUPS_DIR,
-                  groups[chatJid].folder,
-                );
+                const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
                 const attachDir = path.join(groupDir, 'attachments');
                 fs.mkdirSync(attachDir, { recursive: true });
                 const audioFilename = `voice-${Date.now()}.ogg`;
@@ -696,6 +693,7 @@ export class WhatsAppChannel implements Channel {
     jid: string,
     messageId: string,
     emoji: string,
+    participant?: string,
   ): Promise<void> {
     if (!this.connected) {
       logger.warn(
@@ -706,7 +704,7 @@ export class WhatsAppChannel implements Channel {
     }
     try {
       await this.sock.sendMessage(jid, {
-        react: { text: emoji, key: { remoteJid: jid, id: messageId } },
+        react: { text: emoji, key: { remoteJid: jid, id: messageId, participant } },
       });
       logger.info({ jid, messageId, emoji }, 'Reaction sent');
     } catch (err) {
