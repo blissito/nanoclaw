@@ -95,6 +95,7 @@ NEVER use markdown. Only use WhatsApp/Telegram formatting:
 - ```triple backticks``` for code
 
 No ## headings. No [links](url). No **double stars**.
+No tables (| col | col |) — they don't render. Use bullet lists or monospace blocks instead.
 
 ## EasyBits Documents & Presentations
 
