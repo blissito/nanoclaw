@@ -63,6 +63,10 @@ RUN npm run build
 COPY skills/pdf-reader/pdf-reader /usr/local/bin/pdf-reader
 RUN chmod +x /usr/local/bin/pdf-reader
 
+# Install office-reader CLI
+COPY skills/office-reader/office-reader /usr/local/bin/office-reader
+RUN chmod +x /usr/local/bin/office-reader
+
 # Install mercadopago CLI
 COPY skills/mercadopago/mercadopago /usr/local/bin/mercadopago
 RUN chmod +x /usr/local/bin/mercadopago

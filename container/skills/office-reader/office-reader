@@ -1,0 +1,187 @@
+#!/bin/bash
+set -euo pipefail
+
+# office-reader — CLI for Excel (.xls/.xlsx) and Word (.docx) files
+# Uses xlsx and mammoth npm packages (installed in container)
+
+VERSION="1.0.0"
+
+usage() {
+  cat <<'USAGE'
+office-reader — Extract text and data from Office files
+
+Usage:
+  office-reader extract <file> [--sheet <name>] [--json]
+  office-reader info <file>
+  office-reader list
+  office-reader help
+
+Commands:
+  extract   Extract content (CSV for Excel, text for Word)
+  info      Show file metadata (sheets, row counts, size)
+  list      List all Office files in directory tree
+  help      Show this help message
+
+Extract options:
+  --sheet   Extract only the named sheet (Excel only)
+  --json    Output as JSON array of objects (Excel only)
+USAGE
+}
+
+cmd_extract() {
+  local file=""
+  local sheet=""
+  local json=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --sheet)
+        sheet="${2:-}"
+        [[ -z "$sheet" ]] && { echo "Error: --sheet requires a name" >&2; exit 1; }
+        shift 2
+        ;;
+      --json)
+        json=true
+        shift
+        ;;
+      -*)
+        echo "Error: Unknown option: $1" >&2
+        exit 1
+        ;;
+      *)
+        if [[ -z "$file" ]]; then
+          file="$1"
+        else
+          echo "Error: Unexpected argument: $1" >&2
+          exit 1
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$file" ]]; then
+    echo "Error: No file specified" >&2
+    exit 1
+  fi
+
+  if [[ ! -f "$file" ]]; then
+    echo "Error: File not found: $file" >&2
+    exit 1
+  fi
+
+  local ext="${file##*.}"
+  ext="${ext,,}"
+
+  case "$ext" in
+    xls|xlsx)
+      node -e "
+const XLSX = require('xlsx');
+const wb = XLSX.readFile('$file');
+const sheetFilter = '$sheet';
+const asJson = $json;
+const names = sheetFilter ? [sheetFilter] : wb.SheetNames;
+for (const name of names) {
+  const ws = wb.Sheets[name];
+  if (!ws) { console.error('Sheet not found: ' + name); process.exit(1); }
+  if (names.length > 1) console.log('--- ' + name + ' ---');
+  if (asJson) {
+    console.log(JSON.stringify(XLSX.utils.sheet_to_json(ws), null, 2));
+  } else {
+    console.log(XLSX.utils.sheet_to_csv(ws));
+  }
+}
+"
+      ;;
+    docx|doc)
+      node -e "
+const mammoth = require('mammoth');
+mammoth.extractRawText({path: '$file'}).then(r => console.log(r.value));
+"
+      ;;
+    *)
+      echo "Error: Unsupported format: .$ext (supported: xls, xlsx, docx)" >&2
+      exit 1
+      ;;
+  esac
+}
+
+cmd_info() {
+  local file="${1:-}"
+
+  if [[ -z "$file" ]]; then
+    echo "Error: No file specified" >&2
+    exit 1
+  fi
+
+  if [[ ! -f "$file" ]]; then
+    echo "Error: File not found: $file" >&2
+    exit 1
+  fi
+
+  local ext="${file##*.}"
+  ext="${ext,,}"
+  local size
+  size="$(du -h "$file" | cut -f1)"
+
+  case "$ext" in
+    xls|xlsx)
+      echo "File: $file ($size)"
+      node -e "
+const XLSX = require('xlsx');
+const wb = XLSX.readFile('$file');
+for (const name of wb.SheetNames) {
+  const ws = wb.Sheets[name];
+  const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+  const rows = range.e.r - range.s.r + 1;
+  const cols = range.e.c - range.s.c + 1;
+  console.log('  Sheet: ' + name + ' (' + rows + ' rows, ' + cols + ' cols)');
+}
+"
+      ;;
+    docx|doc)
+      echo "File: $file ($size)"
+      echo "  Type: Word document"
+      ;;
+    *)
+      echo "Error: Unsupported format: .$ext" >&2
+      exit 1
+      ;;
+  esac
+}
+
+cmd_list() {
+  local found=false
+  shopt -s nullglob globstar
+
+  declare -A seen
+  for f in *.xls *.xlsx *.docx **/*.xls **/*.xlsx **/*.docx; do
+    [[ -v seen["$f"] ]] && continue
+    seen["$f"]=1
+    found=true
+    local size
+    size="$(du -h "$f" | cut -f1)"
+    printf "%-60s %8s\n" "$f" "$size"
+  done
+
+  if [[ "$found" == false ]]; then
+    echo "No Office files found in current directory tree." >&2
+  fi
+}
+
+# Main dispatch
+command="${1:-help}"
+shift || true
+
+case "$command" in
+  extract) cmd_extract "$@" ;;
+  info)    cmd_info "$@" ;;
+  list)    cmd_list ;;
+  help|--help|-h) usage ;;
+  version|--version|-v) echo "office-reader $VERSION" ;;
+  *)
+    echo "Error: Unknown command: $command" >&2
+    echo "Run 'office-reader help' for usage." >&2
+    exit 1
+    ;;
+esac

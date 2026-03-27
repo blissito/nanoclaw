@@ -356,8 +356,14 @@ export class WhatsAppChannel implements Channel {
                     '.mov',
                     '.avi',
                   ].includes(ext);
+                const isOffice =
+                  ['.xls', '.xlsx', '.docx', '.pptx', '.doc'].includes(ext) ||
+                  mime.includes('spreadsheet') ||
+                  mime.includes('wordprocessing') ||
+                  mime === 'application/vnd.ms-excel' ||
+                  mime === 'application/msword';
 
-                if (isPdf || isText || isMedia) {
+                if (isPdf || isText || isMedia || isOffice) {
                   const buffer = await downloadMediaMessage(msg, 'buffer', {});
                   const groupDir = path.join(
                     GROUPS_DIR,
@@ -377,6 +383,11 @@ export class WhatsAppChannel implements Channel {
                   if (isPdf) {
                     const pdfRef = `[PDF: attachments/${filename} (${sizeKB}KB)]\nUse: pdf-reader extract attachments/${filename}`;
                     content = caption ? `${caption}\n\n${pdfRef}` : pdfRef;
+                  } else if (isOffice) {
+                    const officeRef = `[Office: attachments/${filename} (${sizeKB}KB)]\nUse: office-reader extract attachments/${filename}`;
+                    content = caption
+                      ? `${caption}\n\n${officeRef}`
+                      : officeRef;
                   } else if (isMedia) {
                     const mediaType = mime.startsWith('video/')
                       ? 'Video'
