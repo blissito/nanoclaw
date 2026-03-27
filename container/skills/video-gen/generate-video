@@ -44,11 +44,13 @@ if [[ -n "$ERROR" ]]; then
   exit 1
 fi
 
-# Get request ID for polling
-REQUEST_ID=$(python3 -c "
+# Get request ID and URLs for polling
+eval $(python3 -c "
 import json, sys
 d = json.load(sys.stdin)
-print(d.get('request_id', ''))
+print(f'REQUEST_ID={d.get(\"request_id\", \"\")}')
+print(f'STATUS_URL={d.get(\"status_url\", \"\")}')
+print(f'RESPONSE_URL={d.get(\"response_url\", \"\")}')
 " <<< "$RESPONSE")
 
 if [[ -z "$REQUEST_ID" ]]; then
@@ -56,12 +58,16 @@ if [[ -z "$REQUEST_ID" ]]; then
   exit 1
 fi
 
+# Fallback URLs if not provided
+STATUS_URL="${STATUS_URL:-https://queue.fal.run/${MODEL}/requests/${REQUEST_ID}/status}"
+RESPONSE_URL="${RESPONSE_URL:-https://queue.fal.run/${MODEL}/requests/${REQUEST_ID}}"
+
 echo "Job started: $REQUEST_ID" >&2
 
 # Poll for completion (max ~5 minutes)
 for i in $(seq 1 60); do
   sleep 5
-  STATUS_RESPONSE=$(curl -sS "https://queue.fal.run/${MODEL}/requests/${REQUEST_ID}/status" \
+  STATUS_RESPONSE=$(curl -sS "$STATUS_URL" \
     -H "Authorization: Key $FAL_KEY")
 
   STATUS=$(python3 -c "
@@ -72,7 +78,7 @@ print(d.get('status', ''))
 
   if [[ "$STATUS" == "COMPLETED" ]]; then
     # Fetch the result
-    RESPONSE=$(curl -sS "https://queue.fal.run/${MODEL}/requests/${REQUEST_ID}" \
+    RESPONSE=$(curl -sS "$RESPONSE_URL" \
       -H "Authorization: Key $FAL_KEY")
     break
   elif [[ "$STATUS" == "FAILED" ]]; then
