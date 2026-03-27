@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+# generate-gif: create animated GIFs
+# Usage:
+#   generate-gif img1.png img2.png img3.png          # slideshow from multiple images
+#   generate-gif --animate /path/to/img.png "prompt"  # AI-animate a single image into GIF
+set -euo pipefail
+
+OUTPUT_DIR="/workspace/group"
+OUTPUT_FILE="${OUTPUT_DIR}/gif-$(date +%s%3N).gif"
+
+# --- Mode: AI animation ---
+if [[ "${1:-}" == "--animate" ]]; then
+  shift
+  SOURCE_IMAGE="${1:?Usage: generate-gif --animate /path/to/image.png \"motion prompt\"}"
+  PROMPT="${2:-gentle natural movement, subtle animation}"
+
+  if [[ -z "${FAL_KEY:-}" ]]; then
+    echo "ERROR: FAL_KEY not set" >&2
+    exit 1
+  fi
+
+  # Encode image as base64 data URI
+  IMAGE_URI=$(python3 -c "
+import base64, sys, mimetypes
+path = sys.argv[1]
+mime = mimetypes.guess_type(path)[0] or 'image/jpeg'
+with open(path, 'rb') as f:
+    print(f'data:{mime};base64,' + base64.b64encode(f.read()).decode())
+" "$SOURCE_IMAGE")
+
+  MODEL="fal-ai/kling-video/v2.6/pro/image-to-video"
+
+  PAYLOAD=$(python3 -c "
+import json, sys
+print(json.dumps({
+    'prompt': sys.argv[1],
+    'image_url': sys.argv[2],
+    'duration': '5',
+    'aspect_ratio': '1:1'
+}))
+" "$PROMPT" "$IMAGE_URI")
+
+  RESPONSE=$(curl -sS -X POST "https://queue.fal.run/${MODEL}" \
+    -H "Authorization: Key $FAL_KEY" \
+    -H "Content-Type: application/json" \
+    -d "$PAYLOAD")
+
+  # Check for error
+  ERROR=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+if 'detail' in d:
+    print(d['detail'] if isinstance(d['detail'], str) else json.dumps(d['detail']))
+elif 'error' in d:
+    print(d['error'])
+" <<< "$RESPONSE" 2>/dev/null || true)
+
+  if [[ -n "$ERROR" ]]; then
+    echo "ERROR: fal.ai: $ERROR" >&2
+    exit 1
+  fi
+
+  # Get request ID
+  eval $(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print(f'REQUEST_ID={d.get(\"request_id\", \"\")}')
+print(f'STATUS_URL={d.get(\"status_url\", \"\")}')
+print(f'RESPONSE_URL={d.get(\"response_url\", \"\")}')
+" <<< "$RESPONSE")
+
+  if [[ -z "$REQUEST_ID" ]]; then
+    echo "ERROR: No request_id in response: $RESPONSE" >&2
+    exit 1
+  fi
+
+  STATUS_URL="${STATUS_URL:-https://queue.fal.run/${MODEL}/requests/${REQUEST_ID}/status}"
+  RESPONSE_URL="${RESPONSE_URL:-https://queue.fal.run/${MODEL}/requests/${REQUEST_ID}}"
+
+  echo "Animating image... job: $REQUEST_ID" >&2
+
+  # Poll for completion (max ~5 min)
+  STATUS=""
+  for i in $(seq 1 60); do
+    sleep 5
+    STATUS_RESPONSE=$(curl -sS "$STATUS_URL" -H "Authorization: Key $FAL_KEY")
+    STATUS=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print(d.get('status', ''))
+" <<< "$STATUS_RESPONSE")
+
+    if [[ "$STATUS" == "COMPLETED" ]]; then
+      RESPONSE=$(curl -sS "$RESPONSE_URL" -H "Authorization: Key $FAL_KEY")
+      break
+    elif [[ "$STATUS" == "FAILED" ]]; then
+      echo "ERROR: Animation failed" >&2
+      exit 1
+    fi
+    echo "Polling ($i/60)... status: $STATUS" >&2
+  done
+
+  if [[ "$STATUS" != "COMPLETED" ]]; then
+    echo "ERROR: Timed out (5 min)" >&2
+    exit 1
+  fi
+
+  # Download video
+  VIDEO_URL=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+v = d.get('video', d.get('output', {}))
+if isinstance(v, dict):
+    print(v.get('url', ''))
+elif isinstance(v, str):
+    print(v)
+else:
+    print('')
+" <<< "$RESPONSE")
+
+  if [[ -z "$VIDEO_URL" ]]; then
+    echo "ERROR: No video URL in response" >&2
+    exit 1
+  fi
+
+  TMP_VIDEO="${OUTPUT_DIR}/.tmp-animate-$$.mp4"
+  curl -sS -o "$TMP_VIDEO" "$VIDEO_URL"
+
+  # Convert MP4 → GIF with palette optimization
+  PALETTE="${OUTPUT_DIR}/.tmp-palette-$$.png"
+  ffmpeg -y -i "$TMP_VIDEO" -vf "fps=12,scale=480:-1:flags=lanczos,palettegen=stats_mode=diff" "$PALETTE" 2>/dev/null
+  ffmpeg -y -i "$TMP_VIDEO" -i "$PALETTE" -lavfi "fps=12,scale=480:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=3" -loop 0 "$OUTPUT_FILE" 2>/dev/null
+  rm -f "$TMP_VIDEO" "$PALETTE"
+
+  # Track cost via IPC
+  {
+    IPC_DIR="/workspace/ipc/messages"
+    mkdir -p "$IPC_DIR"
+    TRACK_FILE="${IPC_DIR}/imgtrack-$(date +%s%3N).json"
+    python3 -c "
+import json, sys
+json.dump({
+    'type': 'track_image_gen',
+    'gen_type': 'animate_gif',
+    'prompt': sys.argv[1],
+    'model': '${MODEL}',
+    'cost_usd': 0.42
+}, open(sys.argv[2], 'w'))
+" "$PROMPT" "$TRACK_FILE"
+  } || true
+
+  echo "$OUTPUT_FILE"
+  exit 0
+fi
+
+# --- Mode: Slideshow ---
+if [[ $# -lt 2 ]]; then
+  echo "Usage: generate-gif img1 img2 [img3 ...] OR generate-gif --animate img.png \"prompt\"" >&2
+  exit 1
+fi
+
+# Create temporary file list for ffmpeg concat
+TMP_LIST="${OUTPUT_DIR}/.tmp-giflist-$$.txt"
+for img in "$@"; do
+  if [[ ! -f "$img" ]]; then
+    echo "ERROR: File not found: $img" >&2
+    exit 1
+  fi
+  echo "file '${img}'" >> "$TMP_LIST"
+  echo "duration 1" >> "$TMP_LIST"
+done
+# Repeat last image (ffmpeg concat needs it for last frame duration)
+echo "file '${!#}'" >> "$TMP_LIST"
+
+# Convert images → GIF (1fps, palette-optimized, max 480px wide)
+PALETTE="${OUTPUT_DIR}/.tmp-palette-$$.png"
+ffmpeg -y -f concat -safe 0 -i "$TMP_LIST" -vf "scale=480:-1:flags=lanczos,palettegen" "$PALETTE" 2>/dev/null
+ffmpeg -y -f concat -safe 0 -i "$TMP_LIST" -i "$PALETTE" -lavfi "scale=480:-1:flags=lanczos[x];[x][1:v]paletteuse" -loop 0 "$OUTPUT_FILE" 2>/dev/null
+rm -f "$TMP_LIST" "$PALETTE"
+
+# Track (free, no API cost)
+{
+  IPC_DIR="/workspace/ipc/messages"
+  mkdir -p "$IPC_DIR"
+  TRACK_FILE="${IPC_DIR}/imgtrack-$(date +%s%3N).json"
+  python3 -c "
+import json, sys
+json.dump({
+    'type': 'track_image_gen',
+    'gen_type': 'slideshow_gif',
+    'prompt': 'slideshow',
+    'model': 'ffmpeg',
+    'cost_usd': 0.0
+}, open(sys.argv[1], 'w'))
+" "$TRACK_FILE"
+} || true
+
+echo "$OUTPUT_FILE"

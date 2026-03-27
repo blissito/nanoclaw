@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# generate-flux: generate images using fal.ai FLUX 1.1 [pro] ultra
+# Usage:
+#   generate-flux "prompt"                          # text-to-image
+#   generate-flux "prompt" /path/to/reference.jpg   # image-guided generation
+set -euo pipefail
+
+PROMPT="${1:?Usage: generate-flux \"prompt\" [reference-image]}"
+REF_IMAGE="${2:-}"
+OUTPUT_DIR="/workspace/group"
+OUTPUT_FILE="${OUTPUT_DIR}/flux-$(date +%s%3N).jpg"
+
+if [[ -z "${FAL_KEY:-}" ]]; then
+  echo "ERROR: FAL_KEY not set" >&2
+  exit 1
+fi
+
+# Build payload
+if [[ -n "$REF_IMAGE" ]]; then
+  # Image-guided: encode reference as base64 data URI
+  IMAGE_URI=$(python3 -c "
+import base64, sys, mimetypes
+path = sys.argv[1]
+mime = mimetypes.guess_type(path)[0] or 'image/jpeg'
+with open(path, 'rb') as f:
+    print(f'data:{mime};base64,' + base64.b64encode(f.read()).decode())
+" "$REF_IMAGE")
+
+  PAYLOAD=$(python3 -c "
+import json, sys
+print(json.dumps({
+    'prompt': sys.argv[1],
+    'image_url': sys.argv[2],
+    'image_prompt_strength': 0.4,
+    'aspect_ratio': '1:1',
+    'output_format': 'jpeg',
+    'safety_tolerance': 6,
+    'raw': True
+}))
+" "$PROMPT" "$IMAGE_URI")
+else
+  PAYLOAD=$(python3 -c "
+import json, sys
+print(json.dumps({
+    'prompt': sys.argv[1],
+    'aspect_ratio': '1:1',
+    'output_format': 'jpeg',
+    'safety_tolerance': 6,
+    'raw': True
+}))
+" "$PROMPT")
+fi
+
+# Submit to fal.ai queue
+RESPONSE=$(curl -sS -X POST "https://queue.fal.run/fal-ai/flux-pro/v1.1-ultra" \
+  -H "Authorization: Key $FAL_KEY" \
+  -H "Content-Type: application/json" \
+  -d "$PAYLOAD")
+
+# Check for immediate error
+ERROR=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+if 'detail' in d:
+    print(d['detail'] if isinstance(d['detail'], str) else json.dumps(d['detail']))
+elif 'error' in d:
+    print(d['error'])
+" <<< "$RESPONSE" 2>/dev/null || true)
+
+if [[ -n "$ERROR" ]]; then
+  echo "ERROR: fal.ai: $ERROR" >&2
+  exit 1
+fi
+
+# Poll queue for result
+REQUEST_ID=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print(d.get('request_id', ''))
+" <<< "$RESPONSE")
+
+if [[ -n "$REQUEST_ID" ]]; then
+  for i in $(seq 1 90); do
+    sleep 2
+    STATUS_RESPONSE=$(curl -sS "https://queue.fal.run/fal-ai/flux-pro/v1.1-ultra/requests/$REQUEST_ID/status" \
+      -H "Authorization: Key $FAL_KEY")
+    STATUS=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print(d.get('status', ''))
+" <<< "$STATUS_RESPONSE")
+    if [[ "$STATUS" == "COMPLETED" ]]; then
+      RESPONSE=$(curl -sS "https://queue.fal.run/fal-ai/flux-pro/v1.1-ultra/requests/$REQUEST_ID" \
+        -H "Authorization: Key $FAL_KEY")
+      break
+    elif [[ "$STATUS" == "FAILED" ]]; then
+      echo "ERROR: fal.ai Flux Ultra generation failed" >&2
+      exit 1
+    fi
+  done
+fi
+
+# Download result image
+IMAGE_URL=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+images = d.get('images', [])
+if images:
+    print(images[0].get('url', ''))
+else:
+    print('')
+" <<< "$RESPONSE")
+
+if [[ -z "$IMAGE_URL" ]]; then
+  echo "ERROR: No image URL in response" >&2
+  echo "Response: $RESPONSE" >&2
+  exit 1
+fi
+
+curl -sS -o "$OUTPUT_FILE" "$IMAGE_URL"
+
+# Track via IPC (non-fatal)
+{
+  GEN_TYPE="text2img"
+  [[ -n "$REF_IMAGE" ]] && GEN_TYPE="img2img"
+  IPC_DIR="/workspace/ipc/messages"
+  mkdir -p "$IPC_DIR"
+  TRACK_FILE="${IPC_DIR}/imgtrack-$(date +%s%3N).json"
+  python3 -c "
+import json, sys
+json.dump({
+    'type': 'track_image_gen',
+    'gen_type': sys.argv[1],
+    'prompt': sys.argv[2],
+    'model': 'fal-ai/flux-pro/v1.1-ultra',
+    'cost_usd': 0.06
+}, open(sys.argv[3], 'w'))
+" "$GEN_TYPE" "$PROMPT" "$TRACK_FILE"
+} || true
+
+echo "$OUTPUT_FILE"

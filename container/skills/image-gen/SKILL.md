@@ -1,16 +1,17 @@
 ---
 name: image-gen
-description: Generate, edit, and face-swap images using OpenAI gpt-image-1 and fal.ai
-allowed-tools: Bash(generate-image:*),Bash(face-swap:*)
+description: Generate, edit, and face-swap images using OpenAI gpt-image-1, FLUX Ultra, and fal.ai
+allowed-tools: Bash(generate-image:*),Bash(generate-flux:*),Bash(face-swap:*)
 ---
 
 # Image Generation, Editing & Face Swap
 
-You have TWO image tools. Choose the right one:
+You have THREE image tools. Choose the right one:
 
 | Tool | When to use |
 |------|-------------|
 | `generate-image` | Create images from text, edit/modify photos, combine elements, change styles, add/remove objects |
+| `generate-flux` | Photorealistic images, ultra-high quality, or when user asks for "flux" / "flux ultra" / "realista". Also supports image-guided generation with a reference photo |
 | `face-swap` | Put someone's FACE onto another person's body/photo. Use ONLY when the user wants to preserve a specific person's face identity |
 
 ## Decision guide
@@ -19,6 +20,8 @@ You have TWO image tools. Choose the right one:
 - "Pon MI CARA en esta foto" / "swap faces" / "quiero verme como X" → `face-swap` (face identity must be preserved)
 - "Hazme un logo" / "genera una imagen de..." → `generate-image` (text-to-image)
 - "Cambia el fondo" / "quita esto" → `generate-image` (image editing)
+- "Foto realista de..." / "flux ultra" / "fotorrealismo" → `generate-flux` (photorealistic)
+- "Genera algo basado en esta imagen" + wants photorealism → `generate-flux` with reference image
 
 ## generate-image
 
@@ -34,6 +37,20 @@ generate-image "put the person from the first image into the scene of the second
 ```
 
 Up to 10 source images supported. Find attachment paths from `[Image: attachments/img-xxx.jpg]` in the conversation.
+
+## generate-flux
+
+```bash
+# Text to image (photorealistic)
+generate-flux "an old Mexican grandfather winning an esports tournament, holding a trophy, photorealistic"
+
+# Image-guided generation (uses reference photo for style/composition)
+generate-flux "transform this into a cyberpunk scene" /workspace/group/attachments/img-1234.jpg
+```
+
+- Produces ultra-high quality photorealistic images (up to 2K)
+- Reference image is optional — controls style/composition, NOT face identity (use face-swap for that)
+- Output is JPEG
 
 ## face-swap
 
