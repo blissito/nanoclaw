@@ -23,6 +23,17 @@ const chatJid = process.env.NANOCLAW_CHAT_JID!;
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
 const isMain = process.env.NANOCLAW_IS_MAIN === '1';
 
+const GROUP_DIR = '/workspace/group';
+
+/** Ensure a file is inside /workspace/group/ so the host can access it via the mount. */
+function ensureInGroupDir(filePath: string): string {
+  const resolved = path.resolve(filePath);
+  if (resolved.startsWith(GROUP_DIR + '/')) return resolved;
+  const dest = path.join(GROUP_DIR, path.basename(resolved));
+  fs.copyFileSync(resolved, dest);
+  return dest;
+}
+
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
 
@@ -71,7 +82,8 @@ server.tool(
     }
 
     if (args.video_path) {
-      const filename = path.basename(args.video_path);
+      const safePath = ensureInGroupDir(args.video_path);
+      const filename = path.basename(safePath);
       const data = {
         type: 'video',
         chatJid,
@@ -85,7 +97,8 @@ server.tool(
     }
 
     if (args.document_path) {
-      const filename = path.basename(args.document_path);
+      const safePath = ensureInGroupDir(args.document_path);
+      const filename = path.basename(safePath);
       const data = {
         type: 'document',
         chatJid,
@@ -100,7 +113,8 @@ server.tool(
     }
 
     if (args.audio_path) {
-      const filename = path.basename(args.audio_path);
+      const safePath = ensureInGroupDir(args.audio_path);
+      const filename = path.basename(safePath);
       const data = {
         type: 'audio',
         chatJid,
@@ -113,7 +127,8 @@ server.tool(
     }
 
     if (args.image_path) {
-      const filename = path.basename(args.image_path);
+      const safePath = ensureInGroupDir(args.image_path);
+      const filename = path.basename(safePath);
       const data = {
         type: 'image',
         chatJid,
