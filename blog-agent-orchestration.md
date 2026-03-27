@@ -80,9 +80,9 @@ Es, esencialmente, un **junior developer infinitamente paciente** multiplicado p
 
 ---
 
-## NanoClaw: el enfoque "asistente personal con canales"
+## GhostyClaw: el enfoque "asistente personal con canales"
 
-NanoClaw resuelve un problema diferente. No es un CI/CD de agentes — es un **sistema nervioso personal** que conecta tu IA con el mundo real a través de canales de mensajería.
+GhostyClaw resuelve un problema diferente. No es un CI/CD de agentes — es un **sistema nervioso personal** que conecta tu IA con el mundo real a través de canales de mensajería.
 
 ### El modelo mental
 
@@ -109,7 +109,7 @@ Cada mensaje que llega a cualquier canal se rutea al orquestador. El orquestador
 
 ### Por qué importa este enfoque
 
-La mayoría de las herramientas de agentes asumen que el developer está sentado frente a la terminal. NanoClaw asume lo contrario: **que no estás ahí**.
+La mayoría de las herramientas de agentes asumen que el developer está sentado frente a la terminal. GhostyClaw asume lo contrario: **que no estás ahí**.
 
 Tu agente:
 - Recibe un mensaje de WhatsApp a las 3am
@@ -121,7 +121,7 @@ No necesitas abrir la laptop. No necesitas un dashboard. El canal de comunicaci�
 
 ### Para quién es
 
-NanoClaw brilla si:
+GhostyClaw brilla si:
 
 - Quieres un asistente que viva en tus canales de comunicación existentes
 - Necesitas aislamiento real (containers, no branches)
@@ -133,7 +133,7 @@ NanoClaw brilla si:
 
 ## La comparación honesta
 
-| Dimensión | Agent Orchestrator | NanoClaw |
+| Dimensión | Agent Orchestrator | GhostyClaw |
 |---|---|---|
 | **Metáfora** | Equipo de juniors en tu repo | Asistente personal omnipresente |
 | **Input** | Issues de GitHub | Mensajes de cualquier canal |
@@ -145,7 +145,7 @@ NanoClaw brilla si:
 | **Canales** | GitHub | WhatsApp, Telegram, Slack, Discord, Gmail |
 | **Caso ideal** | Backlog grande, equipo dev | Asistente personal/negocio |
 
-No compiten. Son complementarios. Podrías usar Agent Orchestrator para atacar tu backlog y NanoClaw para que tu agente te avise por Telegram cuando los PRs están listos.
+No compiten. Son complementarios. Podrías usar Agent Orchestrator para atacar tu backlog y GhostyClaw para que tu agente te avise por Telegram cuando los PRs están listos.
 
 ---
 
@@ -163,7 +163,7 @@ La infraestructura de orquestación es plomería. Lo que determina si tu swarm f
 
 ### 3. Feedback loops > más agentes
 
-Tres agentes con buen feedback loop (CI falla → agente corrige → CI pasa) le ganan a diez agentes sin uno. Agent Orchestrator entiende esto con sus "reactions". NanoClaw lo implementa con IPC entre orquestador y containers.
+Tres agentes con buen feedback loop (CI falla → agente corrige → CI pasa) le ganan a diez agentes sin uno. Agent Orchestrator entiende esto con sus "reactions". GhostyClaw lo implementa con IPC entre orquestador y containers.
 
 ### 4. No todo necesita un swarm
 
@@ -181,7 +181,7 @@ Un agente que recuerda tu contexto, tus preferencias, y tu historial es exponenc
 
 1. Empieza con un solo agente. Asegúrate de que hace bien UNA cosa
 2. Cuando el cuello de botella sea "necesito que haga varias cosas al mismo tiempo", ahí sí piensa en swarm
-3. Elige tu herramienta según tu caso de uso: ¿issues de GitHub → Agent Orchestrator? ¿asistente en tus canales → NanoClaw?
+3. Elige tu herramienta según tu caso de uso: ¿issues de GitHub → Agent Orchestrator? ¿asistente en tus canales → GhostyClaw?
 4. No te cases con frameworks. El patrón conductor/worker es tan viejo como la computación distribuida. Las herramientas van y vienen; los principios se quedan
 
 **El stack mínimo para experimentar:**
