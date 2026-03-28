@@ -4,7 +4,6 @@ import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
 
 import {
-  ASSISTANT_NAME,
   DATA_DIR,
   GROUPS_DIR,
   IPC_POLL_INTERVAL,
@@ -110,18 +109,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
-                  // Strip self-prefix the agent may add (e.g. "Ghosty: hello")
-                  const triggerName =
-                    targetGroup?.trigger?.replace(/^@/, '') || '';
-                  const prefixRe = new RegExp(
-                    `^(?:${ASSISTANT_NAME}|${triggerName}):\\s*`,
-                    'i',
-                  );
-                  const cleanedText = data.text.replace(prefixRe, '').trim();
-                  await deps.sendMessage(
-                    data.chatJid,
-                    cleanedText || data.text,
-                  );
+                  await deps.sendMessage(data.chatJid, data.text);
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC message sent',
