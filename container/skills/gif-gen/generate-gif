@@ -1,12 +1,201 @@
 #!/usr/bin/env bash
 # generate-gif: create animated GIFs
 # Usage:
-#   generate-gif img1.png img2.png img3.png          # slideshow from multiple images
-#   generate-gif --animate /path/to/img.png "prompt"  # AI-animate a single image into GIF
+#   generate-gif img1.png img2.png img3.png                    # slideshow from multiple images
+#   generate-gif --animate /path/to/img.png "prompt"            # AI-animate a single image into GIF ($0.42)
+#   generate-gif --crop WxH+X+Y /path/to/img.png               # crop region and convert to GIF (free)
+#   generate-gif --convert /path/to/img.avif                    # convert image to GIF as-is (free)
+#   generate-gif --sprite COLSxROWS [--fps N] [--format gif|webp|mp4] sprite.png  # animate sprite sheet
 set -euo pipefail
 
 OUTPUT_DIR="/workspace/group"
 OUTPUT_FILE="${OUTPUT_DIR}/gif-$(date +%s%3N).gif"
+
+# --- Mode: Crop + GIF ---
+if [[ "${1:-}" == "--crop" ]]; then
+  shift
+  CROP_SPEC="${1:?Usage: generate-gif --crop WxH+X+Y /path/to/image.png}"
+  shift
+  SOURCE_IMAGE="${1:?Usage: generate-gif --crop WxH+X+Y /path/to/image.png}"
+
+  if [[ ! -f "$SOURCE_IMAGE" ]]; then
+    echo "ERROR: File not found: $SOURCE_IMAGE" >&2
+    exit 1
+  fi
+
+  # Parse WxH+X+Y into ffmpeg crop format (W:H:X:Y)
+  CROP_FILTER=$(python3 -c "
+import re, sys
+s = sys.argv[1]
+m = re.match(r'(\d+)x(\d+)\+(\d+)\+(\d+)', s)
+if not m:
+    print(f'ERROR: Invalid crop spec: {s}. Use WxH+X+Y (e.g. 300x400+50+100)', file=sys.stderr)
+    sys.exit(1)
+w, h, x, y = m.groups()
+print(f'crop={w}:{h}:{x}:{y}')
+" "$CROP_SPEC")
+
+  # Two-pass palette-optimized GIF
+  PALETTE="${OUTPUT_DIR}/.tmp-palette-$$.png"
+  ffmpeg -y -i "$SOURCE_IMAGE" -vf "${CROP_FILTER},scale=480:-1:flags=lanczos,palettegen" "$PALETTE" 2>/dev/null
+  ffmpeg -y -i "$SOURCE_IMAGE" -i "$PALETTE" -lavfi "${CROP_FILTER},scale=480:-1:flags=lanczos[x];[x][1:v]paletteuse" "$OUTPUT_FILE" 2>/dev/null
+  rm -f "$PALETTE"
+
+  # Track (free)
+  {
+    IPC_DIR="/workspace/ipc/messages"
+    mkdir -p "$IPC_DIR"
+    TRACK_FILE="${IPC_DIR}/imgtrack-$(date +%s%3N).json"
+    python3 -c "
+import json, sys
+json.dump({
+    'type': 'track_image_gen',
+    'gen_type': 'crop_gif',
+    'prompt': sys.argv[1],
+    'model': 'ffmpeg',
+    'cost_usd': 0.0
+}, open(sys.argv[2], 'w'))
+" "$CROP_SPEC" "$TRACK_FILE"
+  } || true
+
+  echo "$OUTPUT_FILE"
+  exit 0
+fi
+
+# --- Mode: Convert to GIF ---
+if [[ "${1:-}" == "--convert" ]]; then
+  shift
+  SOURCE_IMAGE="${1:?Usage: generate-gif --convert /path/to/image.png}"
+
+  if [[ ! -f "$SOURCE_IMAGE" ]]; then
+    echo "ERROR: File not found: $SOURCE_IMAGE" >&2
+    exit 1
+  fi
+
+  PALETTE="${OUTPUT_DIR}/.tmp-palette-$$.png"
+  ffmpeg -y -i "$SOURCE_IMAGE" -vf "scale=480:-1:flags=lanczos,palettegen" "$PALETTE" 2>/dev/null
+  ffmpeg -y -i "$SOURCE_IMAGE" -i "$PALETTE" -lavfi "scale=480:-1:flags=lanczos[x];[x][1:v]paletteuse" "$OUTPUT_FILE" 2>/dev/null
+  rm -f "$PALETTE"
+
+  {
+    IPC_DIR="/workspace/ipc/messages"
+    mkdir -p "$IPC_DIR"
+    TRACK_FILE="${IPC_DIR}/imgtrack-$(date +%s%3N).json"
+    python3 -c "
+import json, sys
+json.dump({
+    'type': 'track_image_gen',
+    'gen_type': 'convert_gif',
+    'prompt': 'convert',
+    'model': 'ffmpeg',
+    'cost_usd': 0.0
+}, open(sys.argv[1], 'w'))
+" "$TRACK_FILE"
+  } || true
+
+  echo "$OUTPUT_FILE"
+  exit 0
+fi
+
+# --- Mode: Sprite sheet ---
+if [[ "${1:-}" == "--sprite" ]]; then
+  shift
+  GRID="${1:?Usage: generate-gif --sprite COLSxROWS [--fps N] [--format gif|webp|mp4] sprite.png}"
+  shift
+
+  # Parse optional flags
+  FPS=10
+  FORMAT="gif"
+  while [[ "${1:-}" == --* ]]; do
+    case "$1" in
+      --fps) shift; FPS="${1:?--fps requires a number}"; shift ;;
+      --format) shift; FORMAT="${1:?--format requires gif|webp|mp4}"; shift ;;
+      *) echo "ERROR: Unknown flag: $1" >&2; exit 1 ;;
+    esac
+  done
+
+  SOURCE_IMAGE="${1:?Missing sprite sheet image path}"
+  if [[ ! -f "$SOURCE_IMAGE" ]]; then
+    echo "ERROR: File not found: $SOURCE_IMAGE" >&2
+    exit 1
+  fi
+
+  # Parse grid
+  COLS=$(echo "$GRID" | cut -dx -f1)
+  ROWS=$(echo "$GRID" | cut -dx -f2)
+  if [[ -z "$COLS" || -z "$ROWS" || "$COLS" -lt 1 || "$ROWS" -lt 1 ]]; then
+    echo "ERROR: Invalid grid: $GRID. Use COLSxROWS (e.g. 4x3)" >&2
+    exit 1
+  fi
+
+  # Get image dimensions
+  DIMS=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "$SOURCE_IMAGE")
+  IMG_W=$(echo "$DIMS" | cut -d, -f1)
+  IMG_H=$(echo "$DIMS" | cut -d, -f2)
+  FRAME_W=$((IMG_W / COLS))
+  FRAME_H=$((IMG_H / ROWS))
+
+  TOTAL_FRAMES=$((COLS * ROWS))
+  TMP_DIR="${OUTPUT_DIR}/.tmp-sprite-$$"
+  mkdir -p "$TMP_DIR"
+
+  # Extract each frame via crop
+  FRAME_NUM=0
+  for row in $(seq 0 $((ROWS - 1))); do
+    for col in $(seq 0 $((COLS - 1))); do
+      X=$((col * FRAME_W))
+      Y=$((row * FRAME_H))
+      FRAME_FILE=$(printf "%s/frame-%04d.png" "$TMP_DIR" "$FRAME_NUM")
+      ffmpeg -y -i "$SOURCE_IMAGE" -vf "crop=${FRAME_W}:${FRAME_H}:${X}:${Y}" "$FRAME_FILE" 2>/dev/null
+      FRAME_NUM=$((FRAME_NUM + 1))
+    done
+  done
+
+  # Set output extension and encode
+  case "$FORMAT" in
+    gif)
+      OUTPUT_FILE="${OUTPUT_DIR}/sprite-$(date +%s%3N).gif"
+      PALETTE="${TMP_DIR}/palette.png"
+      ffmpeg -y -framerate "$FPS" -i "${TMP_DIR}/frame-%04d.png" -vf "scale=480:-1:flags=lanczos,palettegen" "$PALETTE" 2>/dev/null
+      ffmpeg -y -framerate "$FPS" -i "${TMP_DIR}/frame-%04d.png" -i "$PALETTE" -lavfi "scale=480:-1:flags=lanczos[x];[x][1:v]paletteuse" -loop 0 "$OUTPUT_FILE" 2>/dev/null
+      ;;
+    webp)
+      OUTPUT_FILE="${OUTPUT_DIR}/sprite-$(date +%s%3N).webp"
+      ffmpeg -y -framerate "$FPS" -i "${TMP_DIR}/frame-%04d.png" -vf "scale=480:-1:flags=lanczos" -c:v libwebp -lossless 0 -q:v 80 -loop 0 "$OUTPUT_FILE" 2>/dev/null
+      ;;
+    mp4)
+      OUTPUT_FILE="${OUTPUT_DIR}/sprite-$(date +%s%3N).mp4"
+      ffmpeg -y -framerate "$FPS" -i "${TMP_DIR}/frame-%04d.png" -vf "scale=480:-2:flags=lanczos" -c:v libx264 -pix_fmt yuv420p -movflags +faststart "$OUTPUT_FILE" 2>/dev/null
+      ;;
+    *)
+      echo "ERROR: Unknown format: $FORMAT. Use gif, webp, or mp4" >&2
+      rm -rf "$TMP_DIR"
+      exit 1
+      ;;
+  esac
+
+  rm -rf "$TMP_DIR"
+
+  # Track (free)
+  {
+    IPC_DIR="/workspace/ipc/messages"
+    mkdir -p "$IPC_DIR"
+    TRACK_FILE="${IPC_DIR}/imgtrack-$(date +%s%3N).json"
+    python3 -c "
+import json, sys
+json.dump({
+    'type': 'track_image_gen',
+    'gen_type': 'sprite_' + sys.argv[1],
+    'prompt': sys.argv[2] + ' ' + sys.argv[3] + 'fps ' + sys.argv[4] + ' frames',
+    'model': 'ffmpeg',
+    'cost_usd': 0.0
+}, open(sys.argv[5], 'w'))
+" "$FORMAT" "$GRID" "$FPS" "$TOTAL_FRAMES" "$TRACK_FILE"
+  } || true
+
+  echo "$OUTPUT_FILE"
+  exit 0
+fi
 
 # --- Mode: AI animation ---
 if [[ "${1:-}" == "--animate" ]]; then
@@ -30,15 +219,15 @@ with open(path, 'rb') as f:
 
   MODEL="fal-ai/kling-video/v2.6/pro/image-to-video"
 
-  PAYLOAD=$(python3 -c "
-import json, sys
+  PAYLOAD=$(GIF_PROMPT="$PROMPT" GIF_IMAGE_URI="$IMAGE_URI" python3 -c "
+import json, os
 print(json.dumps({
-    'prompt': sys.argv[1],
-    'image_url': sys.argv[2],
+    'prompt': os.environ['GIF_PROMPT'],
+    'image_url': os.environ['GIF_IMAGE_URI'],
     'duration': '5',
     'aspect_ratio': '1:1'
 }))
-" "$PROMPT" "$IMAGE_URI")
+")
 
   RESPONSE=$(curl -sS -X POST "https://queue.fal.run/${MODEL}" \
     -H "Authorization: Key $FAL_KEY" \
@@ -137,16 +326,16 @@ else:
     IPC_DIR="/workspace/ipc/messages"
     mkdir -p "$IPC_DIR"
     TRACK_FILE="${IPC_DIR}/imgtrack-$(date +%s%3N).json"
-    python3 -c "
-import json, sys
+    GIF_PROMPT="$PROMPT" python3 -c "
+import json, os, sys
 json.dump({
     'type': 'track_image_gen',
     'gen_type': 'animate_gif',
-    'prompt': sys.argv[1],
-    'model': '${MODEL}',
+    'prompt': os.environ['GIF_PROMPT'],
+    'model': 'fal-ai/kling-video/v2.6/pro/image-to-video',
     'cost_usd': 0.42
-}, open(sys.argv[2], 'w'))
-" "$PROMPT" "$TRACK_FILE"
+}, open(sys.argv[1], 'w'))
+" "$TRACK_FILE"
   } || true
 
   echo "$OUTPUT_FILE"

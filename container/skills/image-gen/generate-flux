@@ -26,29 +26,29 @@ with open(path, 'rb') as f:
     print(f'data:{mime};base64,' + base64.b64encode(f.read()).decode())
 " "$REF_IMAGE")
 
-  PAYLOAD=$(python3 -c "
-import json, sys
+  PAYLOAD=$(FLUX_PROMPT="$PROMPT" FLUX_IMAGE_URI="$IMAGE_URI" python3 -c "
+import json, os
 print(json.dumps({
-    'prompt': sys.argv[1],
-    'image_url': sys.argv[2],
+    'prompt': os.environ['FLUX_PROMPT'],
+    'image_url': os.environ['FLUX_IMAGE_URI'],
     'image_prompt_strength': 0.4,
     'aspect_ratio': '1:1',
     'output_format': 'jpeg',
     'safety_tolerance': 6,
     'raw': True
 }))
-" "$PROMPT" "$IMAGE_URI")
+")
 else
-  PAYLOAD=$(python3 -c "
-import json, sys
+  PAYLOAD=$(FLUX_PROMPT="$PROMPT" python3 -c "
+import json, os
 print(json.dumps({
-    'prompt': sys.argv[1],
+    'prompt': os.environ['FLUX_PROMPT'],
     'aspect_ratio': '1:1',
     'output_format': 'jpeg',
     'safety_tolerance': 6,
     'raw': True
 }))
-" "$PROMPT")
+")
 fi
 
 # Submit to fal.ai queue
@@ -126,16 +126,16 @@ curl -sS -o "$OUTPUT_FILE" "$IMAGE_URL"
   IPC_DIR="/workspace/ipc/messages"
   mkdir -p "$IPC_DIR"
   TRACK_FILE="${IPC_DIR}/imgtrack-$(date +%s%3N).json"
-  python3 -c "
-import json, sys
+  FLUX_PROMPT="$PROMPT" python3 -c "
+import json, os, sys
 json.dump({
     'type': 'track_image_gen',
     'gen_type': sys.argv[1],
-    'prompt': sys.argv[2],
+    'prompt': os.environ['FLUX_PROMPT'],
     'model': 'fal-ai/flux-pro/v1.1-ultra',
     'cost_usd': 0.06
-}, open(sys.argv[3], 'w'))
-" "$GEN_TYPE" "$PROMPT" "$TRACK_FILE"
+}, open(sys.argv[2], 'w'))
+" "$GEN_TYPE" "$TRACK_FILE"
 } || true
 
 echo "$OUTPUT_FILE"
