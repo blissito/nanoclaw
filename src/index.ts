@@ -330,7 +330,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // Check transcript size and suggest /compact if it's getting large
   const TRANSCRIPT_WARN_BYTES = 80 * 1024; // 80KB ≈ ~100K tokens after SDK overhead
-  const transcriptDir = path.join(DATA_DIR, 'sessions', group.folder, '.claude', 'history');
+  const transcriptDir = path.join(
+    DATA_DIR,
+    'sessions',
+    group.folder,
+    '.claude',
+    'history',
+  );
   if (fs.existsSync(transcriptDir)) {
     try {
       let totalSize = 0;
@@ -339,10 +345,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
       if (totalSize > TRANSCRIPT_WARN_BYTES) {
         const sizeKB = Math.round(totalSize / 1024);
-        logger.info({ group: group.name, sizeKB }, 'Transcript size above threshold, suggesting /compact');
-        await channel.sendMessage(chatJid, `_La sesión lleva ${sizeKB}KB de historial. Considera mandar /compact para reducir consumo de tokens._`);
+        logger.info(
+          { group: group.name, sizeKB },
+          'Transcript size above threshold, suggesting /compact',
+        );
+        await channel.sendMessage(
+          chatJid,
+          `_La sesión lleva ${sizeKB}KB de historial. Considera mandar /compact para reducir consumo de tokens._`,
+        );
       }
-    } catch { /* ignore stat errors */ }
+    } catch {
+      /* ignore stat errors */
+    }
   }
 
   await channel.setTyping?.(chatJid, true);
@@ -492,10 +506,16 @@ async function runAgent(
         'No conversation found with session ID',
         'Could not process image',
       ];
-      if (output.error && fatalPatterns.some(p => output.error!.includes(p))) {
+      if (
+        output.error &&
+        fatalPatterns.some((p) => output.error!.includes(p))
+      ) {
         delete sessions[group.folder];
         clearSession(group.folder);
-        logger.warn({ group: group.name }, 'Cleared stale session after fatal error');
+        logger.warn(
+          { group: group.name },
+          'Cleared stale session after fatal error',
+        );
       }
       logger.error(
         { group: group.name, error: output.error },
@@ -946,7 +966,12 @@ async function main(): Promise<void> {
     if (!group) return;
     const channel = findChannel(channels, groupJid);
     if (!channel) return;
-    channel.sendMessage(groupJid, '_No pude procesar los mensajes anteriores después de varios intentos. Por favor reenvíen._').catch(() => {});
+    channel
+      .sendMessage(
+        groupJid,
+        '_No pude procesar los mensajes anteriores después de varios intentos. Por favor reenvíen._',
+      )
+      .catch(() => {});
   });
   recoverPendingMessages();
   startMessageLoop().catch((err) => {
