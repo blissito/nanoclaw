@@ -444,6 +444,7 @@ async function runQuery(
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
+  log(`Model: ${DEFAULT_MODEL} (thinking: ${isHaiku ? 'disabled' : 'enabled'})`);
   const stream = new MessageStream();
   stream.push(prompt);
 
