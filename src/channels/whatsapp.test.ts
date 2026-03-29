@@ -26,15 +26,23 @@ vi.mock('../db.js', () => ({
   getLastGroupSync: vi.fn(() => null),
   setLastGroupSync: vi.fn(),
   updateChatName: vi.fn(),
+  getRegisteredGroup: vi.fn(() => null),
 }));
 
 // Mock image module
 vi.mock('../image.js', () => ({
   isImageMessage: vi.fn().mockReturnValue(false),
+  isVideoMessage: vi.fn().mockReturnValue(false),
+  extractVideoFrame: vi.fn().mockResolvedValue('/tmp/frame.jpg'),
   processImage: vi.fn().mockResolvedValue({
     content: '[Image: attachments/test.jpg]',
     relativePath: 'attachments/test.jpg',
   }),
+}));
+
+vi.mock('../transcription.js', () => ({
+  isVoiceMessage: vi.fn().mockReturnValue(false),
+  transcribeAudioMessage: vi.fn().mockResolvedValue(null),
 }));
 
 // Mock fs
@@ -154,7 +162,8 @@ function triggerDisconnect(statusCode: number) {
 async function triggerMessages(messages: unknown[]) {
   fakeSocket._ev.emit('messages.upsert', { messages });
   // Flush microtasks so the async messages.upsert handler completes
-  await new Promise((r) => setTimeout(r, 0));
+  // Multiple flushes needed for nested awaits (translateJid, processImage, etc.)
+  await new Promise((r) => setTimeout(r, 10));
 }
 
 // --- Tests ---

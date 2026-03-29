@@ -50,8 +50,8 @@ describe('isSessionCommandAllowed', () => {
     expect(isSessionCommandAllowed(false, true)).toBe(true);
   });
 
-  it('denies untrusted sender in non-main group', () => {
-    expect(isSessionCommandAllowed(false, false)).toBe(false);
+  it('allows any sender in non-main group', () => {
+    expect(isSessionCommandAllowed(false, false)).toBe(true);
   });
 
   it('allows trusted sender in main group', () => {
@@ -123,7 +123,7 @@ describe('handleSessionCommand', () => {
     expect(deps.advanceCursor).toHaveBeenCalledWith('100');
   });
 
-  it('sends denial to interactable sender in non-main group', async () => {
+  it('allows non-admin sender in non-main group', async () => {
     const deps = makeDeps();
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/compact', { is_from_me: false })],
@@ -134,14 +134,14 @@ describe('handleSessionCommand', () => {
       deps,
     });
     expect(result).toEqual({ handled: true, success: true });
-    expect(deps.sendMessage).toHaveBeenCalledWith(
-      'Session commands require admin access.',
+    expect(deps.runAgent).toHaveBeenCalledWith(
+      '/compact',
+      expect.any(Function),
     );
-    expect(deps.runAgent).not.toHaveBeenCalled();
     expect(deps.advanceCursor).toHaveBeenCalledWith('100');
   });
 
-  it('silently consumes denied command when sender cannot interact', async () => {
+  it('allows non-interactable sender since all senders are permitted', async () => {
     const deps = makeDeps({
       canSenderInteract: vi.fn().mockReturnValue(false),
     });
@@ -154,7 +154,10 @@ describe('handleSessionCommand', () => {
       deps,
     });
     expect(result).toEqual({ handled: true, success: true });
-    expect(deps.sendMessage).not.toHaveBeenCalled();
+    expect(deps.runAgent).toHaveBeenCalledWith(
+      '/compact',
+      expect.any(Function),
+    );
     expect(deps.advanceCursor).toHaveBeenCalledWith('100');
   });
 
