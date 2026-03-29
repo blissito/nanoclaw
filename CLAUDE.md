@@ -91,20 +91,6 @@ ssh root@134.199.239.173 "sed -i 's/^#CLAUDE_CODE_OAUTH_TOKEN=/CLAUDE_CODE_OAUTH
 
 The proxy auto-detects: if `CLAUDE_CODE_OAUTH_TOKEN` is present → OAuth (with API key fallback on 429). If absent → API key only.
 
-## Model Switching (Production)
-
-Default: Haiku with Sonnet subagent escalation (deep-thinker). Both use OAuth/Max plan ($0 extra).
-
-**Switch to Sonnet puro** (all requests use Sonnet):
-```bash
-ssh root@134.199.239.173 "echo 'NANOCLAW_MODEL=claude-sonnet-4-6-20250514' >> /home/nanoclaw/app/.env && systemctl restart nanoclaw"
-```
-
-**Switch back to Haiku+Sonnet** (default):
-```bash
-ssh root@134.199.239.173 "sed -i '/NANOCLAW_MODEL/d' /home/nanoclaw/app/.env && systemctl restart nanoclaw"
-```
-
 ## Status
 
 - OAuth (Max plan) support working in credential proxy — prefers OAuth over API key when both present
