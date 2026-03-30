@@ -34,6 +34,7 @@ import {
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
+  deleteSession,
   getAllTasks,
   getLastBotMessageTimestamp,
   getMessageFromMe,
@@ -43,7 +44,7 @@ import {
   initDatabase,
   setRegisteredGroup,
   setRouterState,
-  clearSession,
+  deleteSession,
   setSession,
   storeChatMetadata,
   storeMessage,
@@ -665,7 +666,7 @@ async function runAgent(
           'Container failed with existing session — clearing stale session and retrying with fresh session',
         );
         delete sessions[group.folder];
-        clearSession(group.folder);
+        deleteSession(group.folder);
 
         const freshOutput = await runContainerAgent(
           group,
