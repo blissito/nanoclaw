@@ -73,6 +73,17 @@ export interface SchedulerDependencies {
     groupFolder: string,
   ) => void;
   sendMessage: (jid: string, text: string) => Promise<void>;
+  logUsage: (log: {
+    group_folder: string;
+    chat_jid: string;
+    total_cost_usd: number;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens: number;
+    cache_creation_input_tokens: number;
+    num_turns: number;
+    duration_ms: number;
+  }) => void;
 }
 
 async function runTask(
@@ -196,6 +207,13 @@ async function runTask(
             streamedOutput.result,
           );
           scheduleClose();
+        }
+        if (streamedOutput.usage) {
+          deps.logUsage({
+            group_folder: task.group_folder,
+            chat_jid: task.chat_jid,
+            ...streamedOutput.usage,
+          });
         }
         if (streamedOutput.status === 'success') {
           deps.queue.notifyIdle(task.chat_jid);

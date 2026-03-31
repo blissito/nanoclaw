@@ -77,6 +77,22 @@ function createSchema(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_image_gen_group ON image_generations(group_folder);
     CREATE INDEX IF NOT EXISTS idx_image_gen_date ON image_generations(created_at);
 
+    CREATE TABLE IF NOT EXISTS usage_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_folder TEXT NOT NULL,
+      chat_jid TEXT NOT NULL,
+      total_cost_usd REAL NOT NULL DEFAULT 0,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_input_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0,
+      num_turns INTEGER NOT NULL DEFAULT 0,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_usage_group ON usage_logs(group_folder);
+    CREATE INDEX IF NOT EXISTS idx_usage_date ON usage_logs(created_at);
+
     CREATE TABLE IF NOT EXISTS router_state (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -742,6 +758,91 @@ export function getImageGenStats(sinceDate?: string): ImageGenStats {
     total_images: totals.total_images,
     total_cost_usd: totals.total_cost_usd,
     by_type: byType,
+    by_group: byGroup,
+  };
+}
+
+// --- Usage tracking ---
+
+export interface UsageLog {
+  group_folder: string;
+  chat_jid: string;
+  total_cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+  num_turns: number;
+  duration_ms: number;
+}
+
+export function logUsage(log: UsageLog): void {
+  db.prepare(
+    `INSERT INTO usage_logs (group_folder, chat_jid, total_cost_usd, input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens, num_turns, duration_ms, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    log.group_folder,
+    log.chat_jid,
+    log.total_cost_usd,
+    log.input_tokens,
+    log.output_tokens,
+    log.cache_read_input_tokens,
+    log.cache_creation_input_tokens,
+    log.num_turns,
+    log.duration_ms,
+    new Date().toISOString(),
+  );
+}
+
+export interface UsageStats {
+  total_cost_usd: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_queries: number;
+  by_group: {
+    group_folder: string;
+    cost: number;
+    queries: number;
+    tokens: number;
+  }[];
+}
+
+export function getUsageStats(sinceDate?: string): UsageStats {
+  const where = sinceDate ? 'WHERE created_at >= ?' : '';
+  const params = sinceDate ? [sinceDate] : [];
+
+  const totals = db
+    .prepare(
+      `SELECT COUNT(*) as total_queries, COALESCE(SUM(total_cost_usd), 0) as total_cost,
+              COALESCE(SUM(input_tokens), 0) as total_input, COALESCE(SUM(output_tokens), 0) as total_output
+       FROM usage_logs ${where}`,
+    )
+    .get(...(params as string[])) as {
+    total_queries: number;
+    total_cost: number;
+    total_input: number;
+    total_output: number;
+  };
+
+  const byGroup = db
+    .prepare(
+      `SELECT group_folder, COALESCE(SUM(total_cost_usd), 0) as cost, COUNT(*) as queries,
+              COALESCE(SUM(input_tokens + output_tokens), 0) as tokens
+       FROM usage_logs ${where}
+       GROUP BY group_folder ORDER BY cost DESC`,
+    )
+    .all(...(params as string[])) as {
+    group_folder: string;
+    cost: number;
+    queries: number;
+    tokens: number;
+  }[];
+
+  return {
+    total_cost_usd: totals.total_cost,
+    total_input_tokens: totals.total_input,
+    total_output_tokens: totals.total_output,
+    total_queries: totals.total_queries,
     by_group: byGroup,
   };
 }

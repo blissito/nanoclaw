@@ -44,7 +44,11 @@ export interface ContainerInput {
   assistantName?: string;
   mcpServers?: string[];
   reportToJid?: string;
-  imageAttachments?: Array<{ relativePath: string; mediaType: string; publicUrl?: string }>;
+  imageAttachments?: Array<{
+    relativePath: string;
+    mediaType: string;
+    publicUrl?: string;
+  }>;
 }
 
 export interface ContainerOutput {

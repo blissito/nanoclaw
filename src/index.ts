@@ -42,6 +42,7 @@ import {
   setSession,
   storeChatMetadata,
   storeMessage,
+  logUsage,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
@@ -394,6 +395,22 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         }
         // Only reset idle timer on actual results, not session-update markers (result: null)
         resetIdleTimer();
+      }
+
+      if (result.usage) {
+        logUsage({
+          group_folder: group.folder,
+          chat_jid: chatJid,
+          ...result.usage,
+        });
+        logger.info(
+          {
+            group: group.name,
+            cost: result.usage.total_cost_usd,
+            tokens: result.usage.input_tokens + result.usage.output_tokens,
+          },
+          'Usage logged',
+        );
       }
 
       if (result.status === 'success') {
@@ -868,6 +885,7 @@ async function main(): Promise<void> {
       const text = formatOutbound(rawText);
       if (text) await channel.sendMessage(jid, text);
     },
+    logUsage,
   });
   // Wire up NanoClaw HTTP handlers now that channels are connected
   nanoClawHandlers.getInviteLink = async (jid) => {
