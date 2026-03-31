@@ -219,6 +219,47 @@ Everything else (new capabilities, OS compatibility, hardware support, enhanceme
 
 This keeps the base system minimal and lets every user customize their installation without inheriting features they don't want.
 
+## Manual Deploy
+
+For deploying code changes to the DigitalOcean production droplet:
+
+```bash
+# 1. Get the droplet IP
+doctl compute droplet list --format Name,PublicIPv4 --no-header | grep nanoclaw-prod
+
+# 2. SSH, pull, build, restart
+ssh root@<IP> "cd /home/nanoclaw/app && git pull && npm run build && systemctl restart nanoclaw"
+
+# 3. Verify
+ssh root@<IP> "systemctl status nanoclaw --no-pager | head -8"
+```
+
+If a container is blocking the restart:
+```bash
+ssh root@<IP> "docker kill \$(docker ps -q); systemctl restart nanoclaw"
+```
+
+If you need a full reboot:
+```bash
+ssh root@<IP> "docker kill \$(docker ps -q) 2>/dev/null; systemctl stop nanoclaw; reboot"
+# Wait ~30s, then pull + build + verify
+```
+
+Container image rebuild (only needed for Dockerfile/apt/global npm changes):
+```bash
+ssh root@<IP> "cd /home/nanoclaw/app && ./container/build.sh"
+```
+
+New env vars must be added manually (`.env` is gitignored):
+```bash
+ssh root@<IP> "echo 'NEW_VAR=value' >> /home/nanoclaw/app/.env && systemctl restart nanoclaw"
+```
+
+After deploys that add/modify skills:
+```bash
+ssh root@<IP> "chown -R nanoclaw:nanoclaw /home/nanoclaw/app/data/sessions/"
+```
+
 ## Community
 
 Questions? Ideas? [Join the Discord](https://discord.gg/VDdww8qS42).
