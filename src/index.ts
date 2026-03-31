@@ -525,28 +525,10 @@ async function runAgent(
     }
 
     if (output.status === 'error') {
-      // Clear stale session on fatal session errors to prevent retry loops
-      const fatalSessionPatterns = [
-        'No conversation found with session ID',
-        'Could not process image',
-      ];
-      if (
-        output.error &&
-        fatalSessionPatterns.some((p) => output.error!.includes(p))
-      ) {
-        delete sessions[group.folder];
-        clearSession(group.folder);
-        logger.warn(
-          { group: group.name },
-          'Cleared stale session after fatal error',
-        );
-      }
-
       // Permanent container errors — retrying will never help
       const fatalContainerPatterns = [
         'EACCES: permission denied',
         'Cannot find module',
-        ...fatalSessionPatterns,
       ];
       if (
         output.error &&
@@ -557,6 +539,57 @@ async function runAgent(
           'Fatal container error, skipping retry',
         );
         return 'fatal';
+      }
+
+      // Detect stale/corrupt session: container failed while resuming an existing session.
+      // Clear the session and retry once with a fresh session to avoid infinite retry loops.
+      if (sessionId) {
+        logger.warn(
+          {
+            group: group.name,
+            staleSessionId: sessionId,
+            error: output.error,
+          },
+          'Container failed with existing session — clearing stale session and retrying with fresh session',
+        );
+        delete sessions[group.folder];
+        clearSession(group.folder);
+
+        const freshOutput = await runContainerAgent(
+          group,
+          {
+            prompt,
+            sessionId: undefined,
+            groupFolder: group.folder,
+            chatJid,
+            isMain,
+            assistantName: group.trigger.replace(/^@/, '') || ASSISTANT_NAME,
+            mcpServers: group.containerConfig?.mcpServers,
+            ...(imageAttachments.length > 0 && { imageAttachments }),
+          },
+          (proc, containerName) =>
+            queue.registerProcess(chatJid, proc, containerName, group.folder),
+          wrappedOnOutput,
+        );
+
+        if (freshOutput.newSessionId) {
+          sessions[group.folder] = freshOutput.newSessionId;
+          setSession(group.folder, freshOutput.newSessionId);
+        }
+
+        if (freshOutput.status === 'error') {
+          logger.error(
+            { group: group.name, error: freshOutput.error },
+            'Container agent error on fresh session retry',
+          );
+          return 'error';
+        }
+
+        logger.info(
+          { group: group.name, newSessionId: freshOutput.newSessionId },
+          'Fresh session retry succeeded',
+        );
+        return 'success';
       }
 
       logger.error(
