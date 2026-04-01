@@ -45,6 +45,8 @@ import {
   storeChatMetadata,
   storeMessage,
   logUsage,
+  getAllFormmyJids,
+  getFormmyGroupFolder,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
@@ -640,7 +642,10 @@ async function startMessageLoop(): Promise<void> {
 
   while (true) {
     try {
-      const jids = Object.keys(registeredGroups);
+      const jids = [
+        ...Object.keys(registeredGroups),
+        ...getAllFormmyJids(),
+      ];
       const { messages, newTimestamp } = getNewMessages(
         jids,
         lastTimestamp,
@@ -666,7 +671,16 @@ async function startMessageLoop(): Promise<void> {
         }
 
         for (const [chatJid, groupMessages] of messagesByGroup) {
-          const group = registeredGroups[chatJid];
+          let group: RegisteredGroup | undefined = registeredGroups[chatJid];
+          // Resolve formmy_ JIDs via jid mapping table
+          if (!group) {
+            const folder = getFormmyGroupFolder(chatJid);
+            if (folder) {
+              group = Object.values(registeredGroups).find(
+                (g) => g.folder === folder,
+              );
+            }
+          }
           if (!group) continue;
 
           const channel = findChannel(channels, chatJid);

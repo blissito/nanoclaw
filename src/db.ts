@@ -110,6 +110,11 @@ function createSchema(database: Database.Database): void {
       container_config TEXT,
       requires_trigger INTEGER DEFAULT 1
     );
+    CREATE TABLE IF NOT EXISTS formmy_jid_mapping (
+      jid TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -920,4 +925,27 @@ function migrateJsonState(): void {
       }
     }
   }
+}
+
+// --- Formmy JID mapping (Business API JIDs → group folders) ---
+
+export function getFormmyGroupFolder(jid: string): string | null {
+  const row = db
+    .prepare('SELECT group_folder FROM formmy_jid_mapping WHERE jid = ?')
+    .get(jid) as { group_folder: string } | undefined;
+  return row?.group_folder ?? null;
+}
+
+export function setFormmyJidMapping(jid: string, folder: string): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO formmy_jid_mapping (jid, group_folder, created_at)
+     VALUES (?, ?, ?)`,
+  ).run(jid, folder, new Date().toISOString());
+}
+
+export function getAllFormmyJids(): string[] {
+  const rows = db
+    .prepare('SELECT jid FROM formmy_jid_mapping')
+    .all() as { jid: string }[];
+  return rows.map((r) => r.jid);
 }

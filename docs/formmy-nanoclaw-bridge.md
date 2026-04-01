@@ -1,128 +1,100 @@
 # Formmy ↔ NanoClaw Bridge
 
-Formmy actúa como proveedor de WhatsApp Business API oficial. NanoClaw procesa mensajes con Claude en containers. Se conectan por HTTP — sin tocar Baileys, sin cambiar pipelines existentes.
+Formmy actúa como proveedor de WhatsApp Business API oficial. NanoClaw procesa mensajes con Claude en containers. Se conectan por HTTP.
 
 ```
 Cliente WhatsApp ↔ Meta Cloud API ↔ Formmy ↔ HTTP ↔ NanoClaw ↔ Claude (container)
 ```
 
-## Flujo
+## Cómo agregar un nuevo cliente de Business API
 
-1. Cliente manda mensaje por WhatsApp
-2. Meta webhook llega a Formmy
-3. Formmy ve que el chatbot tiene `externalAgentUrl` → forward a NanoClaw en vez de procesar
-4. NanoClaw spawna container, Claude responde
-5. NanoClaw POST respuesta (texto/imagen/sticker) a Formmy
-6. Formmy envía a Meta Cloud API → cliente recibe
+### 1. Crear carpeta del agente en NanoClaw
+```bash
+# En el droplet
+mkdir -p groups/formmy_NOMBRE/logs
+cat > groups/formmy_NOMBRE/CLAUDE.md << 'EOF'
+# NOMBRE - Agente WhatsApp Business
+Instrucciones del agente público aquí...
+EOF
 
-## Qué hacer en Formmy
-
-### 1. Modelo de datos
-
-Agregar a Integration o Chatbot:
-```
-externalAgentUrl    String?   // http://nanoclaw-host:3940
-externalAgentSecret String?   // shared secret
+# Registrar en SQLite
+sqlite3 store/messages.db \
+  "INSERT INTO registered_groups (jid, name, folder, trigger_pattern, added_at, requires_trigger, is_main) \
+   VALUES ('formmy_NOMBRE_placeholder', 'NOMBRE Business', 'formmy_NOMBRE', '@bot', datetime('now'), 0, 0);"
 ```
 
-### 2. Webhook forwarding
+### 2. En Formmy (lo hace el otro equipo)
+- El cliente hace pairing (Embedded Signup) → se crea Integration
+- Configurar `chatbot.naoclawGroup = "formmy_NOMBRE"` en Mongo
+- Configurar `integration.externalAgentUrl = "http://134.199.239.173:3940"` + `externalAgentSecret`
 
-En `app/routes/api.v1.integrations.whatsapp.webhook.tsx`, antes del pipeline de IA:
-
-```typescript
-if (integration.externalAgentUrl) {
-  await fetch(integration.externalAgentUrl + '/message', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${integration.externalAgentSecret}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      jid: `formmy_${senderPhone}`,
-      sender: senderPhone,
-      sender_name: contactName,
-      content: messageText,
-      message_id: waMessageId,
-      media: mediaPayload || null,
-    }),
-  });
-  return json({ status: 'forwarded' });
-}
+### 3. Conectar grupo admin (para que admins editen el CLAUDE.md del 1:1)
+```sql
+-- Agregar mount al containerConfig del grupo admin
+UPDATE registered_groups SET container_config = json('{
+  "mcpServers":["easybits"],
+  "additionalMounts":[{
+    "hostPath":"/home/nanoclaw/app/groups/formmy_NOMBRE",
+    "containerPath":"formmy_NOMBRE",
+    "readonly":false
+  }]
+}') WHERE folder = 'GRUPO_ADMIN_FOLDER';
 ```
 
-Si hay media (imagen/sticker/doc), descargar URL de Meta con `getMediaUrl(mediaId)` e incluirla en `media.url`.
-
-### 3. Send endpoint
-
-Implementar `app/routes/api.v1.integrations.whatsapp.send.ts` (actualmente mock):
-
-```typescript
-// Request de NanoClaw:
-POST /api/v1/integrations/whatsapp/send
-Authorization: Bearer {secret}
-{
-  phone_number: "5217712345678",
-  integration_id: "id",
-  type: "text" | "image" | "sticker" | "document",
-  text: "...",
-  media_url: "https://..." | null,
-  media_base64: "..." | null,
-  caption: "..." | null
-}
-
-// Formmy traduce a Meta Cloud API:
-POST https://graph.facebook.com/v21.0/{phoneNumberId}/messages
-Authorization: Bearer {accessToken}
-{ messaging_product: "whatsapp", to: phone, type, [text|image|sticker]: {...} }
+Agregar al CLAUDE.md del grupo admin:
+```markdown
+## Configuración del agente 1:1
+El archivo `/workspace/extra/formmy_NOMBRE/CLAUDE.md` contiene las instrucciones del agente 1:1.
 ```
 
-## Qué hacer en NanoClaw
+Restart: `systemctl restart nanoclaw`
 
-### 1. Nuevo canal `src/channels/formmy-whatsapp.ts`
+## Cómo funciona el routing
 
-Basado en el webhook channel existente, pero con soporte de media:
+### Tabla formmy_jid_mapping
+Los JIDs de Business API (`formmy_*`) NO van en `registered_groups` (tiene UNIQUE en folder). Van en tabla separada:
 
-```env
-FORMMY_WHATSAPP_SECRET=shared-secret
-FORMMY_WHATSAPP_CALLBACK_URL=https://formmy.app/api/v1/integrations/whatsapp/send
-FORMMY_WHATSAPP_INTEGRATION_ID=integration-id-from-formmy
+```sql
+CREATE TABLE formmy_jid_mapping (
+  jid TEXT PRIMARY KEY,       -- formmy_5215500001234
+  group_folder TEXT NOT NULL, -- formmy_rulo
+  created_at TEXT NOT NULL
+);
+```
+
+### Flujo del canal formmy-whatsapp
+1. Formmy envía `POST /message` con `{ jid, sender, content, group_folder }`
+2. Si el JID no tiene mapping → INSERT en `formmy_jid_mapping`
+3. Si el JID ya tiene mapping pero `group_folder` cambió → UPDATE (auto-move de lobby)
+4. Resuelve el grupo buscando en `registered_groups` por folder
+
+### Message loop (index.ts)
+1. Incluye JIDs de `formmy_jid_mapping` en la query de mensajes nuevos
+2. Resuelve grupo: primero busca en `registeredGroups`, si no, busca folder en `formmy_jid_mapping` → lookup en `registeredGroups`
+
+## Envs necesarias
+```
+FORMMY_CHANNEL_SECRET=<shared secret>
+FORMMY_CALLBACK_URL=https://formmy.app/api/v1/integrations/whatsapp/send
+FORMMY_INTEGRATION_ID=<integration id>
 FORMMY_CHANNEL_PORT=3940
+FORMMY_DEFAULT_GROUP=formmy_lobby
 ```
 
-- **Recibe**: HTTP POST en `/message` (mismo formato que webhook channel)
-- **Envía texto**: POST a callback URL con `type: "text"`
-- **Envía imagen**: Lee archivo, convierte a base64 o sube a EasyBits, POST con `type: "image"`
-- **Envía sticker**: Igual con `type: "sticker"`
-- **JIDs**: `formmy_{phoneNumber}` (ej: `formmy_5217712345678`)
-- **Se autoregistra** si las env vars existen
-
-### 2. Media entrante
-
-Cuando Formmy envía media URL en el payload, el canal descarga y guarda en el grupo:
-- Imágenes → `attachments/img-{ts}.jpg`
-- Stickers → `stickers/sticker-{ts}.webp`
-- Documentos → `attachments/{filename}`
-
-## Orden de implementación
-
-| Paso | Proyecto | Qué |
-|------|----------|-----|
-| 1 | Formmy | Agregar `externalAgentUrl` al modelo |
-| 2 | Formmy | Forward webhook si tiene externalAgentUrl |
-| 3 | Formmy | Send endpoint real (texto + media via Meta API) |
-| 4 | NanoClaw | Canal `formmy-whatsapp` con send/receive + media |
-| 5 | Test | Conectar Mobilesco por WhatsApp Business API |
-| 6 | Migrar | Mover clientes de Baileys a Business API |
+## Mount Allowlist
+Ubicación: `/root/.config/nanoclaw/mount-allowlist.json`
+Necesario para que grupos admin puedan montar carpetas de otros grupos como additionalMounts.
 
 ## Archivos clave
+| Archivo | Propósito |
+|---------|-----------|
+| `src/channels/formmy-whatsapp.ts` | Canal HTTP, auto-mapping |
+| `src/db.ts` | formmy_jid_mapping tabla |
+| `src/index.ts` | Message loop con resolución de formmy JIDs |
+| `src/mount-security.ts` | Validación de additionalMounts |
 
-**Formmy:**
-- `app/routes/api.v1.integrations.whatsapp.webhook.tsx` — agregar forward
-- `app/routes/api.v1.integrations.whatsapp.send.ts` — implementar send real
-- `server/integrations/whatsapp/WhatsAppSDKService.ts` — funciones de media
-- `prisma/schema.prisma` — campo externalAgentUrl
-
-**NanoClaw:**
-- `src/channels/formmy-whatsapp.ts` — canal nuevo (crear)
-- `src/channels/index.ts` — importar canal
-- `.env` — config vars
+## Ejemplo real: Rulo (Padel Club)
+- Carpeta 1:1: `formmy_rulo/`
+- Grupo admin: `whatsapp_smatch-padel-club/`
+- El admin tiene mount de `formmy_rulo/` → puede editar CLAUDE.md desde el grupo
+- `chatbot.naoclawGroup = "formmy_rulo"` en Formmy

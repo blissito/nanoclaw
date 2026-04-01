@@ -22,12 +22,14 @@ import https from 'https';
 import path from 'path';
 
 import { GROUPS_DIR } from '../config.js';
+import { getFormmyGroupFolder, setFormmyJidMapping } from '../db.js';
 import { logger } from '../logger.js';
 import { Channel, NewMessage } from '../types.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 
 const CHANNEL_NAME = 'formmy-whatsapp';
 const JID_PREFIX = 'formmy_';
+const DEFAULT_GROUP = process.env.FORMMY_DEFAULT_GROUP || '';
 
 interface InboundMedia {
   type: 'image' | 'sticker' | 'document' | 'audio';
@@ -92,7 +94,7 @@ export class FormmyWhatsAppChannel implements Channel {
 
       try {
         const body = await readBody(req);
-        const { jid, sender, sender_name, content, message_id, media } =
+        const { jid, sender, sender_name, content, message_id, media, group_folder } =
           JSON.parse(body);
 
         if (!jid || (!content && !media)) {
@@ -105,9 +107,38 @@ export class FormmyWhatsAppChannel implements Channel {
           ? jid
           : `${JID_PREFIX}${jid}`;
 
-        // Resolve group folder for media storage
+        // Resolve group via mapping table
         const groups = this.opts.registeredGroups();
-        const group = groups[fullJid];
+        let group: import('../types.js').RegisteredGroup | undefined = groups[fullJid];
+        const targetFolder = group_folder || DEFAULT_GROUP;
+
+        if (!group && targetFolder) {
+          // Check if JID already has a mapping
+          const existingFolder = getFormmyGroupFolder(fullJid);
+
+          if (!existingFolder) {
+            // New JID — create mapping
+            setFormmyJidMapping(fullJid, targetFolder);
+            logger.info(
+              { jid: fullJid, folder: targetFolder },
+              '[formmy-whatsapp] Mapped new JID to group',
+            );
+          } else if (group_folder && existingFolder !== group_folder) {
+            // JID exists but group_folder changed (e.g. moving from lobby)
+            setFormmyJidMapping(fullJid, group_folder);
+            logger.info(
+              { jid: fullJid, from: existingFolder, to: group_folder },
+              '[formmy-whatsapp] Moved JID to new group',
+            );
+          }
+
+          // Resolve group from registered_groups by folder
+          const resolvedFolder = group_folder || existingFolder || targetFolder;
+          group = Object.values(groups).find(
+            (g) => g.folder === resolvedFolder,
+          );
+        }
+
         const groupFolder = group?.folder;
 
         let finalContent = content || '';
