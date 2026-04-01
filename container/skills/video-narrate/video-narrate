@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+# video-narrate: animate images with Kling + narrated voiceover + optional lip sync
+# Usage: video-narrate img1 img2 ... --prompts "p1" "p2" ... --texts "t1" "t2" ... [--lipsync 0 1 ...] [--voice regina]
+set -euo pipefail
+
+VOICE="antonio"
+VIDEO_VOL="0.35"
+NARR_VOL="1.2"
+OUTPUT_DIR="/workspace/group"
+OUTPUT_FILE=""
+IMAGES=()
+PROMPTS=()
+TEXTS=()
+LIPSYNC=()
+
+# --- Parse args ---
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --voice)     VOICE="$2";      shift 2 ;;
+    --output)    OUTPUT_FILE="$2"; shift 2 ;;
+    --video-vol) VIDEO_VOL="$2";  shift 2 ;;
+    --narr-vol)  NARR_VOL="$2";   shift 2 ;;
+    --prompts) shift
+      while [[ $# -gt 0 && "$1" != --* ]]; do PROMPTS+=("$1"); shift; done ;;
+    --texts) shift
+      while [[ $# -gt 0 && "$1" != --* ]]; do TEXTS+=("$1"); shift; done ;;
+    --lipsync) shift
+      while [[ $# -gt 0 && "$1" != --* ]]; do LIPSYNC+=("$1"); shift; done ;;
+    -*) echo "ERROR: Unknown option: $1" >&2; exit 1 ;;
+    *)  IMAGES+=("$1"); shift ;;
+  esac
+done
+
+[[ -z "$OUTPUT_FILE" ]] && OUTPUT_FILE="${OUTPUT_DIR}/video-narrate-$(date +%s%3N).mp4"
+
+N=${#IMAGES[@]}
+[[ $N -eq 0 ]] && { echo "ERROR: No images provided" >&2; exit 1; }
+[[ ${#PROMPTS[@]} -ne $N ]] && { echo "ERROR: Need $N prompts, got ${#PROMPTS[@]}" >&2; exit 1; }
+[[ ${#TEXTS[@]}   -ne $N ]] && { echo "ERROR: Need $N texts, got ${#TEXTS[@]}" >&2; exit 1; }
+
+# Default lipsync to all 0 if not provided
+if [[ ${#LIPSYNC[@]} -eq 0 ]]; then
+  for i in $(seq 1 $N); do LIPSYNC+=(0); done
+elif [[ ${#LIPSYNC[@]} -ne $N ]]; then
+  echo "ERROR: Need $N lipsync flags, got ${#LIPSYNC[@]}" >&2; exit 1
+fi
+
+# Resolve skill paths
+SKILL_DIR=$(dirname "$0")/..
+GIF_GEN="$SKILL_DIR/gif-gen/generate-gif"
+TTS="$SKILL_DIR/voice/text-to-speech"
+for tool in "$GIF_GEN" "$TTS"; do
+  [[ -x "$tool" ]] || { echo "ERROR: Missing dependency: $tool" >&2; exit 1; }
+done
+
+TMP=$(mktemp -d)
+CONCAT_FILE="$TMP/concat.txt"
+TOTAL_COST=0
+
+for i in $(seq 0 $((N-1))); do
+  IDX=$((i+1))
+  echo "==> Clip $IDX/$N" >&2
+
+  # Step 1: Generate narration (TTS-first)
+  NARR_FILE=$("$TTS" "${TEXTS[$i]}" "$VOICE")
+  NARR_DUR=$(ffprobe -v quiet -show_entries format=duration -of csv=p=0 "$NARR_FILE")
+  echo "    Narration: ${NARR_DUR}s" >&2
+
+  # Step 2: Animate image with Kling (5s video)
+  KLING_VIDEO=$("$GIF_GEN" --animate --mp4 "${IMAGES[$i]}" "${PROMPTS[$i]}")
+  VID_DUR=$(ffprobe -v quiet -show_entries format=duration -of csv=p=0 "$KLING_VIDEO")
+  echo "    Video: ${VID_DUR}s" >&2
+
+  CLIP_COST="0.42"
+
+  if [[ "${LIPSYNC[$i]}" == "1" ]]; then
+    # Step 3a: Kling LipSync — sync lips to narration
+    echo "    LipSync: encoding and submitting..." >&2
+
+    # Encode video + audio as base64 data URIs
+    VIDEO_URI=$(python3 -c "
+import base64, sys
+with open(sys.argv[1], 'rb') as f:
+    print('data:video/mp4;base64,' + base64.b64encode(f.read()).decode())
+" "$KLING_VIDEO")
+
+    AUDIO_URI=$(python3 -c "
+import base64, sys, mimetypes
+path = sys.argv[1]
+mime = mimetypes.guess_type(path)[0] or 'audio/ogg'
+with open(path, 'rb') as f:
+    print(f'data:{mime};base64,' + base64.b64encode(f.read()).decode())
+" "$NARR_FILE")
+
+    LIPSYNC_MODEL="fal-ai/kling-video/lipsync/audio-to-video"
+
+    PAYLOAD=$(LIPSYNC_VIDEO="$VIDEO_URI" LIPSYNC_AUDIO="$AUDIO_URI" python3 -c "
+import json, os
+print(json.dumps({
+    'video_url': os.environ['LIPSYNC_VIDEO'],
+    'audio_url': os.environ['LIPSYNC_AUDIO']
+}))
+")
+
+    RESPONSE=$(curl -sS -X POST "https://queue.fal.run/${LIPSYNC_MODEL}" \
+      -H "Authorization: Key $FAL_KEY" \
+      -H "Content-Type: application/json" \
+      -d "$PAYLOAD")
+
+    ERROR=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+if 'detail' in d:
+    print(d['detail'] if isinstance(d['detail'], str) else json.dumps(d['detail']))
+elif 'error' in d:
+    print(d['error'])
+" <<< "$RESPONSE" 2>/dev/null || true)
+
+    if [[ -n "$ERROR" ]]; then
+      echo "ERROR: LipSync fal.ai: $ERROR" >&2
+      exit 1
+    fi
+
+    REQUEST_ID=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print(d.get('request_id', ''))
+" <<< "$RESPONSE")
+
+    # Poll for completion
+    STATUS=""
+    for poll in $(seq 1 90); do
+      sleep 3
+      STATUS_RESPONSE=$(curl -sS "https://queue.fal.run/${LIPSYNC_MODEL}/requests/$REQUEST_ID/status" \
+        -H "Authorization: Key $FAL_KEY")
+      STATUS=$(python3 -c "
+import json, sys
+print(json.load(sys.stdin).get('status', ''))
+" <<< "$STATUS_RESPONSE")
+      if [[ "$STATUS" == "COMPLETED" ]]; then
+        RESPONSE=$(curl -sS "https://queue.fal.run/${LIPSYNC_MODEL}/requests/$REQUEST_ID" \
+          -H "Authorization: Key $FAL_KEY")
+        break
+      elif [[ "$STATUS" == "FAILED" ]]; then
+        echo "ERROR: LipSync generation failed" >&2
+        exit 1
+      fi
+    done
+
+    [[ "$STATUS" != "COMPLETED" ]] && { echo "ERROR: LipSync timed out" >&2; exit 1; }
+
+    SYNCED_URL=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+v = d.get('video', {})
+print(v.get('url', '') if isinstance(v, dict) else '')
+" <<< "$RESPONSE")
+
+    CLIP_OUT="$TMP/clip${IDX}.mp4"
+    curl -sS -o "$CLIP_OUT" "$SYNCED_URL"
+
+    # Normalize resolution
+    NORM_OUT="$TMP/norm${IDX}.mp4"
+    ffmpeg -y -i "$CLIP_OUT" \
+      -vf "scale=1080:1080:force_original_aspect_ratio=decrease,pad=1080:1080:(ow-iw)/2:(oh-ih)/2:black" \
+      -c:v libx264 -preset fast -crf 22 \
+      -c:a aac -b:a 128k \
+      "$NORM_OUT" 2>/dev/null
+    mv "$NORM_OUT" "$CLIP_OUT"
+
+    CLIP_COST="0.49"
+    echo "    LipSync done" >&2
+
+  else
+    # Step 3b: ffmpeg mix — overlay narration on video
+    CLIP_OUT="$TMP/clip${IDX}.mp4"
+    ffmpeg -y \
+      -i "$KLING_VIDEO" \
+      -i "$NARR_FILE" \
+      -vf "scale=1080:1080:force_original_aspect_ratio=decrease,pad=1080:1080:(ow-iw)/2:(oh-ih)/2:black" \
+      -filter_complex "[1:a]apad=whole_dur=${VID_DUR}[narrpad];[0:a]volume=${VIDEO_VOL}[va];[narrpad]volume=${NARR_VOL}[vb];[va][vb]amix=inputs=2:duration=longest[aout]" \
+      -map 0:v -map "[aout]" \
+      -t "$VID_DUR" \
+      -c:v libx264 -preset fast -crf 22 \
+      -c:a aac -b:a 128k \
+      "$CLIP_OUT" 2>/dev/null
+
+    echo "    Mix done" >&2
+  fi
+
+  echo "file '$CLIP_OUT'" >> "$CONCAT_FILE"
+  TOTAL_COST=$(python3 -c "print(round($TOTAL_COST + $CLIP_COST, 2))")
+
+  # Clean up intermediate files
+  rm -f "$KLING_VIDEO" "$NARR_FILE"
+done
+
+# Step 4: Concatenate all clips
+ffmpeg -y -f concat -safe 0 -i "$CONCAT_FILE" \
+  -c:v libx264 -preset fast -crf 20 \
+  -c:a aac -b:a 128k \
+  "$OUTPUT_FILE" 2>/dev/null
+
+rm -rf "$TMP"
+
+# Track via IPC (non-fatal)
+{
+  IPC_DIR="/workspace/ipc/messages"
+  mkdir -p "$IPC_DIR"
+  TRACK_FILE="${IPC_DIR}/vidtrack-$(date +%s%3N).json"
+  python3 -c "
+import json, sys
+json.dump({
+    'type': 'track_video_gen',
+    'gen_type': 'video_narrate',
+    'prompt': f'{sys.argv[1]} clips',
+    'model': 'kling-2.6-pro+elevenlabs+lipsync',
+    'cost_usd': float(sys.argv[2])
+}, open(sys.argv[3], 'w'))
+" "$N" "$TOTAL_COST" "$TRACK_FILE"
+} || true
+
+echo "$OUTPUT_FILE"

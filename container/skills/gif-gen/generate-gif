@@ -200,7 +200,13 @@ fi
 # --- Mode: AI animation ---
 if [[ "${1:-}" == "--animate" ]]; then
   shift
-  SOURCE_IMAGE="${1:?Usage: generate-gif --animate /path/to/image.png \"motion prompt\"}"
+  # Optional --mp4 flag: output MP4 instead of GIF (preserves audio + quality)
+  KEEP_MP4=false
+  if [[ "${1:-}" == "--mp4" ]]; then
+    KEEP_MP4=true
+    shift
+  fi
+  SOURCE_IMAGE="${1:?Usage: generate-gif --animate [--mp4] /path/to/image.png \"motion prompt\"}"
   PROMPT="${2:-gentle natural movement, subtle animation}"
 
   if [[ -z "${FAL_KEY:-}" ]]; then
@@ -315,11 +321,17 @@ else:
   TMP_VIDEO="${OUTPUT_DIR}/.tmp-animate-$$.mp4"
   curl -sS -o "$TMP_VIDEO" "$VIDEO_URL"
 
-  # Convert MP4 → GIF with palette optimization
-  PALETTE="${OUTPUT_DIR}/.tmp-palette-$$.png"
-  ffmpeg -y -i "$TMP_VIDEO" -vf "fps=12,scale=480:-1:flags=lanczos,palettegen=stats_mode=diff" "$PALETTE" 2>/dev/null
-  ffmpeg -y -i "$TMP_VIDEO" -i "$PALETTE" -lavfi "fps=12,scale=480:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=3" -loop 0 "$OUTPUT_FILE" 2>/dev/null
-  rm -f "$TMP_VIDEO" "$PALETTE"
+  if [[ "$KEEP_MP4" == true ]]; then
+    # Keep as MP4 (preserves audio from Kling)
+    OUTPUT_FILE="${OUTPUT_DIR}/animate-$(date +%s%3N).mp4"
+    mv "$TMP_VIDEO" "$OUTPUT_FILE"
+  else
+    # Convert MP4 → GIF with palette optimization
+    PALETTE="${OUTPUT_DIR}/.tmp-palette-$$.png"
+    ffmpeg -y -i "$TMP_VIDEO" -vf "fps=12,scale=480:-1:flags=lanczos,palettegen=stats_mode=diff" "$PALETTE" 2>/dev/null
+    ffmpeg -y -i "$TMP_VIDEO" -i "$PALETTE" -lavfi "fps=12,scale=480:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=3" -loop 0 "$OUTPUT_FILE" 2>/dev/null
+    rm -f "$TMP_VIDEO" "$PALETTE"
+  fi
 
   # Track cost via IPC
   {
