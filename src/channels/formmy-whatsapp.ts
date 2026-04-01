@@ -407,7 +407,14 @@ export class FormmyWhatsAppChannel implements Channel {
 }
 
 function extractPhone(jid: string): string {
-  return jid.replace('formmy_', '');
+  // formmy_<integrationId>_<phone> → phone (also handles legacy formmy_<phone>)
+  const stripped = jid.replace('formmy_', '');
+  const parts = stripped.split('_');
+  // Integration IDs are 24-char hex (MongoDB ObjectId)
+  if (parts.length > 1 && /^[a-f0-9]{24}$/.test(parts[0])) {
+    return parts.slice(1).join('_');
+  }
+  return stripped;
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {
