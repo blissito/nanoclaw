@@ -47,6 +47,7 @@ import {
   logUsage,
   getAllFormmyJids,
   getFormmyGroupFolder,
+  getRegisteredGroupByFolder,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
@@ -676,9 +677,27 @@ async function startMessageLoop(): Promise<void> {
               group = Object.values(registeredGroups).find(
                 (g) => g.folder === folder,
               );
+              // Hot-reload: group exists in DB but wasn't in memory at startup
+              if (!group) {
+                const dbGroup = getRegisteredGroupByFolder(folder);
+                if (dbGroup) {
+                  registeredGroups[dbGroup.jid] = dbGroup;
+                  group = dbGroup;
+                  logger.info(
+                    { folder, jid: dbGroup.jid },
+                    'Hot-reloaded group from DB',
+                  );
+                }
+              }
             }
           }
-          if (!group) continue;
+          if (!group) {
+            logger.warn(
+              { chatJid, folder: getFormmyGroupFolder(chatJid) },
+              'Skipping messages: no registered group found',
+            );
+            continue;
+          }
 
           const channel = findChannel(channels, chatJid);
           if (!channel) {
