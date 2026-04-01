@@ -777,6 +777,11 @@ async function startMessageLoop(): Promise<void> {
             allPending.length > 0 ? allPending : groupMessages;
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
+          logger.info(
+            { chatJid, group: group.name, msgCount: messagesToSend.length },
+            'Dispatching messages to queue',
+          );
+
           if (queue.sendMessage(chatJid, formatted)) {
             logger.debug(
               { chatJid, count: messagesToSend.length },
