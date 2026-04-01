@@ -537,6 +537,7 @@ async function runQuery(
   for await (const message of query({
     prompt: stream,
     options: {
+      model: FALLBACK_MODEL,
       fallbackModel: FALLBACK_MODEL,
       cwd: '/workspace/group',
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,

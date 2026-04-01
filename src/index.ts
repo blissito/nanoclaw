@@ -642,10 +642,7 @@ async function startMessageLoop(): Promise<void> {
 
   while (true) {
     try {
-      const jids = [
-        ...Object.keys(registeredGroups),
-        ...getAllFormmyJids(),
-      ];
+      const jids = [...Object.keys(registeredGroups), ...getAllFormmyJids()];
       const { messages, newTimestamp } = getNewMessages(
         jids,
         lastTimestamp,

@@ -26,16 +26,18 @@ Cada cliente de Business API tiene DOS carpetas en NanoClaw:
 El grupo admin monta `formmy_NOMBRE/` como additionalMount read-write para poder editar el CLAUDE.md del agente público desde el chat.
 
 ### Routing de JIDs
-Los JIDs de Business API (`formmy_52155xxx`) NO van en `registered_groups` (que tiene UNIQUE constraint en `folder`). Van en una tabla separada:
+Los JIDs de Business API NO van en `registered_groups` (que tiene UNIQUE constraint en `folder`). Van en una tabla separada:
 
 ```sql
 formmy_jid_mapping (
-  jid TEXT PRIMARY KEY,          -- formmy_5215500001234
+  jid TEXT PRIMARY KEY,          -- formmy_69cd57fc76b0bf8de81f7637_5215500001234
   group_folder TEXT NOT NULL,    -- formmy_rulo
   integration_id TEXT,           -- 69cd57fc76b0bf8de81f7637
   created_at TEXT NOT NULL
 )
 ```
+
+El JID incluye el `integration_id` en el string: `formmy_{integration_id}_{phone}`. Esto hace que cada combinación bot+número sea única por diseño — un mismo número puede hablar con Rulo Y con Datin sin conflicto, porque genera dos JIDs distintos.
 
 - Múltiples JIDs → 1 folder (muchos clientes, un agente)
 - Cada JID guarda su `integration_id` para que NanoClaw use los tokens correctos al responder
@@ -245,7 +247,9 @@ FORMMY_DEFAULT_GROUP=formmy_lobby
 Ubicación: `/root/.config/nanoclaw/mount-allowlist.json`
 Permite que grupos no-main monten carpetas de otros grupos como additionalMounts read-write.
 
-## Ejemplo real: Rulo (Club Padel Valle)
+## Ejemplos reales
+
+### Rulo (Club Padel Valle)
 
 | Componente | Valor |
 |---|---|
@@ -254,3 +258,14 @@ Permite que grupos no-main monten carpetas de otros grupos como additionalMounts
 | naoclawGroup | `formmy_rulo` |
 | Carpeta 1:1 | `groups/formmy_rulo/` |
 | Grupo admin | `whatsapp_smatch-padel-club` (tiene mount RW a formmy_rulo) |
+| JID ejemplo | `formmy_69cd57fc76b0bf8de81f7637_5217712412825` |
+
+### Datin (Encuestas)
+
+| Componente | Valor |
+|---|---|
+| Chatbot ID | `69cd654b76b0bf8de81f7a9a` |
+| Integration ID | `69cd68ce2fc1737ba857d3e0` |
+| naoclawGroup | `formmy_datin` |
+| Carpeta 1:1 | `groups/formmy_datin/` |
+| Grupo admin | `whatsapp_grupi` (tiene mount RW a formmy_datin) |
