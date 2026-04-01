@@ -113,6 +113,7 @@ function createSchema(database: Database.Database): void {
     CREATE TABLE IF NOT EXISTS formmy_jid_mapping (
       jid TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
+      integration_id TEXT,
       created_at TEXT NOT NULL
     );
   `);
@@ -156,6 +157,15 @@ function createSchema(database: Database.Database): void {
     // Backfill: existing rows with folder = 'main' are the main group
     database.exec(
       `UPDATE registered_groups SET is_main = 1 WHERE folder = 'main'`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  // Add integration_id to formmy_jid_mapping (migration for existing DBs)
+  try {
+    database.exec(
+      `ALTER TABLE formmy_jid_mapping ADD COLUMN integration_id TEXT`,
     );
   } catch {
     /* column already exists */
@@ -929,23 +939,41 @@ function migrateJsonState(): void {
 
 // --- Formmy JID mapping (Business API JIDs → group folders) ---
 
-export function getFormmyGroupFolder(jid: string): string | null {
+export function getFormmyJidMapping(
+  jid: string,
+): { group_folder: string; integration_id: string | null } | null {
   const row = db
-    .prepare('SELECT group_folder FROM formmy_jid_mapping WHERE jid = ?')
-    .get(jid) as { group_folder: string } | undefined;
-  return row?.group_folder ?? null;
+    .prepare(
+      'SELECT group_folder, integration_id FROM formmy_jid_mapping WHERE jid = ?',
+    )
+    .get(jid) as
+    | { group_folder: string; integration_id: string | null }
+    | undefined;
+  return row ?? null;
 }
 
-export function setFormmyJidMapping(jid: string, folder: string): void {
+export function getFormmyGroupFolder(jid: string): string | null {
+  return getFormmyJidMapping(jid)?.group_folder ?? null;
+}
+
+export function getFormmyIntegrationId(jid: string): string | null {
+  return getFormmyJidMapping(jid)?.integration_id ?? null;
+}
+
+export function setFormmyJidMapping(
+  jid: string,
+  folder: string,
+  integrationId?: string,
+): void {
   db.prepare(
-    `INSERT OR REPLACE INTO formmy_jid_mapping (jid, group_folder, created_at)
-     VALUES (?, ?, ?)`,
-  ).run(jid, folder, new Date().toISOString());
+    `INSERT OR REPLACE INTO formmy_jid_mapping (jid, group_folder, integration_id, created_at)
+     VALUES (?, ?, ?, ?)`,
+  ).run(jid, folder, integrationId ?? null, new Date().toISOString());
 }
 
 export function getAllFormmyJids(): string[] {
-  const rows = db
-    .prepare('SELECT jid FROM formmy_jid_mapping')
-    .all() as { jid: string }[];
+  const rows = db.prepare('SELECT jid FROM formmy_jid_mapping').all() as {
+    jid: string;
+  }[];
   return rows.map((r) => r.jid);
 }

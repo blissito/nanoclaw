@@ -22,7 +22,11 @@ import https from 'https';
 import path from 'path';
 
 import { GROUPS_DIR } from '../config.js';
-import { getFormmyGroupFolder, setFormmyJidMapping } from '../db.js';
+import {
+  getFormmyGroupFolder,
+  getFormmyIntegrationId,
+  setFormmyJidMapping,
+} from '../db.js';
 import { logger } from '../logger.js';
 import { Channel, NewMessage } from '../types.js';
 import { registerChannel, ChannelOpts } from './registry.js';
@@ -94,8 +98,16 @@ export class FormmyWhatsAppChannel implements Channel {
 
       try {
         const body = await readBody(req);
-        const { jid, sender, sender_name, content, message_id, media, group_folder } =
-          JSON.parse(body);
+        const {
+          jid,
+          sender,
+          sender_name,
+          content,
+          message_id,
+          media,
+          group_folder,
+          integration_id,
+        } = JSON.parse(body);
 
         if (!jid || (!content && !media)) {
           res.writeHead(400);
@@ -109,7 +121,8 @@ export class FormmyWhatsAppChannel implements Channel {
 
         // Resolve group via mapping table
         const groups = this.opts.registeredGroups();
-        let group: import('../types.js').RegisteredGroup | undefined = groups[fullJid];
+        let group: import('../types.js').RegisteredGroup | undefined =
+          groups[fullJid];
         const targetFolder = group_folder || DEFAULT_GROUP;
 
         if (!group && targetFolder) {
@@ -118,14 +131,14 @@ export class FormmyWhatsAppChannel implements Channel {
 
           if (!existingFolder) {
             // New JID — create mapping
-            setFormmyJidMapping(fullJid, targetFolder);
+            setFormmyJidMapping(fullJid, targetFolder, integration_id);
             logger.info(
               { jid: fullJid, folder: targetFolder },
               '[formmy-whatsapp] Mapped new JID to group',
             );
           } else if (group_folder && existingFolder !== group_folder) {
             // JID exists but group_folder changed (e.g. moving from lobby)
-            setFormmyJidMapping(fullJid, group_folder);
+            setFormmyJidMapping(fullJid, group_folder, integration_id);
             logger.info(
               { jid: fullJid, from: existingFolder, to: group_folder },
               '[formmy-whatsapp] Moved JID to new group',
@@ -202,10 +215,14 @@ export class FormmyWhatsAppChannel implements Channel {
     });
   }
 
+  private resolveIntegrationId(jid: string): string {
+    return getFormmyIntegrationId(jid) || this.integrationId;
+  }
+
   async sendMessage(jid: string, text: string): Promise<void> {
     await this.postToFormmy({
       phone_number: extractPhone(jid),
-      integration_id: this.integrationId,
+      integration_id: this.resolveIntegrationId(jid),
       type: 'text',
       text,
     });
@@ -220,7 +237,7 @@ export class FormmyWhatsAppChannel implements Channel {
     const base64 = buffer.toString('base64');
     await this.postToFormmy({
       phone_number: extractPhone(jid),
-      integration_id: this.integrationId,
+      integration_id: this.resolveIntegrationId(jid),
       type: 'image',
       media_base64: base64,
       caption,
@@ -232,7 +249,7 @@ export class FormmyWhatsAppChannel implements Channel {
     const base64 = buffer.toString('base64');
     await this.postToFormmy({
       phone_number: extractPhone(jid),
-      integration_id: this.integrationId,
+      integration_id: this.resolveIntegrationId(jid),
       type: 'sticker',
       media_base64: base64,
     });
@@ -248,7 +265,7 @@ export class FormmyWhatsAppChannel implements Channel {
     const base64 = buffer.toString('base64');
     await this.postToFormmy({
       phone_number: extractPhone(jid),
-      integration_id: this.integrationId,
+      integration_id: this.resolveIntegrationId(jid),
       type: 'document',
       media_base64: base64,
       filename,
