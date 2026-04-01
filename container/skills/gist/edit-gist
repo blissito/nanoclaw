@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# edit-gist: update or add files to an existing GitHub gist
+# Usage:
+#   edit-gist <gist-id> <filename> <content>       # update/add file inline
+#   edit-gist <gist-id> <filename> /path/to/file   # update/add from file
+set -euo pipefail
+
+GIST_ID="${1:?Usage: edit-gist <gist-id> <filename> <content|filepath>}"
+FILENAME="${2:?Usage: edit-gist <gist-id> <filename> <content|filepath>}"
+CONTENT="${3:?Usage: edit-gist <gist-id> <filename> <content|filepath>}"
+
+if [[ -z "${GITHUB_GIST_TOKEN:-}" ]]; then
+  echo "ERROR: GITHUB_GIST_TOKEN not set" >&2
+  exit 1
+fi
+
+# If content is a file path, read it
+if [[ -f "$CONTENT" ]]; then
+  CONTENT=$(cat "$CONTENT")
+fi
+
+RESPONSE=$(GIST_FILENAME="$FILENAME" GIST_CONTENT="$CONTENT" python3 -c "
+import json, os
+payload = {
+    'files': {
+        os.environ['GIST_FILENAME']: {
+            'content': os.environ['GIST_CONTENT']
+        }
+    }
+}
+print(json.dumps(payload))
+" | curl -sS -X PATCH "https://api.github.com/gists/$GIST_ID" \
+  -H "Authorization: token $GITHUB_GIST_TOKEN" \
+  -H "Accept: application/vnd.github+json" \
+  -H "Content-Type: application/json" \
+  -d @-)
+
+URL=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+if 'html_url' in d:
+    print(d['html_url'])
+elif 'message' in d:
+    print('ERROR: ' + d['message'], file=sys.stderr)
+    sys.exit(1)
+else:
+    print('ERROR: unexpected response', file=sys.stderr)
+    sys.exit(1)
+" <<< "$RESPONSE")
+
+echo "$URL"

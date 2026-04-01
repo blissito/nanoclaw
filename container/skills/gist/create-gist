@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# create-gist: create a GitHub gist and return its URL
+# Usage:
+#   create-gist <filename> <content>           # inline content
+#   create-gist <filename> /path/to/file       # from file (auto-detected if path exists)
+#   create-gist --public <filename> <content>  # public gist
+set -euo pipefail
+
+PUBLIC="false"
+if [[ "${1:-}" == "--public" ]]; then
+  PUBLIC="true"
+  shift
+fi
+
+FILENAME="${1:?Usage: create-gist [--public] <filename> <content|filepath>}"
+CONTENT="${2:?Usage: create-gist [--public] <filename> <content|filepath>}"
+
+if [[ -z "${GITHUB_GIST_TOKEN:-}" ]]; then
+  echo "ERROR: GITHUB_GIST_TOKEN not set" >&2
+  exit 1
+fi
+
+# If content is a file path, read it
+if [[ -f "$CONTENT" ]]; then
+  CONTENT=$(cat "$CONTENT")
+fi
+
+# Build JSON payload via python to handle escaping
+RESPONSE=$(GIST_FILENAME="$FILENAME" GIST_CONTENT="$CONTENT" GIST_PUBLIC="$PUBLIC" python3 -c "
+import json, os
+payload = {
+    'public': os.environ['GIST_PUBLIC'] == 'true',
+    'files': {
+        os.environ['GIST_FILENAME']: {
+            'content': os.environ['GIST_CONTENT']
+        }
+    }
+}
+print(json.dumps(payload))
+" | curl -sS -X POST "https://api.github.com/gists" \
+  -H "Authorization: token $GITHUB_GIST_TOKEN" \
+  -H "Accept: application/vnd.github+json" \
+  -H "Content-Type: application/json" \
+  -d @-)
+
+# Extract URL
+URL=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+if 'html_url' in d:
+    print(d['html_url'])
+elif 'message' in d:
+    print('ERROR: ' + d['message'], file=sys.stderr)
+    sys.exit(1)
+else:
+    print('ERROR: unexpected response', file=sys.stderr)
+    sys.exit(1)
+" <<< "$RESPONSE")
+
+echo "$URL"

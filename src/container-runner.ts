@@ -297,6 +297,9 @@ function buildEnvFile(containerName: string): string | null {
   const falKey = readEnvFile(['FAL_KEY']).FAL_KEY;
   if (falKey) envLines.push(`FAL_KEY=${falKey}`);
 
+  const gistToken = readEnvFile(['GITHUB_GIST_TOKEN']).GITHUB_GIST_TOKEN;
+  if (gistToken) envLines.push(`GITHUB_GIST_TOKEN=${gistToken}`);
+
   const elevenKey = readEnvFile(['ELEVENLABS_API_KEY']).ELEVENLABS_API_KEY;
   if (elevenKey) envLines.push(`ELEVENLABS_API_KEY=${elevenKey}`);
 
