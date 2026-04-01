@@ -1,12 +1,12 @@
 ---
 name: image-gen
 description: Generate, edit, and face-swap images using fal.ai FLUX, OpenAI gpt-image-1-mini, and face-swap
-allowed-tools: Bash(generate-image:*),Bash(generate-flux:*),Bash(generate-preview:*),Bash(face-swap:*)
+allowed-tools: Bash(generate-image:*),Bash(generate-flux:*),Bash(generate-preview:*),Bash(face-swap:*),Bash(edit-image:*)
 ---
 
 # Image Generation, Editing & Face Swap
 
-You have FOUR image tools. Choose the right one:
+You have FIVE image tools. Choose the right one:
 
 | Tool | Model | Cost | When to use |
 |------|-------|------|-------------|
@@ -14,6 +14,7 @@ You have FOUR image tools. Choose the right one:
 | `generate-flux` | FLUX.2 [pro] | $0.03 | Photorealistic, ultra-quality, image-guided style transfer |
 | `generate-preview` | gpt-image-1-mini | $0.005 | Quick drafts, previews, iterations before final version |
 | `face-swap` | fal.ai | — | Preserve a specific person's face identity |
+| `edit-image` | fal.ai | $0.00-0.04 | Background removal, upscaling |
 
 ## Decision guide
 
@@ -23,6 +24,8 @@ You have FOUR image tools. Choose the right one:
 - "Transforma esta imagen al estilo..." → `generate-flux` with reference image
 - "Dame un preview rápido" / iterating on concepts / "a ver cómo se ve" → `generate-preview`
 - "Pon MI CARA en esta foto" / "swap faces" → `face-swap`
+- "Quita el fondo" / "hazla sin fondo" / "background remove" → `edit-image bg-remove`
+- "Mejora la calidad" / "upscale" / "hazla más grande" / "más resolución" → `edit-image upscale`
 - User asks for multiple options/variations → use `generate-preview` first, then `generate-image` for the final
 
 ## generate-image
@@ -73,6 +76,22 @@ face-swap /workspace/group/attachments/img-FACE.jpg /workspace/group/attachments
 
 - First argument: the photo with the FACE to use (source face)
 - Second argument: the photo where the face will be PLACED (target body/scene)
+
+## edit-image
+
+```bash
+# Remove background (outputs PNG with transparency)
+edit-image bg-remove /workspace/group/attachments/img-1234.jpg
+
+# Upscale image (default 2x)
+edit-image upscale /workspace/group/attachments/img-1234.jpg
+
+# Upscale 4x
+edit-image upscale /workspace/group/attachments/img-1234.jpg 4
+```
+
+- `bg-remove` uses BiRefNet — free, outputs transparent PNG
+- `upscale` uses Clarity Upscaler — $0.04, enhances resolution and detail
 
 ## Output & delivery
 

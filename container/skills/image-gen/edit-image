@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+# edit-image: advanced image editing via fal.ai
+# Usage:
+#   edit-image bg-remove /path/to/image.jpg                        # Remove background
+#   edit-image upscale /path/to/image.jpg [scale]                  # Upscale (default 2x)
+#   edit-image inpaint /path/to/image.jpg /path/to/mask.png "prompt"  # (coming soon)
+#   edit-image remove /path/to/image.jpg /path/to/mask.png            # (coming soon)
+set -euo pipefail
+
+OP="${1:?Usage: edit-image <bg-remove|upscale|inpaint|remove> /path/to/image [args...]}"
+shift
+
+if [[ -z "${FAL_KEY:-}" ]]; then
+  echo "ERROR: FAL_KEY not set" >&2
+  exit 1
+fi
+
+OUTPUT_DIR="/workspace/group"
+TIMESTAMP=$(date +%s%3N)
+
+case "$OP" in
+  bg-remove)
+    IMAGE="${1:?Usage: edit-image bg-remove /path/to/image}"
+    MODEL="fal-ai/birefnet"
+    OUTPUT_FILE="${OUTPUT_DIR}/edited-${TIMESTAMP}.png"
+    COST=0.00
+
+    IMAGE_URI=$(python3 -c "
+import base64, sys, mimetypes
+path = sys.argv[1]
+mime = mimetypes.guess_type(path)[0] or 'image/jpeg'
+with open(path, 'rb') as f:
+    print(f'data:{mime};base64,' + base64.b64encode(f.read()).decode())
+" "$IMAGE")
+
+    PAYLOAD=$(EDIT_IMAGE_URI="$IMAGE_URI" python3 -c "
+import json, os
+print(json.dumps({
+    'image_url': os.environ['EDIT_IMAGE_URI']
+}))
+")
+    ;;
+
+  upscale)
+    IMAGE="${1:?Usage: edit-image upscale /path/to/image [scale]}"
+    SCALE="${2:-2}"
+    MODEL="fal-ai/clarity-upscaler"
+    OUTPUT_FILE="${OUTPUT_DIR}/edited-${TIMESTAMP}.png"
+    COST=0.04
+
+    IMAGE_URI=$(python3 -c "
+import base64, sys, mimetypes
+path = sys.argv[1]
+mime = mimetypes.guess_type(path)[0] or 'image/jpeg'
+with open(path, 'rb') as f:
+    print(f'data:{mime};base64,' + base64.b64encode(f.read()).decode())
+" "$IMAGE")
+
+    PAYLOAD=$(EDIT_IMAGE_URI="$IMAGE_URI" EDIT_SCALE="$SCALE" python3 -c "
+import json, os
+print(json.dumps({
+    'image_url': os.environ['EDIT_IMAGE_URI'],
+    'scale': int(os.environ['EDIT_SCALE'])
+}))
+")
+    ;;
+
+  inpaint|remove)
+    echo "ERROR: $OP requires a mask. Auto-mask coming soon." >&2
+    exit 1
+    ;;
+
+  *)
+    echo "ERROR: Unknown operation '$OP'. Use: bg-remove, upscale, inpaint, remove" >&2
+    exit 1
+    ;;
+esac
+
+# Submit to fal.ai queue (payload via stdin to avoid ARG_MAX)
+RESPONSE=$(echo "$PAYLOAD" | curl -sS -X POST "https://queue.fal.run/${MODEL}" \
+  -H "Authorization: Key $FAL_KEY" \
+  -H "Content-Type: application/json" \
+  -d @-)
+
+# Check for immediate error
+ERROR=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+if 'detail' in d:
+    print(d['detail'] if isinstance(d['detail'], str) else json.dumps(d['detail']))
+elif 'error' in d:
+    print(d['error'])
+" <<< "$RESPONSE" 2>/dev/null || true)
+
+if [[ -n "$ERROR" ]]; then
+  echo "ERROR: fal.ai: $ERROR" >&2
+  exit 1
+fi
+
+# Poll queue for result
+REQUEST_ID=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print(d.get('request_id', ''))
+" <<< "$RESPONSE")
+
+if [[ -n "$REQUEST_ID" ]]; then
+  for i in $(seq 1 90); do
+    sleep 2
+    STATUS_RESPONSE=$(curl -sS "https://queue.fal.run/${MODEL}/requests/$REQUEST_ID/status" \
+      -H "Authorization: Key $FAL_KEY")
+    STATUS=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print(d.get('status', ''))
+" <<< "$STATUS_RESPONSE")
+    if [[ "$STATUS" == "COMPLETED" ]]; then
+      RESPONSE=$(curl -sS "https://queue.fal.run/${MODEL}/requests/$REQUEST_ID" \
+        -H "Authorization: Key $FAL_KEY")
+      break
+    elif [[ "$STATUS" == "FAILED" ]]; then
+      echo "ERROR: fal.ai $OP failed" >&2
+      exit 1
+    fi
+  done
+fi
+
+# Extract result image URL
+IMAGE_URL=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+# birefnet returns 'image.url', clarity-upscaler returns 'image.url'
+img = d.get('image', {})
+if isinstance(img, dict) and 'url' in img:
+    print(img['url'])
+else:
+    # fallback: check images array
+    images = d.get('images', [])
+    print(images[0]['url'] if images else '')
+" <<< "$RESPONSE")
+
+if [[ -z "$IMAGE_URL" ]]; then
+  echo "ERROR: No image URL in response" >&2
+  echo "Response: $RESPONSE" >&2
+  exit 1
+fi
+
+curl -sS -o "$OUTPUT_FILE" "$IMAGE_URL"
+
+# Track via IPC (non-fatal)
+{
+  IPC_DIR="/workspace/ipc/messages"
+  mkdir -p "$IPC_DIR"
+  TRACK_FILE="${IPC_DIR}/imgtrack-$(date +%s%3N).json"
+  python3 -c "
+import json, sys
+json.dump({
+    'type': 'track_image_gen',
+    'gen_type': sys.argv[1],
+    'prompt': sys.argv[1],
+    'model': sys.argv[2],
+    'cost_usd': float(sys.argv[3])
+}, open(sys.argv[4], 'w'))
+" "$OP" "$MODEL" "$COST" "$TRACK_FILE"
+} || true
+
+echo "$OUTPUT_FILE"
