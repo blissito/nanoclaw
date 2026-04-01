@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# generate-flux: generate images using fal.ai FLUX 1.1 [pro] ultra
+# generate-flux: generate images using fal.ai FLUX.2 [pro]
 # Usage:
 #   generate-flux "prompt"                          # text-to-image
 #   generate-flux "prompt" /path/to/reference.jpg   # image-guided generation
@@ -15,9 +15,10 @@ if [[ -z "${FAL_KEY:-}" ]]; then
   exit 1
 fi
 
-# Build payload
 if [[ -n "$REF_IMAGE" ]]; then
-  # Image-guided: encode reference as base64 data URI
+  # Image-guided via FLUX.2 [pro] edit
+  MODEL="fal-ai/flux-2-pro/edit"
+
   IMAGE_URI=$(python3 -c "
 import base64, sys, mimetypes
 path = sys.argv[1]
@@ -34,11 +35,13 @@ print(json.dumps({
     'image_prompt_strength': 0.4,
     'aspect_ratio': '1:1',
     'output_format': 'jpeg',
-    'safety_tolerance': 6,
-    'raw': True
+    'safety_tolerance': 6
 }))
 ")
 else
+  # Text-to-image via FLUX.2 [pro]
+  MODEL="fal-ai/flux-2-pro"
+
   PAYLOAD=$(FLUX_PROMPT="$PROMPT" python3 -c "
 import json, os
 print(json.dumps({
@@ -52,7 +55,7 @@ print(json.dumps({
 fi
 
 # Submit to fal.ai queue
-RESPONSE=$(curl -sS -X POST "https://queue.fal.run/fal-ai/flux-pro/v1.1-ultra" \
+RESPONSE=$(curl -sS -X POST "https://queue.fal.run/${MODEL}" \
   -H "Authorization: Key $FAL_KEY" \
   -H "Content-Type: application/json" \
   -d "$PAYLOAD")
@@ -82,7 +85,7 @@ print(d.get('request_id', ''))
 if [[ -n "$REQUEST_ID" ]]; then
   for i in $(seq 1 90); do
     sleep 2
-    STATUS_RESPONSE=$(curl -sS "https://queue.fal.run/fal-ai/flux-pro/v1.1-ultra/requests/$REQUEST_ID/status" \
+    STATUS_RESPONSE=$(curl -sS "https://queue.fal.run/${MODEL}/requests/$REQUEST_ID/status" \
       -H "Authorization: Key $FAL_KEY")
     STATUS=$(python3 -c "
 import json, sys
@@ -90,11 +93,11 @@ d = json.load(sys.stdin)
 print(d.get('status', ''))
 " <<< "$STATUS_RESPONSE")
     if [[ "$STATUS" == "COMPLETED" ]]; then
-      RESPONSE=$(curl -sS "https://queue.fal.run/fal-ai/flux-pro/v1.1-ultra/requests/$REQUEST_ID" \
+      RESPONSE=$(curl -sS "https://queue.fal.run/${MODEL}/requests/$REQUEST_ID" \
         -H "Authorization: Key $FAL_KEY")
       break
     elif [[ "$STATUS" == "FAILED" ]]; then
-      echo "ERROR: fal.ai Flux Ultra generation failed" >&2
+      echo "ERROR: fal.ai FLUX.2 generation failed" >&2
       exit 1
     fi
   done
@@ -132,10 +135,10 @@ json.dump({
     'type': 'track_image_gen',
     'gen_type': sys.argv[1],
     'prompt': os.environ['FLUX_PROMPT'],
-    'model': 'fal-ai/flux-pro/v1.1-ultra',
-    'cost_usd': 0.06
-}, open(sys.argv[2], 'w'))
-" "$GEN_TYPE" "$TRACK_FILE"
+    'model': sys.argv[2],
+    'cost_usd': 0.03
+}, open(sys.argv[3], 'w'))
+" "$GEN_TYPE" "$MODEL" "$TRACK_FILE"
 } || true
 
 echo "$OUTPUT_FILE"

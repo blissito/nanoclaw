@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# generate-image: call OpenAI image API
+# generate-image: generate/edit images using fal.ai FLUX
 # Usage:
-#   generate-image "prompt"                                    # text-to-image
-#   generate-image "prompt" /path/to/img1.png                  # edit with 1 image
+#   generate-image "prompt"                                    # text-to-image (FLUX.2 pro)
+#   generate-image "prompt" /path/to/img1.png                  # edit with image (Kontext pro)
 #   generate-image "prompt" /path/to/img1.png /path/to/img2.png  # edit with multiple images
 set -euo pipefail
 
@@ -10,61 +10,119 @@ PROMPT="${1:?Usage: generate-image \"prompt\" [source-image ...]}"
 shift
 SOURCE_IMAGES=("$@")
 OUTPUT_DIR="/workspace/group"
-OUTPUT_FILE="${OUTPUT_DIR}/generated-$(date +%s%3N).png"
+OUTPUT_FILE="${OUTPUT_DIR}/generated-$(date +%s%3N).jpg"
 
-if [[ -z "${OPENAI_API_KEY:-}" ]]; then
-  echo "ERROR: OPENAI_API_KEY not set" >&2
+if [[ -z "${FAL_KEY:-}" ]]; then
+  echo "ERROR: FAL_KEY not set" >&2
   exit 1
 fi
 
 if [[ ${#SOURCE_IMAGES[@]} -gt 0 ]]; then
-  # Image editing via gpt-image-1 (supports multiple images)
-  CURL_ARGS=(-sS -X POST "https://api.openai.com/v1/images/edits"
-    -H "Authorization: Bearer $OPENAI_API_KEY"
-    -F "model=gpt-image-1"
-    -F "prompt=${PROMPT}")
-  for img in "${SOURCE_IMAGES[@]}"; do
-    CURL_ARGS+=(-F "image[]=@${img}")
-  done
-  RESPONSE=$(curl "${CURL_ARGS[@]}")
-else
-  # Text-to-image via gpt-image-1
-  PAYLOAD=$(python3 -c "
-import json, sys
-print(json.dumps({
-    'model': 'gpt-image-1',
-    'prompt': sys.argv[1]
-}))
-" "$PROMPT")
+  # Image editing via FLUX.1 Kontext [pro]
+  MODEL="fal-ai/flux-pro/kontext"
+  COST=0.04
 
-  RESPONSE=$(curl -sS -X POST "https://api.openai.com/v1/images/generations" \
-    -H "Authorization: Bearer $OPENAI_API_KEY" \
-    -H "Content-Type: application/json" \
-    -d "$PAYLOAD")
+  # Encode first image as base64 data URI
+  IMAGE_URI=$(python3 -c "
+import base64, sys, mimetypes
+path = sys.argv[1]
+mime = mimetypes.guess_type(path)[0] or 'image/jpeg'
+with open(path, 'rb') as f:
+    print(f'data:{mime};base64,' + base64.b64encode(f.read()).decode())
+" "${SOURCE_IMAGES[0]}")
+
+  PAYLOAD=$(FLUX_PROMPT="$PROMPT" FLUX_IMAGE_URI="$IMAGE_URI" python3 -c "
+import json, os
+print(json.dumps({
+    'prompt': os.environ['FLUX_PROMPT'],
+    'image_url': os.environ['FLUX_IMAGE_URI'],
+    'output_format': 'jpeg',
+    'safety_tolerance': 6
+}))
+")
+else
+  # Text-to-image via FLUX.2 [pro]
+  MODEL="fal-ai/flux-2-pro"
+  COST=0.03
+
+  PAYLOAD=$(FLUX_PROMPT="$PROMPT" python3 -c "
+import json, os
+print(json.dumps({
+    'prompt': os.environ['FLUX_PROMPT'],
+    'aspect_ratio': '1:1',
+    'output_format': 'jpeg',
+    'safety_tolerance': 6
+}))
+")
 fi
 
-# Check for API error
+# Submit to fal.ai queue
+RESPONSE=$(curl -sS -X POST "https://queue.fal.run/${MODEL}" \
+  -H "Authorization: Key $FAL_KEY" \
+  -H "Content-Type: application/json" \
+  -d "$PAYLOAD")
+
+# Check for immediate error
 ERROR=$(python3 -c "
 import json, sys
 d = json.load(sys.stdin)
-e = d.get('error', {})
-if isinstance(e, dict) and e.get('message'):
-    print(e['message'])
+if 'detail' in d:
+    print(d['detail'] if isinstance(d['detail'], str) else json.dumps(d['detail']))
+elif 'error' in d:
+    print(d['error'])
 " <<< "$RESPONSE" 2>/dev/null || true)
 
 if [[ -n "$ERROR" ]]; then
-  echo "ERROR: OpenAI API: $ERROR" >&2
+  echo "ERROR: fal.ai: $ERROR" >&2
   exit 1
 fi
 
-# Decode base64 and save
-python3 -c "
-import json, sys, base64
+# Poll queue for result
+REQUEST_ID=$(python3 -c "
+import json, sys
 d = json.load(sys.stdin)
-b64 = d['data'][0]['b64_json']
-with open(sys.argv[1], 'wb') as f:
-    f.write(base64.b64decode(b64))
-" "$OUTPUT_FILE" <<< "$RESPONSE"
+print(d.get('request_id', ''))
+" <<< "$RESPONSE")
+
+if [[ -n "$REQUEST_ID" ]]; then
+  for i in $(seq 1 90); do
+    sleep 2
+    STATUS_RESPONSE=$(curl -sS "https://queue.fal.run/${MODEL}/requests/$REQUEST_ID/status" \
+      -H "Authorization: Key $FAL_KEY")
+    STATUS=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print(d.get('status', ''))
+" <<< "$STATUS_RESPONSE")
+    if [[ "$STATUS" == "COMPLETED" ]]; then
+      RESPONSE=$(curl -sS "https://queue.fal.run/${MODEL}/requests/$REQUEST_ID" \
+        -H "Authorization: Key $FAL_KEY")
+      break
+    elif [[ "$STATUS" == "FAILED" ]]; then
+      echo "ERROR: fal.ai generation failed" >&2
+      exit 1
+    fi
+  done
+fi
+
+# Download result image
+IMAGE_URL=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+images = d.get('images', [])
+if images:
+    print(images[0].get('url', ''))
+else:
+    print('')
+" <<< "$RESPONSE")
+
+if [[ -z "$IMAGE_URL" ]]; then
+  echo "ERROR: No image URL in response" >&2
+  echo "Response: $RESPONSE" >&2
+  exit 1
+fi
+
+curl -sS -o "$OUTPUT_FILE" "$IMAGE_URL"
 
 # Track generation via IPC (non-fatal)
 {
@@ -73,16 +131,16 @@ with open(sys.argv[1], 'wb') as f:
   IPC_DIR="/workspace/ipc/messages"
   mkdir -p "$IPC_DIR"
   TRACK_FILE="${IPC_DIR}/imgtrack-$(date +%s%3N).json"
-  python3 -c "
-import json, sys
+  FLUX_PROMPT="$PROMPT" python3 -c "
+import json, os, sys
 json.dump({
     'type': 'track_image_gen',
     'gen_type': sys.argv[1],
-    'prompt': sys.argv[2],
-    'model': 'gpt-image-1',
-    'cost_usd': 0.08
-}, open(sys.argv[3], 'w'))
-" "$GEN_TYPE" "$PROMPT" "$TRACK_FILE"
+    'prompt': os.environ['FLUX_PROMPT'],
+    'model': sys.argv[2],
+    'cost_usd': float(sys.argv[3])
+}, open(sys.argv[4], 'w'))
+" "$GEN_TYPE" "$MODEL" "$COST" "$TRACK_FILE"
 } || true
 
 echo "$OUTPUT_FILE"

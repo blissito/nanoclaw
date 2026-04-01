@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# generate-preview: quick cheap preview using OpenAI gpt-image-1-mini
+# Usage: generate-preview "prompt"
+set -euo pipefail
+
+PROMPT="${1:?Usage: generate-preview \"prompt\"}"
+OUTPUT_DIR="/workspace/group"
+OUTPUT_FILE="${OUTPUT_DIR}/preview-$(date +%s%3N).png"
+
+if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+  echo "ERROR: OPENAI_API_KEY not set" >&2
+  exit 1
+fi
+
+PAYLOAD=$(python3 -c "
+import json, sys
+print(json.dumps({
+    'model': 'gpt-image-1-mini',
+    'prompt': sys.argv[1],
+    'quality': 'low',
+    'size': '1024x1024'
+}))
+" "$PROMPT")
+
+RESPONSE=$(curl -sS -X POST "https://api.openai.com/v1/images/generations" \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "$PAYLOAD")
+
+# Check for API error
+ERROR=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+e = d.get('error', {})
+if isinstance(e, dict) and e.get('message'):
+    print(e['message'])
+" <<< "$RESPONSE" 2>/dev/null || true)
+
+if [[ -n "$ERROR" ]]; then
+  echo "ERROR: OpenAI API: $ERROR" >&2
+  exit 1
+fi
+
+# Decode base64 and save
+python3 -c "
+import json, sys, base64
+d = json.load(sys.stdin)
+b64 = d['data'][0]['b64_json']
+with open(sys.argv[1], 'wb') as f:
+    f.write(base64.b64decode(b64))
+" "$OUTPUT_FILE" <<< "$RESPONSE"
+
+# Track via IPC (non-fatal)
+{
+  IPC_DIR="/workspace/ipc/messages"
+  mkdir -p "$IPC_DIR"
+  TRACK_FILE="${IPC_DIR}/imgtrack-$(date +%s%3N).json"
+  python3 -c "
+import json, sys
+json.dump({
+    'type': 'track_image_gen',
+    'gen_type': 'preview',
+    'prompt': sys.argv[1],
+    'model': 'gpt-image-1-mini',
+    'cost_usd': 0.005
+}, open(sys.argv[2], 'w'))
+" "$PROMPT" "$TRACK_FILE"
+} || true
+
+echo "$OUTPUT_FILE"
