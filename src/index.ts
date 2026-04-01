@@ -190,7 +190,21 @@ export function _setRegisteredGroups(
  * Called by the GroupQueue when it's this group's turn.
  */
 async function processGroupMessages(chatJid: string): Promise<boolean> {
-  const group = registeredGroups[chatJid];
+  let group: RegisteredGroup | undefined = registeredGroups[chatJid];
+  // Resolve formmy_ JIDs via folder mapping (same logic as message loop)
+  if (!group) {
+    const folder = getFormmyGroupFolder(chatJid);
+    if (folder) {
+      group = Object.values(registeredGroups).find((g) => g.folder === folder);
+      if (!group) {
+        const dbGroup = getRegisteredGroupByFolder(folder);
+        if (dbGroup) {
+          registeredGroups[dbGroup.jid] = dbGroup;
+          group = dbGroup;
+        }
+      }
+    }
+  }
   if (!group) return true;
 
   const channel = findChannel(channels, chatJid);
