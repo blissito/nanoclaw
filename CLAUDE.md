@@ -91,6 +91,11 @@ ssh root@134.199.239.173 "sed -i 's/^#CLAUDE_CODE_OAUTH_TOKEN=/CLAUDE_CODE_OAUTH
 
 The proxy auto-detects: if `CLAUDE_CODE_OAUTH_TOKEN` is present → OAuth (with API key fallback on 429). If absent → API key only.
 
+**Rotate Bright Data API token:**
+```bash
+ssh root@$(doctl compute droplet list --format Name,PublicIPv4 --no-header | grep nanoclaw-prod | awk '{print $2}') "sed -i 's/^BRIGHTDATA_API_TOKEN=.*/BRIGHTDATA_API_TOKEN=<nuevo-token>/' /home/nanoclaw/app/.env && systemctl restart nanoclaw"
+```
+
 ## Status
 
 - OAuth (Max plan) support working in credential proxy — prefers OAuth over API key when both present
