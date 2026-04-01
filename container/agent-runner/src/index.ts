@@ -538,7 +538,6 @@ async function runQuery(
     prompt: stream,
     options: {
       model: FALLBACK_MODEL,
-      fallbackModel: FALLBACK_MODEL,
       cwd: '/workspace/group',
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
