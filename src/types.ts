@@ -56,6 +56,10 @@ export interface NewMessage {
   is_from_me?: boolean;
   is_bot_message?: boolean;
   manual_mode?: boolean; // Formmy coexistence: human agent has taken over this conversation
+  thread_id?: string;
+  reply_to_message_id?: string;
+  reply_to_message_content?: string;
+  reply_to_sender_name?: string;
 }
 
 export interface ScheduledTask {
