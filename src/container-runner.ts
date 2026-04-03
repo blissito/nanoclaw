@@ -28,7 +28,7 @@ import {
 import { detectAuthMode } from './credential-proxy.js';
 import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
-import { RegisteredGroup } from './types.js';
+import { ContainerConfig, RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -282,7 +282,7 @@ function buildVolumeMounts(
   return mounts;
 }
 
-function buildEnvFile(containerName: string): string | null {
+function buildEnvFile(containerName: string, containerConfig?: ContainerConfig): string | null {
   const envLines: string[] = [];
 
   // Auth placeholder
@@ -360,6 +360,15 @@ function buildEnvFile(containerName: string): string | null {
   const bdToken = readEnvFile(['BRIGHTDATA_API_TOKEN']).BRIGHTDATA_API_TOKEN;
   if (bdToken) envLines.push(`BRIGHTDATA_API_TOKEN=${bdToken}`);
 
+  // Per-group env overrides (from container_config.env)
+  if (containerConfig?.env) {
+    for (const [key, value] of Object.entries(containerConfig.env)) {
+      const idx = envLines.findIndex((l) => l.startsWith(`${key}=`));
+      if (idx >= 0) envLines[idx] = `${key}=${value}`;
+      else envLines.push(`${key}=${value}`);
+    }
+  }
+
   if (envLines.length === 0) return null;
 
   const envFilePath = path.join(DATA_DIR, `env-${containerName}`);
@@ -435,7 +444,7 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const envFilePath = buildEnvFile(containerName);
+  const envFilePath = buildEnvFile(containerName, group.containerConfig);
   const containerArgs = buildContainerArgs(mounts, containerName, envFilePath);
 
   logger.debug(

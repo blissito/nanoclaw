@@ -33,6 +33,7 @@ export interface ContainerConfig {
   mcpServers?: string[]; // Which extra MCP servers to enable (e.g. ['easybits', 'panel']). 'nanoclaw' always included. undefined = all.
   protectClaudeMd?: boolean; // Mount CLAUDE.md as read-only to prevent prompt injection in public-facing groups
   allowedTools?: string[]; // Override default tool list for restricted groups (e.g. public-facing). MCP tools auto-added from mcpServers.
+  env?: Record<string, string>; // Per-group env var overrides (e.g. SMATCH_CLUB_ID). Overrides values from .env for this container only.
 }
 
 export interface RegisteredGroup {

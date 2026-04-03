@@ -152,6 +152,14 @@ ssh root@<ip> 'cd /home/nanoclaw/app && git pull && systemctl restart nanoclaw'
 ssh root@<ip> 'cd /home/nanoclaw/app && git pull && ./container/build.sh'
 ```
 
+### Per-group env overrides
+
+Add `"env": {"KEY": "value"}` to `container_config` to override `.env` values for a specific group:
+```sql
+UPDATE registered_groups SET container_config = '{"mcpServers":["smatch-public"],"env":{"SMATCH_CLUB_ID":"abc123"}}' WHERE folder = 'my_group';
+```
+Overrides replace the global `.env` value for that container only. Other groups are unaffected.
+
 ### Currently registered MCP servers
 
 | Name | Package | Env Vars | Purpose |
