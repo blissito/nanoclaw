@@ -340,8 +340,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
   }
 
+  // Skip if only reactions (no actionable content)
+  const actionableMessages = missedMessages.filter(
+    (m) => !m.content.startsWith('[Reaction:'),
+  );
+  if (actionableMessages.length === 0) return true;
+
   // Coexistence: skip response if human agent has taken over (Formmy manual_mode)
-  const hasManualMode = missedMessages.some((m) => m.manual_mode);
+  const hasManualMode = actionableMessages.some((m) => m.manual_mode);
   if (hasManualMode) {
     logger.info(
       { group: group.name, chatJid },
@@ -350,8 +356,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     return true;
   }
 
-  const prompt = formatMessages(missedMessages, TIMEZONE);
-  const imageAttachments = parseImageReferences(missedMessages);
+  const prompt = formatMessages(actionableMessages, TIMEZONE);
+  const imageAttachments = parseImageReferences(actionableMessages);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
