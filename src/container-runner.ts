@@ -282,7 +282,10 @@ function buildVolumeMounts(
   return mounts;
 }
 
-function buildEnvFile(containerName: string, containerConfig?: ContainerConfig): string | null {
+function buildEnvFile(
+  containerName: string,
+  containerConfig?: ContainerConfig,
+): string | null {
   const envLines: string[] = [];
 
   // Auth placeholder
