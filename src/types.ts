@@ -54,6 +54,7 @@ export interface NewMessage {
   timestamp: string;
   is_from_me?: boolean;
   is_bot_message?: boolean;
+  manual_mode?: boolean; // Formmy coexistence: human agent has taken over this conversation
 }
 
 export interface ScheduledTask {

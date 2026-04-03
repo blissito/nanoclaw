@@ -340,6 +340,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
   }
 
+  // Coexistence: skip response if human agent has taken over (Formmy manual_mode)
+  const hasManualMode = missedMessages.some((m) => m.manual_mode);
+  if (hasManualMode) {
+    logger.info(
+      { group: group.name, chatJid },
+      'Skipped (human takeover active — manual_mode)',
+    );
+    return true;
+  }
+
   const prompt = formatMessages(missedMessages, TIMEZONE);
   const imageAttachments = parseImageReferences(missedMessages);
 
@@ -606,7 +616,7 @@ async function runAgent(
             isMain,
             assistantName: group.trigger.replace(/^@/, '') || ASSISTANT_NAME,
             mcpServers: group.containerConfig?.mcpServers,
-        allowedTools: group.containerConfig?.allowedTools,
+            allowedTools: group.containerConfig?.allowedTools,
             ...(imageAttachments.length > 0 && { imageAttachments }),
           },
           (proc, containerName) =>

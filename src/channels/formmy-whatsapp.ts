@@ -107,6 +107,7 @@ export class FormmyWhatsAppChannel implements Channel {
           media,
           group_folder,
           integration_id,
+          manual_mode,
         } = JSON.parse(body);
 
         if (!jid || (!content && !media)) {
@@ -180,6 +181,7 @@ export class FormmyWhatsAppChannel implements Channel {
           sender_name: sender_name || 'WhatsApp User',
           content: finalContent,
           timestamp: new Date().toISOString(),
+          manual_mode: manual_mode === true,
         };
 
         // Deliver metadata for chat discovery
