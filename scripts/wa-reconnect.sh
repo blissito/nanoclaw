@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-PHONE="${1:-527712412825}"
+PHONE="${1:-527717759013}"
 HOST="root@134.199.239.173"
 APP_DIR="/home/nanoclaw/app"
 
