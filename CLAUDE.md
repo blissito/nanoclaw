@@ -104,6 +104,65 @@ ssh root@$(doctl compute droplet list --format Name,PublicIPv4 --no-header | gre
 - Production running on DigitalOcean droplet (systemd, `/home/nanoclaw/app`)
 - Container agents detach on service restart (not killed) — must `docker kill` stale containers manually
 
+## Adding MCP Servers
+
+Per-group MCP servers give agents domain-specific tools. Each group's `container_config.mcpServers` array controls which servers are available (the `nanoclaw` server is always included automatically).
+
+### Steps to add a new MCP server
+
+**1. Define in agent-runner** — `container/agent-runner/src/index.ts` → `getAllMcpServers()`
+```ts
+'my-mcp': {
+  command: 'npx',
+  args: ['-y', 'my-mcp-package'],
+  env: {
+    MY_SECRET: process.env.MY_SECRET || '',
+  },
+},
+```
+
+**2. Pre-install in Dockerfile** — `container/Dockerfile` → `npm install -g` line
+```
+RUN npm install -g ... my-mcp-package
+```
+This avoids `npx -y` downloading on every container start.
+
+**3. Inject secrets** (skip if reusing existing env vars) — `src/container-runner.ts` → `buildEnvFile()`
+```ts
+const mySecret = readEnvFile(['MY_SECRET']).MY_SECRET;
+if (mySecret) envLines.push(`MY_SECRET=${mySecret}`);
+```
+Then add `MY_SECRET=xxx` to `.env` on prod (`/home/nanoclaw/app/.env`).
+
+**4. Enable per group** — update `container_config` in SQLite
+```sql
+-- Check current config
+SELECT name, container_config FROM registered_groups WHERE folder = 'whatsapp_my-group';
+-- Update (replace full JSON, preserving other fields like additionalMounts)
+UPDATE registered_groups SET container_config = '{"mcpServers":["easybits","my-mcp"]}' WHERE folder = 'whatsapp_my-group';
+```
+Prod DB path: `/home/nanoclaw/app/store/messages.db`
+
+**5. Deploy**
+```bash
+git push
+# Agent-runner changes only (no Dockerfile change): just git pull + restart
+ssh root@<ip> 'cd /home/nanoclaw/app && git pull && systemctl restart nanoclaw'
+# Dockerfile changes (new npm install -g): rebuild container
+ssh root@<ip> 'cd /home/nanoclaw/app && git pull && ./container/build.sh'
+```
+
+### Currently registered MCP servers
+
+| Name | Package | Env Vars | Purpose |
+|------|---------|----------|---------|
+| `nanoclaw` | built-in | (auto) | Core tools: group mgmt, IPC, email |
+| `easybits` | `@easybits.cloud/mcp` | `EASYBITS_API_KEY` | File/image/document storage |
+| `panel` | `panel-mcp` | `PANEL_API_KEY`, `PANEL_URL` | Server panel management |
+| `smatch` | `smatch-mcp` | `SMATCH_MONGODB_URI`, `SMATCH_CLUB_ID` | Club admin (full CRUD) |
+| `smatch-public` | `smatch-mcp-public` | `SMATCH_MONGODB_URI`, `SMATCH_CLUB_ID` | Public read-only + reservation requests |
+| `brightdata` | `@brightdata/mcp` | `BRIGHTDATA_API_TOKEN` | Web scraping/search |
+
 ## Parallel Sub-agents (Agent tool)
 
 Tested and working: adding `'Agent'` to `buildAllowedTools()` in `container/agent-runner/src/index.ts` enables Claude Code's Agent tool inside containers. Sub-agents spawn as `claude` CLI processes (already installed globally in the image). Each sub-agent uses ~100-150MB RAM, so the 2GB droplet is tight for 2-3 parallel agents. Currently **disabled** — re-enable when there's a compelling use case (e.g., parallel codebase exploration). For web research tasks, sequential `WebSearch` is fast enough. When re-enabling, also add a progress message instruction to `groups/global/CLAUDE.md` so users get feedback while sub-agents work.
