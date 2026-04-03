@@ -552,6 +552,7 @@ async function runAgent(
         isMain,
         assistantName: group.trigger.replace(/^@/, '') || ASSISTANT_NAME,
         mcpServers: group.containerConfig?.mcpServers,
+        allowedTools: group.containerConfig?.allowedTools,
         ...(imageAttachments.length > 0 && { imageAttachments }),
       },
       (proc, containerName) =>
@@ -605,6 +606,7 @@ async function runAgent(
             isMain,
             assistantName: group.trigger.replace(/^@/, '') || ASSISTANT_NAME,
             mcpServers: group.containerConfig?.mcpServers,
+        allowedTools: group.containerConfig?.allowedTools,
             ...(imageAttachments.length > 0 && { imageAttachments }),
           },
           (proc, containerName) =>

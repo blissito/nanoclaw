@@ -28,6 +28,7 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   mcpServers?: string[];
+  allowedTools?: string[];
   reportToJid?: string;
   imageAttachments?: Array<{ relativePath: string; mediaType: string; publicUrl?: string }>;
 }
@@ -417,6 +418,13 @@ function buildMcpServers(containerInput: ContainerInput, mcpServerPath: string):
 
 function buildAllowedTools(containerInput: ContainerInput, mcpServerPath: string): string[] {
   const mcpServers = buildMcpServers(containerInput, mcpServerPath);
+  const mcpTools = Object.keys(mcpServers).map(n => `mcp__${n}__*`);
+
+  // Per-group override: only allow specified tools + MCP tools for enabled servers
+  if (containerInput.allowedTools?.length) {
+    return [...containerInput.allowedTools, ...mcpTools];
+  }
+
   return [
     'Agent',
     'Bash',
@@ -426,7 +434,7 @@ function buildAllowedTools(containerInput: ContainerInput, mcpServerPath: string
     'TeamCreate', 'TeamDelete', 'SendMessage',
     'TodoWrite', 'ToolSearch', 'Skill',
     'NotebookEdit',
-    ...Object.keys(mcpServers).map(n => `mcp__${n}__*`),
+    ...mcpTools,
   ];
 }
 

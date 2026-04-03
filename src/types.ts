@@ -32,6 +32,7 @@ export interface ContainerConfig {
   timeout?: number; // Default: 300000 (5 minutes)
   mcpServers?: string[]; // Which extra MCP servers to enable (e.g. ['easybits', 'panel']). 'nanoclaw' always included. undefined = all.
   protectClaudeMd?: boolean; // Mount CLAUDE.md as read-only to prevent prompt injection in public-facing groups
+  allowedTools?: string[]; // Override default tool list for restricted groups (e.g. public-facing). MCP tools auto-added from mcpServers.
 }
 
 export interface RegisteredGroup {
