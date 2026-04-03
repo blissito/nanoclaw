@@ -393,6 +393,14 @@ function getAllMcpServers(containerInput: ContainerInput, mcpServerPath: string)
         SMATCH_CLUB_ID: process.env.SMATCH_CLUB_ID || '',
       },
     },
+    'smatch-public': {
+      command: 'npx',
+      args: ['-y', 'smatch-mcp-public'],
+      env: {
+        SMATCH_MONGODB_URI: process.env.SMATCH_MONGODB_URI || '',
+        SMATCH_CLUB_ID: process.env.SMATCH_CLUB_ID || '',
+      },
+    },
     brightdata: {
       command: 'npx',
       args: ['-y', '@brightdata/mcp'],
