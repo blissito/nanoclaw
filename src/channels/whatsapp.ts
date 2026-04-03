@@ -603,6 +603,28 @@ export class WhatsAppChannel implements Channel {
         { jid, length: prefixed.length, mentions: mentions?.length ?? 0 },
         'Message sent',
       );
+      // Warn if group is admin-only and bot is not admin (message will be silently dropped by WA)
+      if (jid.endsWith('@g.us')) {
+        try {
+          const meta = await this.sock.groupMetadata(jid);
+          if (meta.announce) {
+            const botId = this.sock.user?.id?.split(':')[0];
+            const botLid = this.sock.user?.lid?.split(':')[0];
+            const me = meta.participants.find(
+              (p) =>
+                p.id.split(':')[0] === botId || p.id.split(':')[0] === botLid,
+            );
+            if (!me || (me.admin !== 'admin' && me.admin !== 'superadmin')) {
+              logger.warn(
+                { jid, group: meta.subject },
+                'Group is admin-only and bot is NOT admin — message was likely dropped by WhatsApp',
+              );
+            }
+          }
+        } catch {
+          // Non-critical, don't block on metadata fetch failures
+        }
+      }
     } catch (err) {
       // If send fails, queue it for retry on reconnect
       this.outgoingQueue.push({ kind: 'text', jid, text: prefixed });
