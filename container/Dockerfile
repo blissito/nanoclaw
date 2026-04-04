@@ -44,7 +44,7 @@ ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 # Install global CLIs and MCP servers
 # Pre-installing MCP servers here avoids `npx -y` downloading them on every container start.
 # When adding a new MCP server to agent-runner/src/index.ts, also add the package here.
-RUN npm install -g agent-browser @anthropic-ai/claude-code @easybits.cloud/mcp panel-mcp smatch-mcp smatch-mcp-public @brightdata/mcp
+RUN npm install -g agent-browser @anthropic-ai/claude-code @easybits.cloud/mcp panel-mcp smatch-mcp smatch-mcp-public @brightdata/mcp pptxgenjs
 
 # Create app directory
 WORKDIR /app
@@ -72,6 +72,11 @@ RUN chmod +x /usr/local/bin/office-reader
 # Install mercadopago CLI
 COPY skills/mercadopago/mercadopago /usr/local/bin/mercadopago
 RUN chmod +x /usr/local/bin/mercadopago
+
+# Install pptx-gen CLI
+COPY skills/pptx-gen/pptx-gen /usr/local/bin/pptx-gen
+COPY skills/pptx-gen/pptx-helper.mjs /usr/local/lib/pptx-helper.mjs
+RUN chmod +x /usr/local/bin/pptx-gen
 
 # Create workspace directories
 RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input

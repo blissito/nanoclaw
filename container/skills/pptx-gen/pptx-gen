@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# pptx-gen: Generate PowerPoint presentations from JSON
+# Usage: pptx-gen '<json>' [output_path]
+#   pptx-gen /path/to/input.json [output_path]
+set -euo pipefail
+
+INPUT="${1:?Usage: pptx-gen '<json_or_file>' [output_path]}"
+OUTPUT="${2:-/workspace/group/presentation-$(date +%s%3N).pptx}"
+
+HELPER="/usr/local/lib/pptx-helper.mjs"
+
+# Accept JSON string or file path
+if [[ -f "$INPUT" ]]; then
+  cat "$INPUT" | node "$HELPER" "$OUTPUT"
+else
+  echo "$INPUT" | node "$HELPER" "$OUTPUT"
+fi

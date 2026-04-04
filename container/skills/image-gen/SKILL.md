@@ -14,7 +14,7 @@ You have FIVE image tools. Choose the right one:
 | `generate-flux` | FLUX.2 [pro] | $0.03 | Photorealistic, ultra-quality, image-guided style transfer |
 | `generate-preview` | gpt-image-1-mini | $0.005 | Quick drafts, previews, iterations before final version |
 | `face-swap` | fal.ai | — | Preserve a specific person's face identity |
-| `edit-image` | fal.ai | $0.00-0.04 | Background removal, upscaling |
+| `edit-image` | fal.ai | $0.00-0.055 | Background removal, upscaling, segment+paint, inpainting |
 
 ## Decision guide
 
@@ -24,6 +24,7 @@ You have FIVE image tools. Choose the right one:
 - "Transforma esta imagen al estilo..." → `generate-flux` with reference image
 - "Dame un preview rápido" / iterating on concepts / "a ver cómo se ve" → `generate-preview`
 - "Pon MI CARA en esta foto" / "swap faces" → `face-swap`
+- "Ponle color rojo de las defensas para abajo" / "pinta esta zona de azul" → `edit-image segment-paint`
 - "Quita el fondo" / "hazla sin fondo" / "background remove" → `edit-image bg-remove`
 - "Mejora la calidad" / "upscale" / "hazla más grande" / "más resolución" → `edit-image upscale`
 - User asks for multiple options/variations → use `generate-preview` first, then `generate-image` for the final
@@ -88,10 +89,18 @@ edit-image upscale /workspace/group/attachments/img-1234.jpg
 
 # Upscale 4x
 edit-image upscale /workspace/group/attachments/img-1234.jpg 4
+
+# Segment + paint: auto-mask a zone and paint it a color
+edit-image segment-paint /workspace/group/attachments/img-1234.jpg "lower bumper and panels" "paint metallic blue"
+
+# Inpaint with manual mask file
+edit-image inpaint /workspace/group/attachments/img-1234.jpg /workspace/group/mask.png "fill with red paint"
 ```
 
+- `segment-paint` uses SAM 3 + FLUX Pro Fill — $0.055, auto-segments a zone by description and paints it
 - `bg-remove` uses BiRefNet — free, outputs transparent PNG
 - `upscale` uses Clarity Upscaler — $0.04, enhances resolution and detail
+- `inpaint` uses FLUX Pro Fill — $0.05, inpainting with manual mask file
 
 ## Output & delivery
 
