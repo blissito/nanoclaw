@@ -37,7 +37,7 @@ print(json.dumps({
     'prompt': os.environ['FLUX_PROMPT'],
     'image_url': os.environ['FLUX_IMAGE_URI'],
     'output_format': 'jpeg',
-    'safety_tolerance': 6
+    'safety_tolerance': 5
 }))
 ")
 else
@@ -51,7 +51,7 @@ print(json.dumps({
     'prompt': os.environ['FLUX_PROMPT'],
     'aspect_ratio': '1:1',
     'output_format': 'jpeg',
-    'safety_tolerance': 6
+    'safety_tolerance': 5
 }))
 ")
 fi

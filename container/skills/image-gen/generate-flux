@@ -35,7 +35,7 @@ print(json.dumps({
     'image_prompt_strength': 0.4,
     'aspect_ratio': '1:1',
     'output_format': 'jpeg',
-    'safety_tolerance': 6
+    'safety_tolerance': 5
 }))
 ")
 else
@@ -48,7 +48,7 @@ print(json.dumps({
     'prompt': os.environ['FLUX_PROMPT'],
     'aspect_ratio': '1:1',
     'output_format': 'jpeg',
-    'safety_tolerance': 6,
+    'safety_tolerance': 5,
     'raw': True
 }))
 ")
