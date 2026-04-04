@@ -171,6 +171,23 @@ Overrides replace the global `.env` value for that container only. Other groups 
 | `smatch-public` | `smatch-mcp-public` | `SMATCH_MONGODB_URI`, `SMATCH_CLUB_ID` | Public read-only + reservation requests |
 | `brightdata` | `@brightdata/mcp` | `BRIGHTDATA_API_TOKEN` | Web scraping/search |
 
+## Client Snapshot (Deploy to New Droplet)
+
+Creates a sanitized snapshot safe for client deployment. Fully automated via `doctl`:
+
+```bash
+./scripts/prepare-snapshot.sh [snapshot-name]
+# Default name: nanoclaw-client-YYYY-MM-DD
+```
+
+Flow: snapshot prod → create temp clone → SSH in and sanitize → snapshot clone → destroy clone + temp snapshot.
+
+Removes: `.env` values, WhatsApp auth, SQLite DB, container sessions, groups, SSH keys, shell history, systemd journal, Docker images. See `scripts/prepare-snapshot.sh` for details.
+
+Prerequisites: `doctl auth init` and SSH access to prod.
+
+After deploying the clean snapshot, the client fills `.env` from `.env.template`, runs `./container/build.sh`, and starts the service.
+
 ## Parallel Sub-agents (Agent tool)
 
 Tested and working: adding `'Agent'` to `buildAllowedTools()` in `container/agent-runner/src/index.ts` enables Claude Code's Agent tool inside containers. Sub-agents spawn as `claude` CLI processes (already installed globally in the image). Each sub-agent uses ~100-150MB RAM, so the 2GB droplet is tight for 2-3 parallel agents. Currently **disabled** — re-enable when there's a compelling use case (e.g., parallel codebase exploration). For web research tasks, sequential `WebSearch` is fast enough. When re-enabling, also add a progress message instruction to `groups/global/CLAUDE.md` so users get feedback while sub-agents work.
