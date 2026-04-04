@@ -1,12 +1,12 @@
 ---
 name: pptx-gen
-description: Generate PowerPoint (.pptx) presentations from JSON
+description: Generate PowerPoint (.pptx) presentations from JSON with smart layouts
 allowed-tools: Bash(pptx-gen:*)
 ---
 
 # PowerPoint Generator
 
-Generate `.pptx` presentations programmatically.
+Generate `.pptx` presentations with automatic layout detection and professional styling.
 
 ## Usage
 
@@ -16,6 +16,20 @@ pptx-gen /path/to/slides.json
 pptx-gen '<json>' /workspace/group/my-presentation.pptx
 ```
 
+## Layouts
+
+Each slide auto-detects the best layout based on its content, or you can set `layout` explicitly:
+
+| Layout | Auto-detected when | Description |
+|--------|-------------------|-------------|
+| `title` | Only title/subtitle, no body/bullets/table | Centered title, decorative accent line |
+| `content` | Has body/bullets, no image | Full-width content with accent bar |
+| `image-right` | Has image + body/bullets | Text left (55%), image right (45%) |
+| `image-left` | Manual only | Image left, text right |
+| `image-full` | Has image, no body/bullets | Large centered image with title above |
+| `comparison` | Has `columns` array | Two columns with divider line |
+| `table` | Has table data | Title + well-spaced table |
+
 ## JSON format
 
 ```json
@@ -23,41 +37,77 @@ pptx-gen '<json>' /workspace/group/my-presentation.pptx
   "title": "Presentation Title",
   "author": "Author Name",
   "theme": {
-    "background": "FFFFFF",
-    "titleColor": "1a1a2e",
-    "bodyColor": "333333",
-    "accentColor": "0066cc"
+    "background": "1a1a2e",
+    "titleColor": "auto",
+    "bodyColor": "auto",
+    "accentColor": "6366f1"
   },
   "slides": [
     {
-      "title": "Slide Title",
-      "subtitle": "Optional subtitle",
-      "body": "Body text paragraph",
-      "bullets": ["Point 1", "Point 2", "Point 3"],
-      "image": "/workspace/group/photo.jpg",
-      "imageX": 5, "imageY": 1.8, "imageW": 4, "imageH": 3,
+      "layout": "title",
+      "title": "Main Title",
+      "subtitle": "Subtitle text"
+    },
+    {
+      "title": "Key Features",
+      "bullets": ["Feature 1", "Feature 2", "Feature 3"]
+    },
+    {
+      "title": "Our Product",
+      "body": "Description text here",
+      "image": "https://example.com/photo.jpg"
+    },
+    {
+      "layout": "comparison",
+      "title": "Us vs Them",
+      "columns": [
+        { "title": "Our Solution", "bullets": ["Fast", "Reliable"] },
+        { "title": "Traditional", "bullets": ["Slow", "Fragile"] }
+      ]
+    },
+    {
+      "title": "Metrics",
       "table": [
-        ["Header 1", "Header 2"],
-        ["Cell 1", "Cell 2"]
-      ],
-      "background": "f5f5f5",
-      "notes": "Speaker notes here"
+        ["Metric", "Q1", "Q2"],
+        ["Revenue", "$10k", "$25k"]
+      ]
     }
   ]
 }
 ```
 
+## Theme
+
+Colors are 6-digit hex (no #). Set `titleColor` and `bodyColor` to `"auto"` (or omit them) for automatic contrast detection — dark backgrounds get light text, light backgrounds get dark text.
+
+Default accent: indigo (`6366f1`). Good alternatives: purple `7c3aed`, blue `3b82f6`, emerald `10b981`, rose `f43f5e`.
+
 ## Slide content options
 
-Each slide can have any combination of:
-- `title` — large bold heading
-- `subtitle` — smaller accent-colored text below title
+- `layout` — override auto-detection (title, content, image-right, image-left, image-full, comparison, table)
+- `title` — slide heading
+- `subtitle` — accent-colored text below title
 - `body` — paragraph text
 - `bullets` — bulleted list (array of strings)
-- `image` — image path or URL with optional position/size (imageX/Y/W/H)
-- `table` — 2D array, first row becomes header
-- `background` — hex color or image path
+- `image` — local path or URL (use generate-image/generate-flux first, then pass the local path)
+- `table` — 2D array, first row = header
+- `columns` — for comparison layout: `[{title, bullets}, {title, bullets}]`
+- `background` — hex color or image path (overrides theme per-slide)
 - `notes` — speaker notes
+
+## Important: Images
+
+**Always use local file paths for images**, not URLs. Download or generate images first, then reference the local path:
+
+```bash
+# Generate an image first
+generate-flux "professional photo of team collaboration" /workspace/group/team.png
+
+# Then use in the presentation
+pptx-gen '{"slides":[{"title":"Our Team","image":"/workspace/group/team.png"}]}'
+```
+
+HTTP URLs may fail depending on network access. Local paths are reliable.
 
 ## Output & delivery
 
@@ -66,9 +116,3 @@ Saves to `/workspace/group/` and prints the path. Send as document:
 ```
 mcp__nanoclaw__send_message({ text: "Here's your presentation!", document_path: "/workspace/group/presentation-123.pptx" })
 ```
-
-## Tips
-
-- Build the JSON programmatically for data-driven presentations
-- Use generated images (from generate-image, generate-flux) as slide backgrounds or content
-- For large presentations, write the JSON to a temp file first, then pass the file path
