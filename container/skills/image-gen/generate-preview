@@ -1,9 +1,21 @@
 #!/usr/bin/env bash
-# generate-preview: quick cheap preview using OpenAI gpt-image-1-mini
-# Usage: generate-preview "prompt"
+# generate-preview: image generation using OpenAI gpt-image-1
+# Usage: generate-preview "prompt"              # mini, cheap draft ($0.005)
+#        generate-preview --hd "prompt"          # full model, high quality ($0.04)
 set -euo pipefail
 
-PROMPT="${1:?Usage: generate-preview \"prompt\"}"
+# Parse --hd flag
+MODEL="gpt-image-1-mini"
+QUALITY="low"
+COST=0.005
+if [[ "${1:-}" == "--hd" ]]; then
+  MODEL="gpt-image-1"
+  QUALITY="high"
+  COST=0.04
+  shift
+fi
+
+PROMPT="${1:?Usage: generate-preview [--hd] \"prompt\"}"
 OUTPUT_DIR="/workspace/group"
 OUTPUT_FILE="${OUTPUT_DIR}/preview-$(date +%s%3N).png"
 
@@ -15,12 +27,12 @@ fi
 PAYLOAD=$(python3 -c "
 import json, sys
 print(json.dumps({
-    'model': 'gpt-image-1-mini',
-    'prompt': sys.argv[1],
-    'quality': 'low',
+    'model': sys.argv[1],
+    'prompt': sys.argv[2],
+    'quality': sys.argv[3],
     'size': '1024x1024'
 }))
-" "$PROMPT")
+" "$MODEL" "$PROMPT" "$QUALITY")
 
 RESPONSE=$(curl -sS -X POST "https://api.openai.com/v1/images/generations" \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
@@ -61,10 +73,10 @@ json.dump({
     'type': 'track_image_gen',
     'gen_type': 'preview',
     'prompt': sys.argv[1],
-    'model': 'gpt-image-1-mini',
-    'cost_usd': 0.005
-}, open(sys.argv[2], 'w'))
-" "$PROMPT" "$TRACK_FILE"
+    'model': sys.argv[2],
+    'cost_usd': float(sys.argv[3])
+}, open(sys.argv[4], 'w'))
+" "$PROMPT" "$MODEL" "$COST" "$TRACK_FILE"
 } || true
 
 echo "$OUTPUT_FILE"

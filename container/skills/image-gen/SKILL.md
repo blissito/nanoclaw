@@ -13,6 +13,7 @@ You have FIVE image tools. Choose the right one:
 | `generate-image` | FLUX.2 [pro] / Kontext | $0.03-0.04 | **Default** — text-to-image, edit/modify photos, combine elements |
 | `generate-flux` | FLUX.2 [pro] | $0.03 | Photorealistic, ultra-quality, image-guided style transfer |
 | `generate-preview` | gpt-image-1-mini | $0.005 | Quick drafts, previews, iterations before final version |
+| `generate-preview --hd` | gpt-image-1 | $0.04 | High-quality OpenAI image generation/editing |
 | `face-swap` | fal.ai | — | Preserve a specific person's face identity |
 | `edit-image` | fal.ai | $0.00-0.055 | Background removal, upscaling, segment+paint, inpainting |
 
@@ -23,6 +24,7 @@ You have FIVE image tools. Choose the right one:
 - "Foto realista de..." / "flux" / "fotorrealismo" → `generate-flux`
 - "Transforma esta imagen al estilo..." → `generate-flux` with reference image
 - "Dame un preview rápido" / iterating on concepts / "a ver cómo se ve" → `generate-preview`
+- "Hazlo con buena calidad" / "como ChatGPT" / needs high quality text-to-image → `generate-preview --hd`
 - "Pon MI CARA en esta foto" / "swap faces" → `face-swap`
 - "Ponle color rojo de las defensas para abajo" / "pinta esta zona de azul" → `edit-image segment-paint`
 - "Quita el fondo" / "hazla sin fondo" / "background remove" → `edit-image bg-remove`
@@ -60,13 +62,17 @@ generate-flux "transform this into a cyberpunk scene" /workspace/group/attachmen
 ## generate-preview
 
 ```bash
-# Quick cheap preview
+# Quick cheap preview (mini, $0.005)
 generate-preview "a logo for a taco shop, minimalist"
+
+# High-quality with full gpt-image-1 ($0.04)
+generate-preview --hd "a car with glossy black paint on the lower bumper"
 ```
 
-- Fast and cheap ($0.005) — use for drafts and iterations
-- Text-to-image only (no editing)
-- Lower quality than generate-image — use to validate concepts before generating final version
+- Without `--hd`: fast and cheap ($0.005) — use for drafts and iterations
+- With `--hd`: full gpt-image-1 model ($0.04) — high quality, good for detailed edits and final images
+- Text-to-image only (no reference image input)
+- Use `--hd` when the user needs quality comparable to ChatGPT's image generation
 
 ## face-swap
 
