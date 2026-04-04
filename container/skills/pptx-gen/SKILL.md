@@ -89,25 +89,29 @@ Default accent: indigo (`6366f1`). Good alternatives: purple `7c3aed`, blue `3b8
 - `subtitle` — accent-colored text below title
 - `body` — paragraph text
 - `bullets` — bulleted list (array of strings)
-- `image` — local path or URL (use generate-image/generate-flux first, then pass the local path)
+- `image` — local path or Pexels URL (do NOT generate AI images, use Pexels search instead)
 - `table` — 2D array, first row = header
 - `columns` — for comparison layout: `[{title, bullets}, {title, bullets}]`
 - `background` — hex color or image path (overrides theme per-slide)
 - `notes` — speaker notes
 
-## Important: Images
+## Images: use Pexels only
 
-**Always use local file paths for images**, not URLs. Download or generate images first, then reference the local path:
+**Do NOT generate AI images** (no generate-flux, no generate-image). Use Pexels for stock photos:
 
 ```bash
-# Generate an image first
-generate-flux "professional photo of team collaboration" /workspace/group/team.png
-
-# Then use in the presentation
-pptx-gen '{"slides":[{"title":"Our Team","image":"/workspace/group/team.png"}]}'
+# Search Pexels and use the URL directly in the slide JSON
+# The helper auto-downloads HTTP images, so URLs work fine
 ```
 
-HTTP URLs may fail depending on network access. Local paths are reliable.
+Use Pexels image URLs directly in the `image` field. The helper downloads them automatically via curl.
+
+## Best practices
+
+- **Keep it concise**: 4-6 slides max unless the user asks for more
+- **No AI image generation**: only Pexels stock photos or no images at all
+- **Let layouts auto-detect**: don't set `layout` unless you need a specific one
+- **Dark themes**: set background color and leave titleColor/bodyColor as "auto"
 
 ## Output & delivery
 
