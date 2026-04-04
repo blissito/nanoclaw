@@ -126,3 +126,5 @@ mcp__nanoclaw__send_message({ text: "Here's your image!", image_path: "/workspac
 - Do NOT call curl or APIs directly — always use these scripts
 - JPEG input is supported (no need to convert to PNG)
 - Prefer `generate-image` over `generate-flux` for general requests — they use the same model for text-to-image, but `generate-image` also handles editing
+- **CRITICAL: When the user sends a photo and asks to modify it (change color, paint a zone, add something), you MUST use a tool that accepts the photo as input (`generate-image`, `edit-image segment-paint`). NEVER use `generate-preview` for editing — it generates from scratch and ignores the user's photo entirely. `generate-preview` is ONLY for creating new images from text.**
+- **When the user asks to paint/recolor a specific zone (defensas, bumper, hood, etc.), use `edit-image segment-paint` — it auto-segments the zone and paints only that area.**
