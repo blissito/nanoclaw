@@ -73,6 +73,7 @@ import {
   handleSessionCommand,
   isSessionCommandAllowed,
 } from './session-commands.js';
+import { startSessionCleanup } from './session-cleanup.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { parseImageReferences } from './image.js';
@@ -1276,6 +1277,7 @@ async function main(): Promise<void> {
   // Recover status tracker AFTER channels connect, so recovery reactions
   // can actually be sent via the WhatsApp channel.
   await statusTracker.recover();
+  startSessionCleanup();
   queue.setProcessMessagesFn(processGroupMessages);
   const lastErrorSentAt: Record<string, number> = {};
   queue.setOnRetriesExhausted((groupJid) => {
