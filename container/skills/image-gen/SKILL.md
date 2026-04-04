@@ -21,12 +21,12 @@ You have FIVE image tools. Choose the right one:
 
 - "Genera una imagen de..." / "Hazme un logo" → `generate-image` (text-to-image)
 - "Cambia el fondo" / "quita esto" / "pon un sombrero" → `generate-image` (editing with Kontext)
+- **"Ponle color X de tal zona para abajo/arriba"** / "pinta esta zona de azul" / "ponle tono" / any request to paint/recolor a SPECIFIC ZONE of a photo → **ALWAYS use `edit-image segment-paint`**, NOT generate-image. This tool auto-segments the zone and paints only that area precisely.
 - "Foto realista de..." / "flux" / "fotorrealismo" → `generate-flux`
 - "Transforma esta imagen al estilo..." → `generate-flux` with reference image
 - "Dame un preview rápido" / iterating on concepts / "a ver cómo se ve" → `generate-preview`
 - "Hazlo con buena calidad" / "como ChatGPT" / needs high quality text-to-image → `generate-preview --hd`
 - "Pon MI CARA en esta foto" / "swap faces" → `face-swap`
-- "Ponle color rojo de las defensas para abajo" / "pinta esta zona de azul" → `edit-image segment-paint`
 - "Quita el fondo" / "hazla sin fondo" / "background remove" → `edit-image bg-remove`
 - "Mejora la calidad" / "upscale" / "hazla más grande" / "más resolución" → `edit-image upscale`
 - User asks for multiple options/variations → use `generate-preview` first, then `generate-image` for the final
