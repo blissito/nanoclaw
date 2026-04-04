@@ -6,10 +6,10 @@ import makeWASocket, {
   Browsers,
   DisconnectReason,
   downloadMediaMessage,
+  normalizeMessageContent,
   WASocket,
   fetchLatestWaWebVersion,
   makeCacheableSignalKeyStore,
-  normalizeMessageContent,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 
@@ -20,10 +20,12 @@ import {
   STORE_DIR,
 } from '../config.js';
 import {
-  getLastGroupSync,
   findMembersByName,
+  getLastGroupSync,
+  getLatestMessage,
   getRegisteredGroup,
   setLastGroupSync,
+  storeReaction,
   updateChatName,
 } from '../db.js';
 import {
@@ -40,7 +42,6 @@ import {
   OnChatMetadata,
   RegisteredGroup,
 } from '../types.js';
-import { registerChannel, ChannelOpts } from './registry.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -209,49 +210,45 @@ export class WhatsAppChannel implements Channel {
 
     this.sock.ev.on('messages.upsert', async ({ messages }) => {
       for (const msg of messages) {
+        if (!msg.message) continue;
+        const rawJid = msg.key.remoteJid;
+        if (!rawJid || rawJid === 'status@broadcast') continue;
+
+        // Translate LID JID to phone JID if applicable
+        const chatJid = await this.translateJid(rawJid);
+
+        const timestamp = new Date(
+          Number(msg.messageTimestamp) * 1000,
+        ).toISOString();
+
+        // Always notify about chat metadata for group discovery
+        const isGroup = chatJid.endsWith('@g.us');
+        this.opts.onChatMetadata(
+          chatJid,
+          timestamp,
+          undefined,
+          'whatsapp',
+          isGroup,
+        );
+
+        // Only deliver full message for registered groups
+        const groups = this.opts.registeredGroups();
         try {
-          if (!msg.message) continue;
-          // Unwrap container types (viewOnceMessageV2, ephemeralMessage,
-          // editedMessage, etc.) so that conversation, extendedTextMessage,
-          // imageMessage, etc. are accessible at the top level.
-          const normalized = normalizeMessageContent(msg.message);
-          if (!normalized) continue;
-          const rawJid = msg.key.remoteJid;
-          if (!rawJid || rawJid === 'status@broadcast') continue;
-
-          // Translate LID JID to phone JID if applicable
-          const chatJid = await this.translateJid(rawJid);
-
-          const timestamp = new Date(
-            Number(msg.messageTimestamp) * 1000,
-          ).toISOString();
-
-          // Always notify about chat metadata for group discovery
-          const isGroup = chatJid.endsWith('@g.us');
-          this.opts.onChatMetadata(
-            chatJid,
-            timestamp,
-            undefined,
-            'whatsapp',
-            isGroup,
-          );
-
-          // Only deliver full message for registered groups
-          const groups = this.opts.registeredGroups();
-          if (groups[chatJid]) {
+        if (groups[chatJid]) {
+            const normalized = normalizeMessageContent(msg.message);
             let content =
-              normalized.conversation ||
-              normalized.extendedTextMessage?.text ||
-              normalized.imageMessage?.caption ||
-              normalized.videoMessage?.caption ||
+              normalized?.conversation ||
+              normalized?.extendedTextMessage?.text ||
+              normalized?.imageMessage?.caption ||
+              normalized?.videoMessage?.caption ||
               '';
 
             // Prepend quoted message context when replying to a message
             const contextInfo =
-              normalized.extendedTextMessage?.contextInfo ||
-              normalized.imageMessage?.contextInfo ||
-              normalized.videoMessage?.contextInfo ||
-              normalized.documentMessage?.contextInfo;
+              normalized?.extendedTextMessage?.contextInfo ||
+              normalized?.imageMessage?.contextInfo ||
+              normalized?.videoMessage?.contextInfo ||
+              normalized?.documentMessage?.contextInfo;
             const quoted = contextInfo?.quotedMessage;
             if (quoted) {
               const quotedNorm = normalizeMessageContent(quoted);
@@ -508,6 +505,45 @@ export class WhatsAppChannel implements Channel {
       }
     });
 
+    // Listen for message reactions
+    this.sock.ev.on('messages.reaction', async (reactions) => {
+      for (const { key, reaction } of reactions) {
+        try {
+          const messageId = key.id;
+          if (!messageId) continue;
+          const rawChatJid = key.remoteJid;
+          if (!rawChatJid || rawChatJid === 'status@broadcast') continue;
+          const chatJid = await this.translateJid(rawChatJid);
+          const groups = this.opts.registeredGroups();
+          if (!groups[chatJid]) continue;
+          const reactorJid = reaction.key?.participant || reaction.key?.remoteJid || '';
+          const emoji = reaction.text || '';
+          const timestamp = reaction.senderTimestampMs
+            ? new Date(Number(reaction.senderTimestampMs)).toISOString()
+            : new Date().toISOString();
+          storeReaction({
+            message_id: messageId,
+            message_chat_jid: chatJid,
+            reactor_jid: reactorJid,
+            reactor_name: reactorJid.split('@')[0],
+            emoji,
+            timestamp,
+          });
+          logger.info(
+            {
+              chatJid,
+              messageId: messageId.slice(0, 10) + '...',
+              reactor: reactorJid.split('@')[0],
+              emoji: emoji || '(removed)',
+            },
+            emoji ? 'Reaction added' : 'Reaction removed',
+          );
+        } catch (err) {
+          logger.error({ err }, 'Failed to process reaction');
+        }
+      }
+    });
+
     // Receive reactions from other users
     this.sock.ev.on('messages.reaction', (reactions) => {
       for (const { key, reaction } of reactions) {
@@ -745,6 +781,14 @@ export class WhatsAppChannel implements Channel {
     }
   }
 
+  async reactToLatestMessage(chatJid: string, emoji: string): Promise<void> {
+    const latest = getLatestMessage(chatJid);
+    if (!latest) {
+      throw new Error(`No messages found for chat ${chatJid}`);
+    }
+    await this.sendReaction(chatJid, latest.id, emoji);
+  }
+
   isConnected(): boolean {
     return this.connected;
   }
@@ -961,5 +1005,3 @@ export class WhatsAppChannel implements Channel {
     }
   }
 }
-
-registerChannel('whatsapp', (opts: ChannelOpts) => new WhatsAppChannel(opts));

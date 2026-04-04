@@ -124,6 +124,8 @@ export interface Channel {
   updateProfilePicture?(jid: string, filePath: string): Promise<void>;
   // Optional: rename a group/chat.
   updateGroupName?(jid: string, name: string): Promise<void>;
+  // Optional: react to the latest message in a chat.
+  reactToLatestMessage?(chatJid: string, emoji: string): Promise<void>;
 }
 
 // Callback type that channels use to deliver inbound messages
