@@ -1271,8 +1271,14 @@ async function main(): Promise<void> {
   const lastErrorSentAt: Record<string, number> = {};
   queue.setOnRetriesExhausted((groupJid) => {
     const now = Date.now();
-    if (lastErrorSentAt[groupJid] && now - lastErrorSentAt[groupJid] < 5 * 60_000) {
-      logger.info({ groupJid }, 'Suppressing repeated error message to channel');
+    if (
+      lastErrorSentAt[groupJid] &&
+      now - lastErrorSentAt[groupJid] < 5 * 60_000
+    ) {
+      logger.info(
+        { groupJid },
+        'Suppressing repeated error message to channel',
+      );
       return;
     }
     lastErrorSentAt[groupJid] = now;

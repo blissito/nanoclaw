@@ -72,7 +72,10 @@ export class GroupQueue {
     const state = this.getGroup(groupJid);
 
     if (state.cooldownUntil > Date.now()) {
-      logger.debug({ groupJid }, 'Group in cooldown after repeated failures, message ignored');
+      logger.debug(
+        { groupJid },
+        'Group in cooldown after repeated failures, message ignored',
+      );
       return;
     }
 
