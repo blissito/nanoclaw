@@ -192,6 +192,17 @@ After deploying the clean snapshot, the client fills `.env` from `.env.template`
 
 Tested and working: adding `'Agent'` to `buildAllowedTools()` in `container/agent-runner/src/index.ts` enables Claude Code's Agent tool inside containers. Sub-agents spawn as `claude` CLI processes (already installed globally in the image). Each sub-agent uses ~100-150MB RAM, so the 2GB droplet is tight for 2-3 parallel agents. Currently **disabled** — re-enable when there's a compelling use case (e.g., parallel codebase exploration). For web research tasks, sequential `WebSearch` is fast enough. When re-enabling, also add a progress message instruction to `groups/global/CLAUDE.md` so users get feedback while sub-agents work.
 
+## Rate Limit Fallback
+
+When OAuth (Max plan) gets rate-limited (429), the credential proxy retries with API key + `claude-sonnet-4-5-20241022`. The fallback model must be Agent SDK-compatible (supports reasoning). Haiku doesn't work.
+
+**Error protection:**
+- Model/auth errors (`not_found_error`, `authentication_error`, etc.) are fatal — no retry, cursor advances
+- After 2 failed retries, group enters 5-minute cooldown (new messages ignored)
+- Error messages to channels suppressed if sent <5 min ago for same group
+
+Config: `FALLBACK_MODEL` in `src/credential-proxy.ts`. Fatal patterns in `src/index.ts` (`fatalContainerPatterns`). Cooldown in `src/group-queue.ts`.
+
 ## Next Steps
 
 - **Meta WABA direct channel** — new `src/channels/meta-waba.ts` that receives webhooks from Meta Cloud API directly, eliminating the Formmy message proxy. Formmy stays as the solution provider (token/number management via Meta Business Manager), but messages flow `WhatsApp → Meta → NanoClaw → Meta → WhatsApp` with no intermediary. This removes Formmy as a SPOF for message routing. Env vars: `META_WABA_VERIFY_TOKEN`, `META_WABA_APP_SECRET`, `META_WABA_ACCESS_TOKEN`, `META_WABA_PHONE_NUMBER_ID`. Same channel pattern as telegram.ts/webhook.ts (~200-300 lines). Covers: webhook verification (Meta challenge), signature validation, inbound message parsing (text, image, audio, location), outbound via Graph API.
