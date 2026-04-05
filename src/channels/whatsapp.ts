@@ -557,6 +557,9 @@ export class WhatsAppChannel implements Channel {
           // Empty text means reaction was removed — skip
           if (!emoji) continue;
 
+          // Skip our own reactions to prevent infinite loop
+          if (reaction.key?.fromMe) continue;
+
           const chatJid = rawJid; // reactions don't use LID JIDs
           const groups = this.opts.registeredGroups();
           if (!groups[chatJid]) continue;
