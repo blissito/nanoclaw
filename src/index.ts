@@ -1294,6 +1294,25 @@ async function main(): Promise<void> {
       .catch(() => {});
   });
   recoverPendingMessages();
+
+  // Write group/task snapshots at startup so containers always have fresh data
+  const startupGroups = getAvailableGroups();
+  const startupRegisteredJids = new Set(Object.keys(registeredGroups));
+  const startupTasks = getAllTasks().map((t) => ({
+    id: t.id,
+    groupFolder: t.group_folder,
+    prompt: t.prompt,
+    schedule_type: t.schedule_type,
+    schedule_value: t.schedule_value,
+    status: t.status,
+    next_run: t.next_run,
+  }));
+  for (const group of Object.values(registeredGroups)) {
+    const im = group.isMain === true;
+    writeGroupsSnapshot(group.folder, im, startupGroups, startupRegisteredJids);
+    writeTasksSnapshot(group.folder, im, startupTasks);
+  }
+
   startMessageLoop().catch((err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
     process.exit(1);
