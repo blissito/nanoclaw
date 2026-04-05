@@ -1297,10 +1297,6 @@ async function main(): Promise<void> {
 
   // Write group/task snapshots at startup so containers always have fresh data
   const startupGroups = getAvailableGroups();
-  logger.info(
-    { availableGroups: startupGroups.length, registeredGroupCount: Object.keys(registeredGroups).length },
-    'Startup snapshot: writing group/task data',
-  );
   const startupRegisteredJids = new Set(Object.keys(registeredGroups));
   const startupTasks = getAllTasks().map((t) => ({
     id: t.id,
