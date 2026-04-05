@@ -26,6 +26,7 @@ RUN apt-get update && apt-get install -y \
     git \
     poppler-utils \
     ffmpeg \
+    imagemagick \
     python3-pip \
     unzip \
     && pip3 install --break-system-packages yt-dlp \
