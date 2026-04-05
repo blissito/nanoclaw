@@ -473,7 +473,7 @@ async function runQuery(
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
-): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
+): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean; numTurns: number }> {
   const stream = new MessageStream();
   stream.push(prompt);
 
@@ -538,6 +538,7 @@ async function runQuery(
   let lastAssistantUuid: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
+  let numTurns = 0;
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
@@ -612,6 +613,7 @@ async function runQuery(
         duration_ms?: number;
       };
       const textResult = r.result || null;
+      if (r.num_turns) numTurns = r.num_turns;
       log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
       if (r.total_cost_usd != null) {
         log(`Usage: cost=$${r.total_cost_usd.toFixed(4)} input=${r.usage?.inputTokens || 0} output=${r.usage?.outputTokens || 0} cache_read=${r.usage?.cacheReadInputTokens || 0} turns=${r.num_turns || 0} duration=${r.duration_ms || 0}ms`);
@@ -636,8 +638,8 @@ async function runQuery(
   }
 
   ipcPolling = false;
-  log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`);
-  return { newSessionId, lastAssistantUuid, closedDuringQuery };
+  log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}, numTurns: ${numTurns}`);
+  return { newSessionId, lastAssistantUuid, closedDuringQuery, numTurns };
 }
 
 async function main(): Promise<void> {
