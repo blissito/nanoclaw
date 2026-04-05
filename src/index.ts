@@ -639,6 +639,10 @@ async function runAgent(
       const fatalContainerPatterns = [
         'EACCES: permission denied',
         'Cannot find module',
+        'not_found_error',
+        'Could not resolve the model',
+        'invalid_api_key',
+        'authentication_error',
       ];
       if (
         output.error &&
@@ -1264,7 +1268,14 @@ async function main(): Promise<void> {
   // can actually be sent via the WhatsApp channel.
   await statusTracker.recover();
   queue.setProcessMessagesFn(processGroupMessages);
+  const lastErrorSentAt: Record<string, number> = {};
   queue.setOnRetriesExhausted((groupJid) => {
+    const now = Date.now();
+    if (lastErrorSentAt[groupJid] && now - lastErrorSentAt[groupJid] < 5 * 60_000) {
+      logger.info({ groupJid }, 'Suppressing repeated error message to channel');
+      return;
+    }
+    lastErrorSentAt[groupJid] = now;
     const group = registeredGroups[groupJid];
     if (!group) return;
     const channel = findChannel(channels, groupJid);

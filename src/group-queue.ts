@@ -25,6 +25,7 @@ interface GroupState {
   containerName: string | null;
   groupFolder: string | null;
   retryCount: number;
+  cooldownUntil: number;
 }
 
 export class GroupQueue {
@@ -50,6 +51,7 @@ export class GroupQueue {
         containerName: null,
         groupFolder: null,
         retryCount: 0,
+        cooldownUntil: 0,
       };
       this.groups.set(groupJid, state);
     }
@@ -68,6 +70,11 @@ export class GroupQueue {
     if (this.shuttingDown) return;
 
     const state = this.getGroup(groupJid);
+
+    if (state.cooldownUntil > Date.now()) {
+      logger.debug({ groupJid }, 'Group in cooldown after repeated failures, message ignored');
+      return;
+    }
 
     if (state.active) {
       state.pendingMessages = true;
@@ -219,6 +226,7 @@ export class GroupQueue {
         const success = await this.processMessagesFn(groupJid);
         if (success) {
           state.retryCount = 0;
+          state.cooldownUntil = 0;
         } else {
           this.scheduleRetry(groupJid, state);
         }
@@ -273,6 +281,7 @@ export class GroupQueue {
         'Max retries exceeded, dropping messages (will retry on next incoming message)',
       );
       state.retryCount = 0;
+      state.cooldownUntil = Date.now() + 5 * 60_000; // 5 min cooldown
       this.onRetriesExhaustedFn?.(groupJid);
       return;
     }

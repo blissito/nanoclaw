@@ -20,11 +20,13 @@
 <p align="center">Every agent gets its own isolated container inside a micro VM.<br>Hypervisor-level isolation. Millisecond startup. No complex setup.</p>
 
 **macOS (Apple Silicon)**
+
 ```bash
 curl -fsSL https://nanoclaw.dev/install-docker-sandboxes.sh | bash
 ```
 
 **Windows (WSL)**
+
 ```bash
 curl -fsSL https://nanoclaw.dev/install-docker-sandboxes-windows.sh | bash
 ```
@@ -74,6 +76,7 @@ Then run `/setup`. Claude Code handles everything: dependencies, authentication,
 **Customization = code changes.** No configuration sprawl. Want different behavior? Modify the code. The codebase is small enough that it's safe to make changes.
 
 **AI-native.**
+
 - No installation wizard; Claude Code guides setup.
 - No monitoring dashboard; ask Claude what's happening.
 - No debugging tools; describe the problem and Claude fixes it.
@@ -104,6 +107,7 @@ Talk to your assistant with the trigger word (default: `@Andy`):
 ```
 
 From the main channel (your self-chat), you can manage groups and tasks:
+
 ```
 @Andy list all scheduled tasks across groups
 @Andy pause the Monday briefing task
@@ -136,9 +140,11 @@ Users then run `/add-telegram` on their fork and get clean code that does exactl
 Skills we'd like to see:
 
 **Communication Channels**
+
 - `/add-signal` - Add Signal as a channel
 
 **Session Management**
+
 - `/clear` - Add a `/clear` command that compacts the conversation (summarizes context while preserving critical information in the same session). Requires figuring out how to trigger compaction programmatically via the Claude Agent SDK.
 
 ## Requirements
@@ -159,6 +165,7 @@ Single Node.js process. Channels are added via skills and self-register at start
 For the full architecture details, see [docs/SPEC.md](docs/SPEC.md).
 
 Key files:
+
 - `src/index.ts` - Orchestrator: state, message loop, agent invocation
 - `src/channels/registry.ts` - Channel registry (self-registration at startup)
 - `src/ipc.ts` - IPC watcher and task processing
@@ -197,6 +204,7 @@ ANTHROPIC_AUTH_TOKEN=your-token-here
 ```
 
 This allows you to use:
+
 - Local models via [Ollama](https://ollama.ai) with an API proxy
 - Open-source models hosted on [Together AI](https://together.ai), [Fireworks](https://fireworks.ai), etc.
 - Custom model deployments with Anthropic-compatible APIs
@@ -235,27 +243,33 @@ ssh root@<IP> "systemctl status nanoclaw --no-pager | head -8"
 ```
 
 If a container is blocking the restart:
+
 ```bash
 ssh root@<IP> "docker kill \$(docker ps -q); systemctl restart nanoclaw"
 ```
 
 If you need a full reboot:
+
 ```bash
 ssh root@<IP> "docker kill \$(docker ps -q) 2>/dev/null; systemctl stop nanoclaw; reboot"
+ssh root@134.199.239.173 "docker kill \$(docker ps -q) 2>/dev/null; systemctl stop nanoclaw; reboot"
 # Wait ~30s, then pull + build + verify
 ```
 
 Container image rebuild (only needed for Dockerfile/apt/global npm changes):
+
 ```bash
 ssh root@<IP> "cd /home/nanoclaw/app && ./container/build.sh"
 ```
 
 New env vars must be added manually (`.env` is gitignored):
+
 ```bash
 ssh root@<IP> "echo 'NEW_VAR=value' >> /home/nanoclaw/app/.env && systemctl restart nanoclaw"
 ```
 
 After deploys that add/modify skills:
+
 ```bash
 ssh root@<IP> "chown -R nanoclaw:nanoclaw /home/nanoclaw/app/data/sessions/"
 ```

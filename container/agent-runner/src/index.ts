@@ -452,8 +452,6 @@ function buildAllowedTools(containerInput: ContainerInput, mcpServerPath: string
  * allowing agent teams subagents to run to completion.
  * Also pipes IPC messages into the stream during the query.
  */
-const FALLBACK_MODEL = 'claude-sonnet-4-5-20241022';
-
 async function runQuery(
   prompt: string,
   sessionId: string | undefined,

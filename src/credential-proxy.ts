@@ -5,7 +5,7 @@
  *
  * Primary: OAuth (Max plan).
  * Fallback: If upstream returns 429 (rate limit) and an API key is
- *           configured, retries with API key + claude-haiku-4-5-20251001.
+ *           configured, retries with API key + claude-sonnet-4-5-20241022.
  */
 import { createServer, Server } from 'http';
 import { request as httpsRequest } from 'https';
@@ -20,7 +20,7 @@ export interface ProxyConfig {
   authMode: AuthMode;
 }
 
-const FALLBACK_MODEL = 'claude-sonnet-4-6-20250514';
+const FALLBACK_MODEL = 'claude-sonnet-4-5-20241022';
 
 export interface NanoClawHandlers {
   getInviteLink?: (jid: string) => Promise<string | null>;
@@ -210,7 +210,7 @@ export function startCredentialProxy(
             upRes.on('end', () => {
               logger.warn(
                 { url: req.url, fallbackModel: FALLBACK_MODEL },
-                'Rate limited on OAuth, retrying with API key + Sonnet',
+                'Rate limited on OAuth, retrying with API key + Sonnet 4.5',
               );
 
               const fallbackBody = swapModelInBody(body);
