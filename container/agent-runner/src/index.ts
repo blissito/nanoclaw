@@ -377,6 +377,13 @@ function getAllMcpServers(containerInput: ContainerInput, mcpServerPath: string)
         EASYBITS_API_KEY: process.env.EASYBITS_API_KEY || '',
       },
     },
+    'easybits-magnet': {
+      command: 'npx',
+      args: ['-y', '@easybits.cloud/mcp', '--tools', 'core,magnet'],
+      env: {
+        EASYBITS_API_KEY: process.env.EASYBITS_API_KEY || '',
+      },
+    },
     panel: {
       command: 'npx',
       args: ['-y', 'panel-mcp'],
