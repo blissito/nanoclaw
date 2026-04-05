@@ -313,6 +313,9 @@ function buildEnvFile(
   const falKey = readEnvFile(['FAL_KEY']).FAL_KEY;
   if (falKey) envLines.push(`FAL_KEY=${falKey}`);
 
+  const roboflowKey = readEnvFile(['ROBOFLOW_API_KEY']).ROBOFLOW_API_KEY;
+  if (roboflowKey) envLines.push(`ROBOFLOW_API_KEY=${roboflowKey}`);
+
   const gistToken = readEnvFile(['GITHUB_GIST_TOKEN']).GITHUB_GIST_TOKEN;
   if (gistToken) envLines.push(`GITHUB_GIST_TOKEN=${gistToken}`);
 
