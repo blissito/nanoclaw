@@ -510,7 +510,9 @@ server.tool(
 
 server.tool(
   'register_group',
-  `Register a new chat/group so the agent can respond to messages there. Main group only.
+  `Register a new chat/group or update an existing one. Main group only.
+
+To add/change MCP servers on an existing group, call this with the group's current jid, name, folder, and trigger — plus the updated mcp_servers list. The host will upsert (create or update).
 
 Use available_groups.json to find the JID for a group. The folder name must be channel-prefixed: "{channel}_{group-name}" (e.g., "whatsapp_family-chat", "telegram_dev-team", "discord_general"). Use lowercase with hyphens for the group name part.`,
   {
@@ -535,7 +537,7 @@ Use available_groups.json to find the JID for a group. The folder name must be c
         content: [
           {
             type: 'text' as const,
-            text: 'Only the main group can register new groups.',
+            text: 'Only the main group can register or update groups.',
           },
         ],
         isError: true,
