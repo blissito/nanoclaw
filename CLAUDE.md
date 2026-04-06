@@ -194,7 +194,43 @@ Tested and working: adding `'Agent'` to `buildAllowedTools()` in `container/agen
 
 ## Rate Limit Fallback
 
-When OAuth (Max plan) gets rate-limited (429), the credential proxy retries with API key + `claude-sonnet-4-5-20241022`. The fallback model must be Agent SDK-compatible (supports reasoning). Haiku doesn't work.
+When OAuth (Max plan) gets rate-limited (429), the credential proxy retries with API key + `claude-sonnet-4-20250514`. The fallback model must be Agent SDK-compatible (supports reasoning). Haiku doesn't work.
+
+**⚠️ Model ID format — DO NOT guess model IDs.** Anthropic model IDs do NOT include the minor version number. Correct: `claude-sonnet-4-20250514`. Wrong: `claude-sonnet-4-6-20250514`, `claude-sonnet-4-5-20241022`. If you need to change the fallback model, verify the ID first:
+```bash
+curl -s https://api.anthropic.com/v1/messages \
+  -H "x-api-key: $KEY" -H "anthropic-version: 2023-06-01" -H "content-type: application/json" \
+  -d '{"model":"MODEL_ID","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}' | python3 -m json.tool
+```
+
+**Testing the fallback** (run from repo root):
+```bash
+# Spins up a fake upstream that returns 429 on first call, then forwards retry to real API.
+# Verifies: OAuth gets 429 → retry with API key + FALLBACK_MODEL → 200 OK.
+node -e "
+const http=require('http'),https=require('https');let n=0;
+const fake=http.createServer((req,res)=>{const c=[];req.on('data',d=>c.push(d));req.on('end',()=>{n++;
+const body=JSON.parse(Buffer.concat(c).toString()),auth=req.headers['x-api-key']?'API-KEY':'OAUTH';
+console.log('#'+n+' model='+body.model+' auth='+auth);
+if(n===1){res.writeHead(429,{'content-type':'application/json'});res.end('{\"type\":\"error\"}');return;}
+const rb=Buffer.from(JSON.stringify(body)),h={...req.headers,host:'api.anthropic.com','content-length':rb.length};
+delete h.connection;delete h['keep-alive'];
+const r=https.request({hostname:'api.anthropic.com',port:443,path:req.url,method:'POST',headers:h},rr=>{
+const rc=[];rr.on('data',d=>rc.push(d));rr.on('end',()=>{const t=Buffer.concat(rc).toString();
+try{const p=JSON.parse(t);console.log(p.content?'✅ '+p.content[0].text:'❌ '+JSON.stringify(p.error));}catch{}
+res.writeHead(rr.statusCode,rr.headers);res.end(t);});});r.write(rb);r.end();});});
+fake.listen(18430,'127.0.0.1',()=>{const fs=require('fs'),key=fs.readFileSync('.env','utf8').match(/ANTHROPIC_API_KEY=(.*)/)[1],
+FM='claude-sonnet-4-20250514',bh={'content-type':'application/json','anthropic-version':'2023-06-01'},
+b1=JSON.stringify({model:'claude-opus-4-20250514',max_tokens:30,messages:[{role:'user',content:'Reply: fallback-ok'}]});
+http.request({hostname:'127.0.0.1',port:18430,path:'/v1/messages',method:'POST',
+headers:{...bh,authorization:'Bearer fake',  'content-length':Buffer.byteLength(b1)}},r1=>{const c1=[];r1.on('data',d=>c1.push(d));
+r1.on('end',()=>{if(r1.statusCode!==429){console.log('ERROR: expected 429');process.exit(1);}
+const b2=JSON.stringify({model:FM,max_tokens:30,messages:[{role:'user',content:'Reply: fallback-ok'}]});
+http.request({hostname:'127.0.0.1',port:18430,path:'/v1/messages',method:'POST',
+headers:{...bh,'x-api-key':key,'content-length':Buffer.byteLength(b2)}},r2=>{const c2=[];r2.on('data',d=>c2.push(d));
+r2.on('end',()=>{fake.close();process.exit(r2.statusCode===200?0:1);});}).end(b2);});}).end(b1);});
+"
+```
 
 **Error protection:**
 - Model/auth errors (`not_found_error`, `authentication_error`, etc.) are fatal — no retry, cursor advances
