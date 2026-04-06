@@ -1,7 +1,7 @@
 ---
 name: image-gen
 description: Generate, edit, and face-swap images using fal.ai FLUX, OpenAI gpt-image-1-mini, and face-swap
-allowed-tools: Bash(generate-image:*),Bash(generate-flux:*),Bash(generate-preview:*),Bash(face-swap:*),Bash(edit-image:*)
+allowed-tools: Bash(generate-image:*),Bash(generate-flux:*),Bash(generate-preview:*),Bash(face-swap:*),Bash(edit-image:*),Bash(edit-image restyle:*),Bash(edit-image remove-object:*)
 ---
 
 # Image Generation, Editing & Face Swap
@@ -15,7 +15,7 @@ You have FIVE image tools. Choose the right one:
 | `generate-preview` | gpt-image-1-mini | $0.005 | Quick drafts, previews, iterations before final version |
 | `generate-preview --hd` | gpt-image-1 | $0.04 | High-quality OpenAI image generation/editing |
 | `face-swap` | fal.ai | — | Preserve a specific person's face identity |
-| `edit-image` | fal.ai | $0.00-0.055 | Background removal, upscaling, segment+paint, inpainting |
+| `edit-image` | fal.ai | $0.00-0.055 | Background removal, upscaling, segment+paint, inpainting, restyle, object removal |
 
 ## Decision guide
 
@@ -28,6 +28,8 @@ You have FIVE image tools. Choose the right one:
 - "Hazlo con buena calidad" / "como ChatGPT" / needs high quality text-to-image → `generate-preview --hd`
 - "Pon MI CARA en esta foto" / "swap faces" → `face-swap`
 - "Quita el fondo" / "hazla sin fondo" / "background remove" → `edit-image bg-remove`
+- "Quita esto" / "borra a la persona" / "elimina el objeto" → `edit-image remove-object`
+- "Hazla estilo acuarela" / "como anime" / "estilo pintura al óleo" → `edit-image restyle`
 - "Mejora la calidad" / "upscale" / "hazla más grande" / "más resolución" → `edit-image upscale`
 - User asks for multiple options/variations → use `generate-preview` first, then `generate-image` for the final
 
@@ -107,6 +109,29 @@ edit-image inpaint /workspace/group/attachments/img-1234.jpg /workspace/group/ma
 - `bg-remove` uses BiRefNet — free, outputs transparent PNG
 - `upscale` uses Clarity Upscaler — $0.04, enhances resolution and detail
 - `inpaint` uses FLUX Pro Fill — $0.05, inpainting with manual mask file
+- `restyle` uses FLUX Dev img2img — $0.025, transforms style preserving composition (strength 0-1, default 0.75)
+- `remove-object` uses SAM 3 + FLUX Pro Fill — $0.055, auto-segments and removes an object cleanly
+
+### restyle (image-to-image style transfer)
+
+```bash
+# Transform style (default strength 0.75)
+edit-image restyle /workspace/group/attachments/img-1234.jpg "watercolor painting style"
+
+# Lower strength = more faithful to original (0.5)
+edit-image restyle /workspace/group/attachments/img-1234.jpg "anime illustration" 0.5
+
+# Higher strength = more creative transformation (0.9)
+edit-image restyle /workspace/group/attachments/img-1234.jpg "cyberpunk neon city" 0.9
+```
+
+### remove-object
+
+```bash
+# Remove a person/object from a photo (auto-segments + fills background)
+edit-image remove-object /workspace/group/attachments/img-1234.jpg "the person on the left"
+edit-image remove-object /workspace/group/attachments/img-1234.jpg "the trash can"
+```
 
 ## Output & delivery
 

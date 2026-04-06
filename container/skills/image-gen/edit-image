@@ -158,6 +158,126 @@ print(json.dumps({
 ")
     ;;
 
+  restyle)
+    IMAGE="${1:?Usage: edit-image restyle /path/to/image \"style description\"}"
+    STYLE_PROMPT="${2:?Usage: edit-image restyle /path/to/image \"style description\"}"
+    STRENGTH="${3:-0.75}"
+    MODEL="fal-ai/flux/dev/image-to-image"
+    OUTPUT_FILE="${OUTPUT_DIR}/edited-${TIMESTAMP}.png"
+    COST=0.025
+
+    IMAGE_URI=$(python3 -c "
+import base64, sys, mimetypes
+path = sys.argv[1]
+mime = mimetypes.guess_type(path)[0] or 'image/jpeg'
+with open(path, 'rb') as f:
+    print(f'data:{mime};base64,' + base64.b64encode(f.read()).decode())
+" "$IMAGE")
+
+    PAYLOAD=$(EDIT_IMAGE_URI="$IMAGE_URI" EDIT_PROMPT_VAL="$STYLE_PROMPT" EDIT_STRENGTH="$STRENGTH" python3 -c "
+import json, os
+print(json.dumps({
+    'image_url': os.environ['EDIT_IMAGE_URI'],
+    'prompt': os.environ['EDIT_PROMPT_VAL'],
+    'strength': float(os.environ['EDIT_STRENGTH']),
+    'output_format': 'png',
+    'num_inference_steps': 28
+}))
+")
+    ;;
+
+  remove-object)
+    IMAGE="${1:?Usage: edit-image remove-object /path/to/image \"object description\"}"
+    OBJECT_DESC="${2:?Usage: edit-image remove-object /path/to/image \"object description\"}"
+    OUTPUT_FILE="${OUTPUT_DIR}/edited-${TIMESTAMP}.png"
+    COST=0.055
+
+    # Step 1: Convert image to base64 data URI
+    IMAGE_URI=$(python3 -c "
+import base64, sys, mimetypes
+path = sys.argv[1]
+mime = mimetypes.guess_type(path)[0] or 'image/jpeg'
+with open(path, 'rb') as f:
+    print(f'data:{mime};base64,' + base64.b64encode(f.read()).decode())
+" "$IMAGE")
+
+    # Step 2: SAM 3 — segment the object to get a mask
+    echo "Segmenting object: $OBJECT_DESC ..." >&2
+    SAM_MODEL="fal-ai/sam-3/image"
+    SAM_PAYLOAD=$(EDIT_IMAGE_URI="$IMAGE_URI" EDIT_ZONE="$OBJECT_DESC" python3 -c "
+import json, os
+print(json.dumps({
+    'image_url': os.environ['EDIT_IMAGE_URI'],
+    'prompt': os.environ['EDIT_ZONE'],
+    'apply_mask': False,
+    'output_format': 'png'
+}))
+")
+
+    SAM_RESPONSE=$(echo "$SAM_PAYLOAD" | curl -sS -X POST "https://queue.fal.run/${SAM_MODEL}" \
+      -H "Authorization: Key $FAL_KEY" \
+      -H "Content-Type: application/json" \
+      -d @-)
+
+    # Poll SAM queue
+    SAM_REQ_ID=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print(d.get('request_id', ''))
+" <<< "$SAM_RESPONSE")
+
+    if [[ -n "$SAM_REQ_ID" ]]; then
+      for i in $(seq 1 60); do
+        sleep 2
+        SAM_STATUS_RESP=$(curl -sS "https://queue.fal.run/${SAM_MODEL}/requests/$SAM_REQ_ID/status" \
+          -H "Authorization: Key $FAL_KEY")
+        SAM_STATUS=$(python3 -c "
+import json, sys
+print(json.load(sys.stdin).get('status', ''))
+" <<< "$SAM_STATUS_RESP")
+        if [[ "$SAM_STATUS" == "COMPLETED" ]]; then
+          SAM_RESPONSE=$(curl -sS "https://queue.fal.run/${SAM_MODEL}/requests/$SAM_REQ_ID" \
+            -H "Authorization: Key $FAL_KEY")
+          break
+        elif [[ "$SAM_STATUS" == "FAILED" ]]; then
+          echo "ERROR: SAM segmentation failed" >&2
+          exit 1
+        fi
+      done
+    fi
+
+    # Extract mask URL
+    MASK_URL=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+masks = d.get('masks', [])
+if masks:
+    print(masks[0].get('url', ''))
+else:
+    print('')
+" <<< "$SAM_RESPONSE")
+
+    if [[ -z "$MASK_URL" ]]; then
+      echo "ERROR: SAM returned no mask for '$OBJECT_DESC'" >&2
+      echo "Response: $SAM_RESPONSE" >&2
+      exit 1
+    fi
+
+    echo "Mask obtained. Removing object..." >&2
+
+    # Step 3: FLUX Pro Fill — inpaint with "clean background" prompt
+    MODEL="fal-ai/flux-pro/v1/fill"
+    PAYLOAD=$(EDIT_IMAGE_URI="$IMAGE_URI" EDIT_MASK="$MASK_URL" python3 -c "
+import json, os
+print(json.dumps({
+    'image_url': os.environ['EDIT_IMAGE_URI'],
+    'mask_url': os.environ['EDIT_MASK'],
+    'prompt': 'empty clean background matching the surrounding area, no objects',
+    'output_format': 'png'
+}))
+")
+    ;;
+
   inpaint)
     IMAGE="${1:?Usage: edit-image inpaint /path/to/image /path/to/mask \"prompt\"}"
     MASK="${2:?Usage: edit-image inpaint /path/to/image /path/to/mask \"prompt\"}"
@@ -194,7 +314,7 @@ print(json.dumps({
     ;;
 
   *)
-    echo "ERROR: Unknown operation '$OP'. Use: bg-remove, upscale, segment-paint, inpaint" >&2
+    echo "ERROR: Unknown operation '$OP'. Use: bg-remove, upscale, segment-paint, inpaint, restyle, remove-object" >&2
     exit 1
     ;;
 esac
