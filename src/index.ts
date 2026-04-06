@@ -44,7 +44,6 @@ import {
   initDatabase,
   setRegisteredGroup,
   setRouterState,
-  deleteSession,
   setSession,
   storeChatMetadata,
   storeMessage,
