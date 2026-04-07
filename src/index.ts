@@ -479,9 +479,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         );
         const text = cleaned.replace(prefixRe, '').trim();
         // Filter out meta-responses where the agent says it won't respond
-        const isMetaNoResponse = /^no\s+response\s+(needed|required|necessary)\.?$/i.test(text)
-          || /^(I don'?t need to|no need to|nothing to)\s+respond/i.test(text);
-        logger.info({ group: group.name }, `Agent output: ${raw.length} chars${isMetaNoResponse ? ' (filtered: no-response-needed)' : ''}`);
+        const isMetaNoResponse =
+          /^no\s+response\s+(needed|required|necessary)\.?$/i.test(text) ||
+          /^(I don'?t need to|no need to|nothing to)\s+respond/i.test(text);
+        logger.info(
+          { group: group.name },
+          `Agent output: ${raw.length} chars${isMetaNoResponse ? ' (filtered: no-response-needed)' : ''}`,
+        );
         if (text && !isMetaNoResponse) {
           await channel.sendMessage(chatJid, text);
           outputSentToUser = true;
