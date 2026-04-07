@@ -322,6 +322,9 @@ function buildEnvFile(
   const falKey = readEnvFile(['FAL_KEY']).FAL_KEY;
   if (falKey) envLines.push(`FAL_KEY=${falKey}`);
 
+  const geminiKey = readEnvFile(['GOOGLE_GENERATIVE_AI_API_KEY']).GOOGLE_GENERATIVE_AI_API_KEY;
+  if (geminiKey) envLines.push(`GOOGLE_GENERATIVE_AI_API_KEY=${geminiKey}`);
+
   const roboflowKey = readEnvFile(['ROBOFLOW_API_KEY']).ROBOFLOW_API_KEY;
   if (roboflowKey) envLines.push(`ROBOFLOW_API_KEY=${roboflowKey}`);
 

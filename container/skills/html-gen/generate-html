@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# generate-html: Generate premium HTML+Tailwind pages using Gemini 2.5 Pro
+# Usage:
+#   generate-html "prompt describing the page"
+#   generate-html "prompt" /path/to/reference-image.jpg
+#   generate-html "prompt" --type landing|doc|email|dashboard
+set -euo pipefail
+
+PROMPT="${1:?Usage: generate-html \"prompt\" [reference-image] [--type landing|doc|email|dashboard]}"
+shift
+
+REF_IMAGE=""
+PAGE_TYPE="landing"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --type) PAGE_TYPE="$2"; shift 2 ;;
+    *) REF_IMAGE="$1"; shift ;;
+  esac
+done
+
+OUTPUT_DIR="/workspace/group"
+OUTPUT_FILE="${OUTPUT_DIR}/page-$(date +%s%3N).html"
+
+if [[ -z "${GOOGLE_GENERATIVE_AI_API_KEY:-}" ]]; then
+  echo "ERROR: GOOGLE_GENERATIVE_AI_API_KEY not set" >&2
+  exit 1
+fi
+
+# Build the system prompt for premium HTML generation
+SYSTEM_PROMPT='You are an elite frontend developer specializing in premium HTML + TailwindCSS.
+
+RULES:
+1. Output ONLY the HTML code — no markdown fences, no explanation, no comments
+2. Use Tailwind CSS via CDN: <script src="https://cdn.tailwindcss.com"></script>
+3. Use Google Fonts for premium typography (Inter, Plus Jakarta Sans, DM Sans, etc.)
+4. Use perfect spacing, sizing, and visual hierarchy:
+   - Hero sections: py-20 to py-32, text-5xl to text-7xl headings
+   - Sections: py-16 to py-24 with max-w-7xl mx-auto px-6
+   - Cards: rounded-2xl shadow-lg with hover:shadow-xl transition
+   - Buttons: px-8 py-4 rounded-xl font-semibold with hover states
+   - Gaps: gap-8 to gap-12 between major elements
+5. Use modern design patterns:
+   - Gradient backgrounds (bg-gradient-to-br)
+   - Glassmorphism where appropriate (backdrop-blur, bg-white/10)
+   - Subtle animations (transition-all duration-300)
+   - Dark sections alternating with light
+   - SVG icons from Heroicons inline or Lucide CDN
+6. Mobile-first responsive: sm:, md:, lg: breakpoints
+7. Professional color palettes — never use raw colors like bg-blue-500 alone
+   Prefer sophisticated combinations: slate, zinc, neutral with one accent
+8. Include realistic placeholder content (not lorem ipsum)
+9. Images: use Unsplash URLs (https://images.unsplash.com/photo-...) or gradient placeholders
+10. The page must be COMPLETE and SELF-CONTAINED — single HTML file, no external deps except CDNs
+11. Add subtle micro-interactions: hover:scale-105, group-hover, focus rings
+12. Use semantic HTML: header, nav, main, section, footer
+
+PAGE TYPE GUIDELINES:
+- landing: Hero + features + social proof + CTA + footer. Conversion-focused.
+- doc: Clean reading layout, sidebar TOC, code blocks with syntax highlighting, breadcrumbs.
+- email: Max-width 600px, table-based fallback, inline styles + Tailwind hybrid.
+- dashboard: Stats cards, charts (placeholder), data tables, sidebar nav.'
+
+# Build the Gemini API request
+GEMINI_MODEL="gemini-2.5-pro-preview-06-05"
+API_URL="https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GOOGLE_GENERATIVE_AI_API_KEY}"
+
+if [[ -n "$REF_IMAGE" && -f "$REF_IMAGE" ]]; then
+  # Encode reference image to base64
+  MIME_TYPE=$(file --mime-type -b "$REF_IMAGE")
+  BASE64_IMG=$(base64 < "$REF_IMAGE" | tr -d '\n')
+
+  PAYLOAD=$(jq -n \
+    --arg sys "$SYSTEM_PROMPT" \
+    --arg prompt "Page type: ${PAGE_TYPE}. User request: ${PROMPT}" \
+    --arg mime "$MIME_TYPE" \
+    --arg img "$BASE64_IMG" \
+    '{
+      system_instruction: { parts: [{ text: $sys }] },
+      contents: [{
+        parts: [
+          { inline_data: { mime_type: $mime, data: $img } },
+          { text: $prompt }
+        ]
+      }],
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 65536
+      }
+    }')
+else
+  PAYLOAD=$(jq -n \
+    --arg sys "$SYSTEM_PROMPT" \
+    --arg prompt "Page type: ${PAGE_TYPE}. User request: ${PROMPT}" \
+    '{
+      system_instruction: { parts: [{ text: $sys }] },
+      contents: [{
+        parts: [{ text: $prompt }]
+      }],
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 65536
+      }
+    }')
+fi
+
+echo "Generating ${PAGE_TYPE} page with Gemini 2.5 Pro..." >&2
+
+RESPONSE=$(curl -s -X POST "$API_URL" \
+  -H "Content-Type: application/json" \
+  -d "$PAYLOAD")
+
+# Check for errors
+ERROR=$(echo "$RESPONSE" | jq -r '.error.message // empty')
+if [[ -n "$ERROR" ]]; then
+  echo "ERROR: Gemini API: $ERROR" >&2
+  exit 1
+fi
+
+# Extract HTML from response — strip markdown fences if present
+HTML=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text // empty')
+
+if [[ -z "$HTML" ]]; then
+  echo "ERROR: Empty response from Gemini" >&2
+  echo "$RESPONSE" | jq . >&2
+  exit 1
+fi
+
+# Strip markdown code fences if Gemini wrapped the output
+HTML=$(echo "$HTML" | sed '/^```html$/d; /^```$/d')
+
+echo "$HTML" > "$OUTPUT_FILE"
+echo "Generated: $OUTPUT_FILE" >&2
+echo "$OUTPUT_FILE"
