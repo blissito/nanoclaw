@@ -16,7 +16,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
+import { query, HookCallback, PreCompactHookInput, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
 interface ContainerInput {
@@ -33,19 +33,8 @@ interface ContainerInput {
   imageAttachments?: Array<{ relativePath: string; mediaType: string; publicUrl?: string }>;
 }
 
-interface ImageBase64Block {
-  type: 'image';
-  source: { type: 'base64'; media_type: string; data: string };
-}
-interface ImageUrlBlock {
-  type: 'image';
-  source: { type: 'url'; url: string };
-}
-interface TextContentBlock {
-  type: 'text';
-  text: string;
-}
-type ContentBlock = ImageBase64Block | ImageUrlBlock | TextContentBlock;
+import type { ContentBlockParam } from '@anthropic-ai/sdk/resources';
+type ContentBlock = ContentBlockParam;
 
 interface ContainerOutput {
   status: 'success' | 'error';
@@ -65,12 +54,6 @@ interface SessionsIndex {
   entries: SessionEntry[];
 }
 
-interface SDKUserMessage {
-  type: 'user';
-  message: { role: 'user'; content: string | ContentBlock[] };
-  parent_tool_use_id: null;
-  session_id: string;
-}
 
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
@@ -503,7 +486,7 @@ async function runQuery(
         }
         const data = raw.toString('base64');
         log(`Fallback to base64 for image: ${imgPath} (${raw.length} bytes)`);
-        blocks.push({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data } });
+        blocks.push({ type: 'image', source: { type: 'base64', media_type: img.mediaType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp', data } });
       } catch (err) {
         log(`Failed to load image: ${imgPath}`);
       }
