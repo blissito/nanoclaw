@@ -114,9 +114,28 @@ NEVER use markdown. Only use WhatsApp/Telegram formatting:
 No ## headings. No [links](url). No **double stars**.
 No tables (| col | col |) — they don't render. Use bullet lists or monospace blocks instead.
 
+## Web Pages — Landing Pages, Docs, Dashboards (Gemini + EasyBits)
+
+For **full web pages** (landing pages, documentation sites, dashboards, email templates) use `generate-html` to create premium HTML+Tailwind via Gemini 2.5 Pro, then publish with EasyBits:
+
+1. `generate-html "descripción detallada del sitio" [--type landing|doc|dashboard|email]` — generates a complete, self-contained HTML file with premium Tailwind styling
+2. Read the generated file to review the result
+3. If the user wants changes, re-generate with a refined prompt or edit the HTML directly
+4. Publish with `create_website` + `deploy_website_file`, or `upload_file` for a shareable link
+5. Send the URL to the user
+
+Use `generate-html` with a reference image when the user sends a screenshot and says "hazme algo así":
+```bash
+generate-html "replica este diseño para mi negocio de tacos" /workspace/group/attachments/img-1234.jpg --type landing
+```
+
+**When to use `generate-html` vs EasyBits documents:**
+- **`generate-html`** → full responsive web pages, landing pages, documentation sites, dashboards. No size constraints, mobile-responsive, premium Tailwind design.
+- **EasyBits documents** (below) → fixed-size flipbook pages (816×1056px) for reports, proposals, invoices, presentations, PDFs. Use `create_document` + `set_page_html`.
+
 ## EasyBits Documents & Presentations
 
-When asked to create documents, reports, presentations, landing pages, or any publishable content:
+When asked to create documents, reports, presentations, proposals, invoices, or any **paged/printable** content:
 
 1. *Plan first* — use `get_document_directions` to get 4 design directions (fonts, colors, layout). Pick the best fit or let the user choose.
 2. *Create the document* — `create_document` with a descriptive name and detailed prompt. Apply a `brandKitId` or `themeId` if available.
