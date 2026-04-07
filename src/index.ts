@@ -91,7 +91,6 @@ let lastAgentTimestamp: Record<string, string> = {};
 let cursorBeforePipe: Record<string, string> = {};
 let messageLoopRunning = false;
 
-
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 let statusTracker: StatusTracker;
