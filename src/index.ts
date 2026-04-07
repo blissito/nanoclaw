@@ -336,8 +336,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (cmdResult.handled) return cmdResult.success;
   // --- End session command interception ---
 
-  // For non-main groups, check if trigger is required and present
-  if (!isMainGroup && group.requiresTrigger !== false) {
+  // Check if trigger is required and present (applies to any group with requiresTrigger)
+  if (group.requiresTrigger !== false && group.trigger !== '.*') {
     const triggerPattern = getTriggerPattern(group.trigger);
     const allowlistCfg = loadSenderAllowlist();
     const hasTrigger = missedMessages.some(
@@ -640,6 +640,7 @@ async function runAgent(
         'not_found_error',
         'Could not resolve the model',
         'invalid_api_key',
+        'Credit balance is too low',
         'authentication_error',
       ];
       if (
@@ -842,9 +843,9 @@ async function startMessageLoop(): Promise<void> {
           }
           // --- End session command interception ---
 
-          const needsTrigger = !isMainGroup && group.requiresTrigger !== false;
+          const needsTrigger = group.requiresTrigger !== false && group.trigger !== '.*';
 
-          // For non-main groups, only act on trigger messages.
+          // Only act on trigger messages when trigger is required.
           // Non-trigger messages accumulate in DB and get pulled as
           // context when a trigger eventually arrives.
           if (needsTrigger) {
