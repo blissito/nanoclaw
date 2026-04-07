@@ -340,10 +340,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (group.requiresTrigger !== false && group.trigger !== '.*') {
     const triggerPattern = getTriggerPattern(group.trigger);
     const allowlistCfg = loadSenderAllowlist();
+    const stickerTrigger = group.containerConfig?.stickerTrigger !== false;
     const hasTrigger = missedMessages.some(
       (m) =>
         (triggerPattern.test(m.content.trim()) ||
-          m.content.includes('[Sticker:')) &&
+          (stickerTrigger && m.content.includes('[Sticker:'))) &&
         (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
     );
     if (!hasTrigger) {
@@ -852,10 +853,12 @@ async function startMessageLoop(): Promise<void> {
           if (needsTrigger) {
             const triggerPattern = getTriggerPattern(group.trigger);
             const allowlistCfg = loadSenderAllowlist();
+            const stickerTrigger =
+              group.containerConfig?.stickerTrigger !== false;
             const hasTrigger = groupMessages.some(
               (m) =>
                 (triggerPattern.test(m.content.trim()) ||
-                  m.content.includes('[Sticker:')) &&
+                  (stickerTrigger && m.content.includes('[Sticker:'))) &&
                 (m.is_from_me ||
                   isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
             );
