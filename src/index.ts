@@ -843,7 +843,8 @@ async function startMessageLoop(): Promise<void> {
           }
           // --- End session command interception ---
 
-          const needsTrigger = group.requiresTrigger !== false && group.trigger !== '.*';
+          const needsTrigger =
+            group.requiresTrigger !== false && group.trigger !== '.*';
 
           // Only act on trigger messages when trigger is required.
           // Non-trigger messages accumulate in DB and get pulled as
