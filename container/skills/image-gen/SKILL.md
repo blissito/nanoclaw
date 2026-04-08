@@ -1,7 +1,7 @@
 ---
 name: image-gen
 description: Generate, edit, and face-swap images using fal.ai FLUX, OpenAI gpt-image-1-mini, and face-swap
-allowed-tools: Bash(generate-image:*),Bash(generate-flux:*),Bash(generate-preview:*),Bash(face-swap:*),Bash(edit-image:*),Bash(edit-image restyle:*),Bash(edit-image remove-object:*)
+allowed-tools: Bash(generate-image:*),Bash(generate-flux:*),Bash(generate-preview:*),Bash(face-swap:*),Bash(edit-image:*),Bash(edit-image restyle:*),Bash(edit-image remove-object:*),Bash(train-lora:*),Bash(generate-lora:*)
 ---
 
 # Image Generation, Editing & Face Swap
@@ -16,6 +16,8 @@ You have FIVE image tools. Choose the right one:
 | `generate-preview --hd` | gpt-image-1 | $0.04 | High-quality OpenAI image generation/editing |
 | `face-swap` | fal.ai | — | Preserve a specific person's face identity |
 | `edit-image` | fal.ai | $0.00-0.055 | Background removal, upscaling, segment+paint, inpainting, restyle, object removal |
+| `train-lora` | fal.ai | ~$2-3 | Train a LoRA on 15-20 images of a character/style (one-time, ~10 min) |
+| `generate-lora` | fal.ai | $0.02 | Generate images using a trained LoRA — consistent character every time |
 
 ## Decision guide
 
@@ -153,3 +155,30 @@ mcp__nanoclaw__send_message({ text: "Here's your image!", image_path: "/workspac
 - Prefer `generate-image` over `generate-flux` for general requests — they use the same model for text-to-image, but `generate-image` also handles editing
 - **CRITICAL: When the user sends a photo and asks to modify it (change color, paint a zone, add something), you MUST use a tool that accepts the photo as input (`generate-image`, `edit-image segment-paint`). NEVER use `generate-preview` for editing — it generates from scratch and ignores the user's photo entirely. `generate-preview` is ONLY for creating new images from text.**
 - **When the user asks to paint/recolor a specific zone (defensas, bumper, hood, etc.), use `edit-image segment-paint` — it auto-segments the zone and paints only that area.**
+
+## train-lora (character/style training)
+
+```bash
+# Train a LoRA from reference images (need 15-20, minimum 4)
+train-lora "ghosty_plush" /workspace/group/attachments/img-1.jpg /workspace/group/attachments/img-2.jpg ...
+
+# Glob pattern works too
+train-lora "ghosty_plush" /workspace/group/attachments/ghosty-*.jpg
+```
+
+- Takes ~10 min, costs ~$2-3
+- Saves LoRA config to `/workspace/group/lora-<trigger>.json`
+- Only needs to run once per character/style
+
+## generate-lora (consistent character generation)
+
+```bash
+# Generate using trained LoRA — trigger word MUST appear in prompt
+generate-lora "ghosty_plush" "ghosty_plush wearing a santa hat in a snowy Christmas scene"
+generate-lora "ghosty_plush" "ghosty_plush as a barista in a cozy coffee shop, photorealistic"
+```
+
+- Requires a trained LoRA (run `train-lora` first)
+- The trigger word must be in the prompt for the character to appear
+- $0.02/image
+- For edits on generated images, pipe the output to `generate-image` (Kontext)
