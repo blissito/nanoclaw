@@ -395,16 +395,17 @@ curl -sS -o "$OUTPUT_FILE" "$IMAGE_URL"
   IPC_DIR="/workspace/ipc/messages"
   mkdir -p "$IPC_DIR"
   TRACK_FILE="${IPC_DIR}/imgtrack-$(date +%s%3N).json"
+  TRACK_PROMPT="${EDIT_PROMPT:-${STYLE_PROMPT:-${ZONE_DESC:-${OBJECT_DESC:-$OP}}}}"
   python3 -c "
 import json, sys
 json.dump({
     'type': 'track_image_gen',
     'gen_type': sys.argv[1],
-    'prompt': sys.argv[1],
-    'model': sys.argv[2],
-    'cost_usd': float(sys.argv[3])
-}, open(sys.argv[4], 'w'))
-" "$OP" "$MODEL" "$COST" "$TRACK_FILE"
+    'prompt': sys.argv[2],
+    'model': sys.argv[3],
+    'cost_usd': float(sys.argv[4])
+}, open(sys.argv[5], 'w'))
+" "$OP" "$TRACK_PROMPT" "$MODEL" "$COST" "$TRACK_FILE"
 } || true
 
 echo "$OUTPUT_FILE"

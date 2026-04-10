@@ -55,10 +55,10 @@ print(json.dumps({
 fi
 
 # Submit to fal.ai queue
-RESPONSE=$(curl -sS -X POST "https://queue.fal.run/${MODEL}" \
+RESPONSE=$(printf '%s' "$PAYLOAD" | curl -sS -X POST "https://queue.fal.run/${MODEL}" \
   -H "Authorization: Key $FAL_KEY" \
   -H "Content-Type: application/json" \
-  -d "$PAYLOAD")
+  -d @-)
 
 # Check for immediate error
 ERROR=$(python3 -c "

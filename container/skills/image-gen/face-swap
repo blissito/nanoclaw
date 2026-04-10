@@ -31,18 +31,18 @@ with open(path, 'rb') as f:
 " "$TARGET_IMAGE")
 
 # Submit face swap request to fal.ai
-PAYLOAD=$(python3 -c "
-import json, sys
+PAYLOAD=$(FSWAP_FACE="$FACE_B64" FSWAP_TARGET="$TARGET_B64" python3 -c "
+import json, os
 print(json.dumps({
-    'swap_image_url': sys.argv[1],
-    'target_image_url': sys.argv[2]
+    'swap_image_url': os.environ['FSWAP_FACE'],
+    'target_image_url': os.environ['FSWAP_TARGET']
 }))
-" "$FACE_B64" "$TARGET_B64")
+")
 
-RESPONSE=$(curl -sS -X POST "https://queue.fal.run/fal-ai/face-swap" \
+RESPONSE=$(printf '%s' "$PAYLOAD" | curl -sS -X POST "https://queue.fal.run/fal-ai/face-swap" \
   -H "Authorization: Key $FAL_KEY" \
   -H "Content-Type: application/json" \
-  -d "$PAYLOAD")
+  -d @-)
 
 # Check for error
 ERROR=$(python3 -c "

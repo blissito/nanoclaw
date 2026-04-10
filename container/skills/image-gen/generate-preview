@@ -5,11 +5,10 @@
 set -euo pipefail
 
 # Parse --hd flag
-MODEL="gpt-image-1-mini"
+MODEL="gpt-image-1"
 QUALITY="low"
-COST=0.005
+COST=0.011
 if [[ "${1:-}" == "--hd" ]]; then
-  MODEL="gpt-image-1"
   QUALITY="high"
   COST=0.04
   shift
@@ -30,7 +29,8 @@ print(json.dumps({
     'model': sys.argv[1],
     'prompt': sys.argv[2],
     'quality': sys.argv[3],
-    'size': '1024x1024'
+    'size': '1024x1024',
+    'response_format': 'b64_json'
 }))
 " "$MODEL" "$PROMPT" "$QUALITY")
 
