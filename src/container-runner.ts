@@ -111,6 +111,14 @@ function buildVolumeMounts(
       containerPath: '/workspace/group',
       readonly: false,
     });
+
+    // Main gets writable access to all group folders (for cross-group
+    // instruction injection — write to CLAUDE.md instead of send_message)
+    mounts.push({
+      hostPath: GROUPS_DIR,
+      containerPath: '/workspace/groups',
+      readonly: false,
+    });
   } else {
     // Other groups only get their own folder
     mounts.push({
