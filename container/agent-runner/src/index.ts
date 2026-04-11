@@ -57,6 +57,7 @@ interface SessionsIndex {
 
 
 const IPC_INPUT_DIR = '/workspace/ipc/input';
+const IPC_MESSAGES_DIR = '/workspace/ipc/messages';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
 
@@ -819,7 +820,21 @@ async function main(): Promise<void> {
     try {
       const stat = fs.statSync(sessionFile);
       if (stat.size > SESSION_SIZE_COMPACT_THRESHOLD) {
-        log(`Session file is ${(stat.size / 1024 / 1024).toFixed(1)}MB (>${SESSION_SIZE_COMPACT_THRESHOLD / 1024 / 1024}MB) — forcing /compact before query`);
+        const sizeMB = (stat.size / 1024 / 1024).toFixed(1);
+        log(`Session file is ${sizeMB}MB (>${SESSION_SIZE_COMPACT_THRESHOLD / 1024 / 1024}MB) — forcing /compact before query`);
+
+        // Notify user before compacting
+        const notifyData = {
+          type: 'text',
+          chatJid: containerInput.chatJid,
+          text: `_Compactando sesión (${sizeMB}MB)… esto toma unos minutos._ ⏳`,
+          groupFolder: containerInput.groupFolder,
+          timestamp: new Date().toISOString(),
+        };
+        fs.mkdirSync(IPC_MESSAGES_DIR, { recursive: true });
+        const notifyFile = path.join(IPC_MESSAGES_DIR, `${Date.now()}-compact-notify.json`);
+        fs.writeFileSync(notifyFile, JSON.stringify(notifyData));
+
         for await (const message of query({
           prompt: '/compact',
           options: {
