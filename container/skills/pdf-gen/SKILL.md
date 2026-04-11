@@ -10,6 +10,7 @@ You have access to `mcp__easybits__fast_pdf` for PDF generation. This guide ensu
 ## Universal Rules
 
 1. **Density first.** Every page must have 3+ content sections and be at least 70% full. A page with a single callout or heading is a failure — move content up or eliminate the page.
+1b. **CRITICAL: heading level 1 causes a page break.** Typst inserts a forced page break before every `heading level 1`. Use h1 ONLY for the document's main title (the very first heading). ALL other section titles MUST be `level: 2` or `level: 3`. Using h1 for each category/chapter is the #1 cause of blank pages.
 2. **Page budget.** Before building sections, estimate: total content ÷ 3 sections per page = max pages. If you only have content for 1 page, make it 1 page. Never pad with whitespace.
 3. **Style must match tone:**
    - `bold` → invitations, events, celebrations, marketing
@@ -166,10 +167,51 @@ Before calling fast_pdf, verify:
 
 ---
 
+## Template: Catalog (4-8 pages)
+
+**Use for:** product catalogs, menus, service listings, portfolios.
+**Style:** `modern` or `corporate` | **Cover page:** `true` | **headerFooter:** `true`
+**Key principle:** Pack 2-3 product categories per page. Each category = h2 + image (small) + paragraph + table. NEVER use h1 for categories.
+
+### Structure
+
+```json
+{
+  "style": "modern",
+  "coverPage": true,
+  "headerFooter": true,
+  "brandColor": "#2C3E50",
+  "sections": [
+    { "type": "heading", "level": 2, "text": "🛋️ SALA — Confort Contemporáneo" },
+    { "type": "divider" },
+    { "type": "image", "url": "PRODUCT_IMAGE_URL?w=800", "width": "45%", "caption": "Serie Bosque — sofá de lino natural" },
+    { "type": "paragraph", "text": "Describe the product line in 2-3 sentences. Materials, sizes, colors available. At least 40 words with real details." },
+    { "type": "table", "headers": ["Producto", "Material", "Medidas cm", "Precio"], "rows": [["Product 1", "Material", "WxDxH", "$X"], ["Product 2", "Material", "WxDxH", "$X"]] },
+    { "type": "callout", "variant": "success", "title": "⭐ Destacado", "text": "Best-seller callout or special offer for this category." },
+    { "type": "heading", "level": 2, "text": "🍽️ COMEDOR — Next Category" },
+    { "type": "divider" },
+    { "type": "paragraph", "text": "Description of next category..." },
+    { "type": "table", "headers": ["Producto", "Material", "Medidas cm", "Precio"], "rows": [["...", "...", "...", "..."]] }
+  ]
+}
+```
+
+### Key rules for catalogs
+- **ALL category titles are h2, NEVER h1** — h1 forces a page break and creates blank pages
+- Image at 45% width max — leaves room for text to flow around/below on same page
+- Table is the core of each category — products, specs, prices in columns
+- Pack 2 categories per page when tables are short (3-4 rows each)
+- Use divider between categories, not headings, to avoid visual breaks
+- Callout only for 1-2 standout products across the whole catalog, not every category
+- End with a closing section (contact, warranty, ordering info) — not a blank page
+
+---
+
 ## Anti-patterns (NEVER do these)
 
 | ❌ Don't | ✅ Do instead |
 |----------|--------------|
+| Use `heading level 1` for section/category titles | Use `level: 2` — h1 forces a page break |
 | Page with only a callout | Combine with surrounding paragraphs |
 | Separate heading+paragraph for date, location, time | Use a single Typst grid |
 | Style `corporate` for a birthday party | Use `bold` or `modern` |
