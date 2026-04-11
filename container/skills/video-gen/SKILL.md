@@ -38,6 +38,16 @@ mcp__nanoclaw__send_message({ text: "Listo:", video_path: "/workspace/group/vide
 - Cost: ~$0.42 USD per video
 - Model: Kling 2.6 Pro (high quality, cinematic)
 
+## NOT for image-to-video
+
+If the user sends an image and wants to animate it, do NOT use this script. Use `generate-gif --animate` from the gif-gen skill instead:
+
+```bash
+generate-gif --animate /path/to/image.png "motion description"
+```
+
+This script is text-only — it ignores image arguments.
+
 ## Prompt tips
 
 - Be descriptive: include style, lighting, camera movement, mood
