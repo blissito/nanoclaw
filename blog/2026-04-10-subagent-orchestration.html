@@ -19,12 +19,24 @@ ul, ol { margin-bottom: 1rem; padding-left: 1.5rem; }
 li { margin-bottom: .35rem; }
 blockquote { border-left: 3px solid #ddd; padding-left: 1rem; color: #555; margin-bottom: 1rem; }
 .back { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #eee; }
+.author { display: flex; align-items: center; gap: .75rem; margin-bottom: 2rem; }
+.author img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
+.author .info { font-size: .85rem; color: #888; }
+.author .name { font-weight: 600; color: #1a1a1a; }
+.author a { color: #0066cc; text-decoration: none; }
 </style>
 </head>
 <body>
 
 <h1>Sub-Agent Orchestration Is Broken Everywhere</h1>
 <p class="meta">April 10, 2026 &middot; <a href="index.html">NanoClaw Blog</a></p>
+
+<div class="author">
+  <img src="me.png" alt="Bliss">
+  <div class="info">
+    <span class="name">Blissmo</span> &middot; Building <a href="https://formmy.app">Formmy</a> &amp; Ghosty
+  </div>
+</div>
 
 <p>We wanted parallel sub-agents in NanoClaw: spawn multiple Claude instances inside a container, let them work concurrently, aggregate results. The idea is simple. The reality is that <strong>nobody has made this work reliably</strong> &mdash; not us, not upstream NanoClaw, not OpenClaw.</p>
 
