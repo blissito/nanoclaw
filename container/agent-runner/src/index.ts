@@ -15,6 +15,7 @@
  */
 
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { query, HookCallback, PreCompactHookInput, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
@@ -805,6 +806,57 @@ async function main(): Promise<void> {
     return;
   }
   // --- End slash command handling ---
+
+  // --- EXPERIMENT: auto-compact bloated sessions before first query ---
+  // When a session .jsonl exceeds this size, we force /compact before
+  // the real prompt so the model doesn't choke on megabytes of history.
+  // Threshold: 1MB. Remove or adjust after evaluating results.
+  const SESSION_SIZE_COMPACT_THRESHOLD = 1 * 1024 * 1024; // 1MB
+  if (sessionId) {
+    const sessionFile = path.join(
+      os.homedir(), '.claude', 'projects', '-workspace-group', `${sessionId}.jsonl`,
+    );
+    try {
+      const stat = fs.statSync(sessionFile);
+      if (stat.size > SESSION_SIZE_COMPACT_THRESHOLD) {
+        log(`Session file is ${(stat.size / 1024 / 1024).toFixed(1)}MB (>${SESSION_SIZE_COMPACT_THRESHOLD / 1024 / 1024}MB) — forcing /compact before query`);
+        for await (const message of query({
+          prompt: '/compact',
+          options: {
+            cwd: '/workspace/group',
+            resume: sessionId,
+            systemPrompt: undefined,
+            allowedTools: [],
+            env: sdkEnv,
+            permissionMode: 'bypassPermissions' as const,
+            allowDangerouslySkipPermissions: true,
+            settingSources: ['project', 'user'] as const,
+            hooks: {
+              PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
+            },
+          },
+        })) {
+          if (message.type === 'system' && message.subtype === 'init') {
+            sessionId = message.session_id;
+            log(`Session after auto-compact: ${sessionId}`);
+          }
+          if (message.type === 'system' && (message as { subtype?: string }).subtype === 'compact_boundary') {
+            log('Auto-compact completed');
+          }
+        }
+        // Check new size
+        try {
+          const newStat = fs.statSync(sessionFile);
+          log(`Session file after compact: ${(newStat.size / 1024 / 1024).toFixed(1)}MB`);
+        } catch { /* file may have changed path after compact */ }
+      } else {
+        log(`Session file is ${(stat.size / 1024).toFixed(0)}KB — no compact needed`);
+      }
+    } catch {
+      log(`Session file not found for ${sessionId} — skipping size check`);
+    }
+  }
+  // --- END EXPERIMENT ---
 
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
