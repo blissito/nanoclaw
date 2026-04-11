@@ -122,7 +122,10 @@ export async function processImage(
 
   // Reject SVG — sharp can hang trying to rasterize complex SVGs
   const head = buffer.subarray(0, 256).toString('utf8').trim();
-  if (head.startsWith('<svg') || head.startsWith('<?xml') && head.includes('<svg')) {
+  if (
+    head.startsWith('<svg') ||
+    (head.startsWith('<?xml') && head.includes('<svg'))
+  ) {
     return null;
   }
 
