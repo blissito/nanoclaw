@@ -17,7 +17,12 @@ You have access to `mcp__easybits__fast_pdf` for PDF generation. This guide ensu
    - `modern` → reports, summaries, dashboards
    - `minimal` → formal documents, contracts, proposals
    - `corporate` → ONLY for actual corporate/business documents
-4. **Images.** Use `width: "55%"` for images inside a 1-page doc (larger pushes content to page 2). Use `width: "100%"` ONLY when the image is on its own cover page. Always include a caption.
+4. **Images cause blank pages.** An image + paragraph + table + callout on one page WILL overflow, pushing the callout to a near-empty next page. Rules:
+   - Catalogs/multi-page docs: use `width: "30%"` or **skip images entirely** — tables ARE the content
+   - 1-page docs: use `width: "55%"` max
+   - `width: "100%"` ONLY on dedicated cover pages
+   - NEVER put both an image AND a callout in the same category section — one or the other
+   - Always include a caption when using images
 5. **Use raw `typst` for stats.** The built-in `stats` section type has uneven sizing. Use this Typst grid instead:
    ```json
    { "type": "typst", "code": "#v(8pt)\n#grid(\n  columns: (1fr, 1fr, 1fr, 1fr),\n  gutter: 12pt,\n  [\n    #align(center)[\n      #text(size: 11pt, fill: rgb(\"666666\"))[EMOJI LABEL]\n      #v(4pt)\n      #text(size: 14pt, weight: \"bold\")[VALUE]\n    ]\n  ],\n  ... repeat for each column ...\n)\n#v(8pt)" }
@@ -171,7 +176,12 @@ Before calling fast_pdf, verify:
 
 **Use for:** product catalogs, menus, service listings, portfolios.
 **Style:** `modern` or `corporate` | **Cover page:** `true` | **headerFooter:** `true`
-**Key principle:** Pack 2-3 product categories per page. Each category = h2 + image (small) + paragraph + table. NEVER use h1 for categories.
+
+### THE #1 CATALOG PROBLEM: BLANK PAGES
+
+Blank pages happen when a category section (heading + image + paragraph + table + callout) is slightly MORE than 1 page. The callout overflows to the next page (90% empty), then the next category starts on the page after that. **This is the default failure mode — you MUST actively prevent it.**
+
+Prevention: **NO images in catalog category sections.** Tables are the content. Use `two-column` for feature highlights instead of callouts (callouts are tall and cause overflow). Limit each category to: heading + paragraph + table + optional two-column. This fits on 1 page with room to spare, so 2 short categories can share a page.
 
 ### Structure
 
@@ -184,26 +194,26 @@ Before calling fast_pdf, verify:
   "sections": [
     { "type": "heading", "level": 2, "text": "🛋️ SALA — Confort Contemporáneo" },
     { "type": "divider" },
-    { "type": "image", "url": "PRODUCT_IMAGE_URL?w=800", "width": "45%", "caption": "Serie Bosque — sofá de lino natural" },
-    { "type": "paragraph", "text": "Describe the product line in 2-3 sentences. Materials, sizes, colors available. At least 40 words with real details." },
-    { "type": "table", "headers": ["Producto", "Material", "Medidas cm", "Precio"], "rows": [["Product 1", "Material", "WxDxH", "$X"], ["Product 2", "Material", "WxDxH", "$X"]] },
-    { "type": "callout", "variant": "success", "title": "⭐ Destacado", "text": "Best-seller callout or special offer for this category." },
+    { "type": "paragraph", "text": "2-3 sentences describing the product line. Materials, key technology, available configurations. At least 40 words." },
+    { "type": "table", "headers": ["Producto", "Material", "Medidas cm", "Precio"], "rows": [["Product 1", "Mat", "WxDxH", "$X"], ["Product 2", "Mat", "WxDxH", "$X"], ["Product 3", "Mat", "WxDxH", "$X"]] },
+    { "type": "two-column", "left": "🌿 MATERIALES\nDetail about materials, sourcing, quality. 30+ words.", "right": "⭐ DESTACADO\nBest-seller or key product highlight. 30+ words." },
     { "type": "heading", "level": 2, "text": "🍽️ COMEDOR — Next Category" },
     { "type": "divider" },
-    { "type": "paragraph", "text": "Description of next category..." },
-    { "type": "table", "headers": ["Producto", "Material", "Medidas cm", "Precio"], "rows": [["...", "...", "...", "..."]] }
+    { "type": "paragraph", "text": "Description of next category. 40+ words." },
+    { "type": "table", "headers": ["Producto", "Material", "Medidas cm", "Precio"], "rows": [["...", "...", "...", "..."]] },
+    { "type": "two-column", "left": "Feature detail 30+ words.", "right": "Feature detail 30+ words." }
   ]
 }
 ```
 
 ### Key rules for catalogs
-- **ALL category titles are h2, NEVER h1** — h1 forces a page break and creates blank pages
-- Image at 45% width max — leaves room for text to flow around/below on same page
-- Table is the core of each category — products, specs, prices in columns
-- Pack 2 categories per page when tables are short (3-4 rows each)
-- Use divider between categories, not headings, to avoid visual breaks
-- Callout only for 1-2 standout products across the whole catalog, not every category
-- End with a closing section (contact, warranty, ordering info) — not a blank page
+- **NO images inside category sections** — images are the #1 cause of blank pages in catalogs. The table IS the visual content. If you must use an image, use `width: "30%"` and drop the callout and two-column for that category
+- **NO callouts per category** — callouts are tall (~80pt) and cause overflow. Use `two-column` for highlights instead. Reserve callouts for 1-2 special offers across the ENTIRE catalog
+- **Each category = h2 + divider + paragraph + table + two-column** — this fits comfortably on ~60% of a page
+- **Pack 2 short categories per page** when tables have 3-4 rows each
+- **Use h2 for ALL category titles, NEVER h1** — h1 forces a page break
+- End with a closing section (contact, warranty, pricing summary) — not a blank page
+- If you have 8+ categories, skip two-column on some to fit 2 per page
 
 ---
 
@@ -211,6 +221,9 @@ Before calling fast_pdf, verify:
 
 | ❌ Don't | ✅ Do instead |
 |----------|--------------|
+| Image + callout in same catalog category | Pick ONE or use two-column instead of callout |
+| Image in every catalog category | Skip images — tables are the content. Use 1 image max for the whole catalog |
+| Callout per category in catalogs | Use two-column for highlights, callout only for 1-2 special offers total |
 | Use `heading level 1` for section/category titles | Use `level: 2` — h1 forces a page break |
 | Page with only a callout | Combine with surrounding paragraphs |
 | Separate heading+paragraph for date, location, time | Use a single Typst grid |
