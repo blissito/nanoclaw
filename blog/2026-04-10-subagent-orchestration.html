@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sub-Agent Orchestration Is Broken Everywhere - NanoClaw Blog</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: system-ui, -apple-system, sans-serif; max-width: 720px; margin: 0 auto; padding: 2rem 1rem; color: #1a1a1a; line-height: 1.7; }
+a { color: #0066cc; }
+h1 { margin-bottom: .25rem; font-size: 1.6rem; }
+.meta { color: #888; margin-bottom: 2rem; font-size: .9rem; }
+h2 { margin: 2rem 0 .75rem; font-size: 1.2rem; }
+p { margin-bottom: 1rem; }
+code { background: #f4f4f4; padding: .15em .35em; border-radius: 3px; font-size: .9em; }
+pre { background: #f4f4f4; padding: 1rem; border-radius: 6px; overflow-x: auto; margin-bottom: 1rem; }
+pre code { background: none; padding: 0; }
+ul, ol { margin-bottom: 1rem; padding-left: 1.5rem; }
+li { margin-bottom: .35rem; }
+blockquote { border-left: 3px solid #ddd; padding-left: 1rem; color: #555; margin-bottom: 1rem; }
+.back { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #eee; }
+</style>
+</head>
+<body>
+
+<h1>Sub-Agent Orchestration Is Broken Everywhere</h1>
+<p class="meta">April 10, 2026 &middot; <a href="index.html">NanoClaw Blog</a></p>
+
+<p>We wanted parallel sub-agents in NanoClaw: spawn multiple Claude instances inside a container, let them work concurrently, aggregate results. The idea is simple. The reality is that <strong>nobody has made this work reliably</strong> &mdash; not us, not upstream NanoClaw, not OpenClaw.</p>
+
+<p>Here's what we found after researching all three projects.</p>
+
+<h2>The Core Problem</h2>
+
+<p>When a parent agent finishes its turn (the SDK's <code>query()</code> call completes), all in-process sub-agents are killed silently. No output. No error. They just disappear.</p>
+
+<p>This is not a NanoClaw bug. It's a fundamental issue in how the Claude Agent SDK manages process lifecycles. The parent doesn't wait for children to finish &mdash; it can't, because the SDK has no concept of "I'm done talking but my children are still working."</p>
+
+<h2>NanoClaw Upstream</h2>
+
+<p>Issue <strong>#684</strong> ("Agent Swarms: in-process subagents silently terminate when main agent completes turn") has been open since March 4, 2026, labeled Critical, with zero comments. The community has filed related PRs:</p>
+
+<ul>
+<li><strong>#886</strong> &mdash; A news briefing skill using agent swarms (open, untested)</li>
+<li><strong>#1295</strong> &mdash; A2A (agent-to-agent) protocol support</li>
+<li><strong>#1202</strong> &mdash; Agent trace observability with web UI</li>
+</ul>
+
+<p>There are a handful of GitHub Discussions (#112, #330, #1039) where people ask "has anyone gotten swarms to work?" The answer is consistently no.</p>
+
+<h2>OpenClaw: More Plumbing, Same Result</h2>
+
+<p>OpenClaw has significantly more sub-agent infrastructure than NanoClaw:</p>
+
+<ul>
+<li><code>sessions_spawn</code> with fire-and-forget and persistent modes</li>
+<li><code>sessions_send</code> and <code>sessions_history</code> for inter-agent communication</li>
+<li><code>maxSpawnDepth</code> config for nested hierarchies</li>
+<li><code>maxChildrenPerAgent</code> limits</li>
+</ul>
+
+<p>But they hit the same wall. Issue <strong>#46768</strong>: after <code>sessions_spawn</code>, the parent orchestrator goes dormant. Completion events from children queue up but nobody processes them. Users have to manually ping the parent to wake it up.</p>
+
+<p>It gets worse:</p>
+
+<ul>
+<li><strong>#52174</strong> &mdash; In multi-depth orchestration, aggregated output from depth-1 sub-agents never reaches the main session</li>
+<li><strong>#43113</strong> &mdash; Sub-agents with large context (600K+ tokens) die with "Network connection lost," all work lost</li>
+<li><strong>#48984</strong> &mdash; <code>/subagents kill</code> terminates the caller instead of the target</li>
+</ul>
+
+<p>OpenClaw's proposed fix is "completion-triggered session wake" &mdash; the parent should automatically resume when a child finishes. It hasn't been implemented.</p>
+
+<h2>What Actually Works Today</h2>
+
+<p>The only reliable pattern we've found is <strong>scheduled tasks as async sub-agents</strong>. Instead of spawning children inside a container:</p>
+
+<ol>
+<li>The agent creates a scheduled task (fires once, immediately or after a delay)</li>
+<li>The task runs in its own container with its own lifecycle</li>
+<li>Results are persisted to group memory or the database</li>
+<li>The original agent (or a future invocation) reads the results</li>
+</ol>
+
+<p>It's not elegant. There's no real-time aggregation. But it works because there's <strong>no parent-child lifecycle dependency</strong>. Each task is independent.</p>
+
+<h2>When Will This Get Fixed?</h2>
+
+<p>The fix needs to happen at the SDK level. Either:</p>
+
+<ul>
+<li>The Agent SDK needs a "wait for children" primitive that keeps the parent alive</li>
+<li>Or sub-agents need to be fully decoupled processes with a message bus (which is essentially what our scheduled-task workaround already does)</li>
+</ul>
+
+<p>We're watching NanoClaw #684 and OpenClaw #46768. Until one of them ships a real fix, scheduled tasks are the answer.</p>
+
+<p class="back"><a href="index.html">&larr; Back to blog</a></p>
+
+</body>
+</html>
