@@ -364,6 +364,7 @@ export class WhatsAppChannel implements Channel {
                 const ext = path.extname(fileName).toLowerCase();
                 const isText =
                   mime.startsWith('text/') ||
+                  mime === 'image/svg+xml' ||
                   [
                     '.md',
                     '.txt',
@@ -375,6 +376,7 @@ export class WhatsAppChannel implements Channel {
                     '.toml',
                     '.ini',
                     '.log',
+                    '.svg',
                   ].includes(ext);
                 const isPdf = mime === 'application/pdf' || ext === '.pdf';
                 const isMedia =

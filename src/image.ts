@@ -120,13 +120,24 @@ export async function processImage(
 ): Promise<ProcessedImage | null> {
   if (!buffer || buffer.length === 0) return null;
 
-  const resized = await sharp(buffer)
-    .resize(MAX_DIMENSION, MAX_DIMENSION, {
-      fit: 'inside',
-      withoutEnlargement: true,
-    })
-    .jpeg({ quality: 85 })
-    .toBuffer();
+  // Reject SVG — sharp can hang trying to rasterize complex SVGs
+  const head = buffer.subarray(0, 256).toString('utf8').trim();
+  if (head.startsWith('<svg') || head.startsWith('<?xml') && head.includes('<svg')) {
+    return null;
+  }
+
+  const resized = await Promise.race([
+    sharp(buffer)
+      .resize(MAX_DIMENSION, MAX_DIMENSION, {
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+      .jpeg({ quality: 85 })
+      .toBuffer(),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('sharp timeout')), 15000),
+    ),
+  ]);
 
   // Validate sharp output — corrupt input can produce tiny/invalid buffers
   if (resized.length < 1024 || resized[0] !== 0xff || resized[1] !== 0xd8) {
