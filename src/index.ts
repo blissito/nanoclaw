@@ -1305,12 +1305,23 @@ async function main(): Promise<void> {
     lastErrorSentAt[groupJid] = now;
     const group = registeredGroups[groupJid];
     if (!group) return;
+    // Auto-clear stale sessionId so the next message starts fresh instead of
+    // resuming a session the SDK may have lost (common failure mode).
+    try {
+      deleteSession(group.folder);
+      logger.info(
+        { groupJid, groupFolder: group.folder },
+        'Cleared session after retries exhausted — next message will start fresh',
+      );
+    } catch (err) {
+      logger.warn({ groupJid, err }, 'Failed to clear session after cooldown');
+    }
     const channel = findChannel(channels, groupJid);
     if (!channel) return;
     channel
       .sendMessage(
         groupJid,
-        '_No pude procesar los mensajes anteriores después de varios intentos. Por favor reenvíen._',
+        '_Entré en enfriamiento 5 min tras varios errores. Reinicié la sesión; vuelve a intentar en unos minutos._',
       )
       .catch(() => {});
   });
