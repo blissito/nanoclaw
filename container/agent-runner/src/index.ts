@@ -812,7 +812,7 @@ async function main(): Promise<void> {
   // When a session .jsonl exceeds this size, we force /compact before
   // the real prompt so the model doesn't choke on megabytes of history.
   // Threshold: 1MB. Remove or adjust after evaluating results.
-  const SESSION_SIZE_COMPACT_THRESHOLD = 1 * 1024 * 1024; // 1MB
+  const SESSION_SIZE_COMPACT_THRESHOLD = 20 * 1024 * 1024; // 20MB (jsonl is append-only and never shrinks after compact)
   if (sessionId) {
     const sessionFile = path.join(
       os.homedir(), '.claude', 'projects', '-workspace-group', `${sessionId}.jsonl`,
