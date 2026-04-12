@@ -7,6 +7,8 @@ description: Generate beautiful PDFs from templates — invitations, reports, pr
 
 You have access to `mcp__easybits__fast_pdf` for PDF generation. This guide ensures every PDF looks professional. **Read this before every fast_pdf call.**
 
+> For cotizaciones, facturas, CFDI or any templated doc, use `mcp__easybits__structured_doc` instead and see the **structured-doc** skill. `fast_pdf` is Typst-based free-form; `structured_doc` is template-based with fixed schemas.
+
 ## Universal Rules
 
 1. **Density first.** Every page must have 3+ content sections and be at least 70% full. A page with a single callout or heading is a failure — move content up or eliminate the page.
