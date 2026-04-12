@@ -71,11 +71,24 @@ Escribe `@NombrePersona` y el sistema lo convierte en mención real. Usa el nomb
 
 `mercadopago create-link <monto> "<descripcion>"` para generar links de pago.
 
-## Cotizaciones
+## Documentos (core)
 
-Default: `mcp__easybits__fast_quotation` (no create_quotation ni edit_quotation). PDF profesional con QR en ~70ms. Flow: 1) `mercadopago create-link` para URL de pago, 2) `fast_quotation` con `paymentUrl`.
+Matriz binaria. Para detalles seguí la skill **structured-doc**.
 
-Usa `mcp__easybits__structured_doc` SOLO si necesitas branding custom, CFDI SAT, firma o >4 conceptos — sigue la skill **structured-doc** (nunca adivines keys, matchea idioma del schema, descripciones ≤40 chars para evitar hyphenation). Logo Formmy: `https://viento-latente.easybits.cloud/formmy-logo.jpg`. Acento `#6366F1`.
+| Necesidad | Tool |
+|-----------|------|
+| Cotización con QR + link de pago | `mcp__easybits__fast_quotation` |
+| Cualquier otro doc imprimible (factura, propuesta, reporte, invitación, catálogo, contrato) | `mcp__easybits__structured_doc` |
+| Sitio web / dashboard / landing | `mcp__easybits__create_website` |
+| HTML ad-hoc sin template | `mcp__easybits__create_document` |
+
+`fast_pdf` está **deprecado** — no lo uses.
+
+**fast_quotation**: 1) `mercadopago create-link <monto> "<desc>"` → URL, 2) `fast_quotation` con `paymentUrl`. Layout fijo.
+
+**structured_doc**: templates curados + `create_template` para casos custom. Reglas duras: `list_templates` + `get_template_schema` antes de `create_doc`; match de idioma schema↔data; descripciones ≤40 chars; leer `warnings` del response.
+
+Logo Formmy: `https://viento-latente.easybits.cloud/formmy-logo.jpg` · Acento `#6366F1`.
 
 ## Web Browsing
 
@@ -91,53 +104,17 @@ Para código/logs/configs >20 líneas, usa `create-gist "file.ext" "contenido"`.
 
 ---
 
-# Documentos
+# Documentos — detalles extra
 
-## EasyBits Documents (Paged/Printable)
+## HTML docs (extra — cuando no hay template y no querés DSL)
 
-Para reportes, propuestas, cotizaciones, presentaciones, invoices:
+`create_document` → `set_page_html` → `get_page_screenshot` → `deploy_document`. Cada página 816×1056px, `overflow: hidden`. Para arreglar un doc existente: `list_documents` → `get_page_html`/`get_page_screenshot` → `set_page_html`/`replace_html`.
 
-1. Planea con `get_document_directions` (4 direcciones de diseño)
-2. Crea con `create_document`
-3. Escribe HTML por página con `set_page_html` — piensa como diseñador, no developer
-4. Revisa con `get_page_screenshot` — si no se ve profesional, itera
-5. Publica con `deploy_document`
-6. Para PDF: `get_document_pdf` → decode base64 → save → `send_message` con `document_path`
+Colores dark themes (inline styles): fondos `#0B1120`/`#0F172A`, cards `#1E293B`, texto `#F1F5F9`/`#CBD5E1`/`#94A3B8`, borders `rgba(148,163,184,0.15)`. Barra acento: `class="h-1.5 bg-gradient-to-r from-[#06B6D4] via-[#8B5CF6] to-[#F59E0B]"`.
 
-NO generes imágenes para contenido que debería ser documento.
+## Web pages (landing, dashboards)
 
-### Reglas de página (CRITICAL)
-
-Cada página: 816×1056px fijo. Tu HTML debe caber:
-- `overflow: hidden` en el root — lo que se desborda se corta
-- No metas demasiado en una página — mejor divide en más
-- `get_page_screenshot` después de cada página — si se corta, arréglalo
-- Imágenes: `max-width: 100%; height: auto; object-fit: cover`
-- Unidades relativas (%, rem), no px >750
-
-### Colores (dark themes)
-
-NO uses clases semánticas de theme. Usa inline styles:
-- Fondos: `#0B1120` o `#0F172A`
-- Cards: `#1E293B`
-- Texto primario: `#F1F5F9`
-- Texto secundario: `#CBD5E1`
-- Texto muted: `#94A3B8`
-- Borders: `rgba(148,163,184,0.15)`
-- NUNCA `overflow-y-auto` ni `overflow-x-auto`
-- Barra de acento: `class="h-1.5 bg-gradient-to-r from-[#06B6D4] via-[#8B5CF6] to-[#F59E0B]"`
-
-### Arreglar documentos existentes
-
-Si te comparten un link easybits.cloud para arreglar:
-1. `list_documents`/`list_websites` para encontrar el ID
-2. Lee cada página con `get_page_html` + `get_page_screenshot`
-3. Arregla con `set_page_html`/`set_section_html`/`replace_html`
-4. Verifica cada fix con screenshot
-
-## Web Pages (Landing Pages, Dashboards)
-
-Para páginas web completas: `generate-html "descripción" [--type landing|doc|dashboard|email]`. Publica con `create_website` + `deploy_website_file`. Con imagen de referencia: `generate-html "descripción" /path/to/image.jpg --type landing`.
+`generate-html "descripción" [--type landing|doc|dashboard|email]` → publica con `create_website` + `deploy_website_file`. Con imagen de referencia: `generate-html "..." /path/image.jpg --type landing`.
 
 ## Extracción de productos (fotos de estante)
 

@@ -1,62 +1,103 @@
 ---
 name: structured-doc
-description: Generate quotations, invoices and CFDI docs via EasyBits structured_doc templates. Use this BEFORE picking a template to avoid empty fields and language mismatches.
+description: Hub for generating any printable document. Decides between fast_quotation (cotizaciones con pago) and structured_doc (todo lo demás, via templates or custom DSL). fast_pdf is deprecated.
 ---
 
-# Structured Doc Guide (`mcp__easybits__structured_doc`)
+# Documentos — hub único
 
-Templates are JSON-DSL trees rendered with `@react-pdf/renderer`. You fill a `data` object that maps to placeholders like `{{clienteNombre}}`. If keys don't match the template's `dataSchema`, **the fields render empty silently** — no error. This has shipped broken PDFs before; follow the rules below.
+## Decisión binaria del core
 
-## Pick the right tool
+| Necesidad | Tool |
+|-----------|------|
+| Cotización con QR + link de pago | `mcp__easybits__fast_quotation` |
+| Cualquier otro documento imprimible (facturas, propuestas, reportes, invitaciones, catálogos, contratos) | `mcp__easybits__structured_doc` |
+| Sitio web / dashboard / landing | `mcp__easybits__create_website` |
+| HTML ad-hoc sin template | `mcp__easybits__create_document` |
 
-| Need | Tool |
-|------|------|
-| Fast cotización/invoice with fixed layout + QR + payment link | `mcp__easybits__fast_quotation` (default — use this unless you need custom branding or CFDI) |
-| Custom branded cotización / CFDI SAT / signature page / >4 items | `mcp__easybits__structured_doc` |
-| Free-form report, catalog, one-pager, invitation | `mcp__easybits__fast_pdf` (Typst — see `pdf-gen` skill) |
+**`fast_pdf` está deprecado** — no lo uses salvo casos de Typst libre que ningún template puede cubrir (raro).
 
-## Hard rules for `structured_doc`
+## `fast_quotation` — cotización canónica
 
-1. **Always `list_templates` + `get_template` before `create_doc`.** Never guess schema keys.
-2. **Language must match.** If template schema is `clienteNombre`, send `clienteNombre` — not `companyName`. Mixed keys → empty fields.
-3. **Don't smuggle data into the wrong field.** `emisorCiudad` is the city line; do NOT jam RFC there — the template already has a dedicated `RFC: {{emisorRfc}}` node. If you duplicate, you'll see "RFC: ..." once with the value AND once empty.
-4. **Respect item capacity.** Each template supports a fixed number of items (`i1..i3`, `i1..i4`, or `s1..s5`). Pick a template that fits your item count; don't truncate.
-5. **Short concept descriptions.** React-pdf hyphenates aggressively (splits "Formularios" into "For-\nmularios"). Keep each `i_n` ≤ 40 chars. Put detail in a separate `nota` field or a multi-page template.
+Flujo fijo:
+1. `mercadopago create-link <monto> "<descripción>"` → URL de pago.
+2. `fast_quotation` con company, client, items, totals, brandColor, currency + `paymentUrl` del paso 1.
+3. PDF con QR clickeable regresa inline — envíalo como attachment.
 
-## Symptoms → diagnosis
+No admite layout custom. Si necesitás branding particular o CFDI o esquema de pagos → `structured_doc`.
 
-| Symptom | Cause |
-|---------|-------|
-| "INVOICE" headline, "Tax (10%)" label | You picked an English-schema template ("Invoice Panda clon"). Switch to a Spanish one. |
-| Most fields blank but `subtotal`/`total` filled | Language mismatch — only coincidentally-named keys rendered. |
-| Double `RFC:` (one with value, one empty) | You put RFC inside `emisorCiudad` AND left `emisorRfc` empty. |
-| "For-\nmularios", "submis-\nsions" | Concept description too long — react-pdf auto-hyphenation. Shorten. |
-| Bottom half blank | Template expects 3+ items and you sent 1-2. Normal; either add items or pick a denser template. |
+## `structured_doc` — el hub de todo lo demás
 
-## Curated templates (MX)
+Templates DSL (JSON-tree) + data. El agente nunca escribe layout; o elige un template curado o crea uno con `create_template`.
 
-| Purpose | Template ID | Items | Schema lang |
-|---------|-------------|-------|-------------|
-| Cotización brand Formmy (1 page) | `69db13bc08de318467086cf7` | 3 | ES |
-| Cotización profesional (3 pages, con firma) | `69db119008de318467086cca` | 5 (`s1..s5`) | ES |
-| Factura minimal (1 page) | `69db124208de318467086cd0` | 4 | ES |
-| Factura Formmy brand (1 page) | `69db133d08de318467086cd7` | 3 | ES |
-| Factura CFDI SAT completa | `69db12bb08de318467086cd3` | 4 | ES |
-| Factura CFDI SAT 1-page compacta | `69db138908de318467086cf4` | 4 | ES |
+### Acciones
 
-Avoid `69db119008de318467086cc9` ("Invoice Panda clon") — English schema, hardcoded "INVOICE"/"Tax (10%)".
+| Acción | Cuándo |
+|--------|--------|
+| `list_templates` | Descubrir qué templates existen (siempre empieza aquí si no conocés el catálogo). |
+| `get_template_schema` | Solo querés los campos que debés llenar. Lightweight (90% de los casos). |
+| `get_template` | Necesitás ver el tree (para clonar, editar, o entender el render). Pesado. |
+| `create_template` | No hay template que sirva. Construí el tree DSL desde cero (ver abajo). |
+| `delete_template` | Limpiar templates obsoletos que vos creaste. Rehúsa si hay docs que lo referencian. |
+| `create_doc` | Generar PDF con template + data. Devuelve `warnings` si hay keys huérfanas. |
+| `list_docs` | Buscar docs previos: `{ cursor?, limit?, templateId?, query? }`. |
+| `get_doc` | Leer un doc ya creado + PDF cacheado. |
+| `patch_doc` / `edit_doc` | Modificar data. `edit_doc` re-renderiza en la misma llamada (preferido para WhatsApp). |
+| `render_doc` | Re-render sin cambiar data. |
 
-## Brand assets
+### Hard rules
 
-- Formmy logo: `https://viento-latente.easybits.cloud/formmy-logo.jpg`
-- Brand accent: `#6366F1` (morado).
+1. **Siempre `list_templates` + `get_template_schema` antes de `create_doc`.** Nunca adivines keys.
+2. **Match de idioma.** Si el schema usa `clienteNombre`, mandá `clienteNombre` — no `companyName`. Mixed keys → campos vacíos.
+3. **No metas datos donde no van.** `emisorCiudad` = ciudad/colonia; el RFC va en `emisorRfc`. Duplicar causa "RFC:" vacío renderizado.
+4. **Capacidad de items.** Cada template soporta N items (`i1..i3`, `s1..s5`). Elegí uno que encaje; no trunques.
+5. **Descripciones cortas.** ≤40 chars por item para evitar hyphenation de react-pdf ("For-\nmularios"). Detalle largo va en un campo aparte (`nota`, `proyectoDescripcion`).
+6. **Leé `warnings` del response de `create_doc`.** Listan placeholders sin data o keys de data sin placeholder. Si aparecen, corregí y re-renderizá.
 
-## Workflow
+### Templates curados (MX)
+
+| Uso | Template ID | Items | Campos notables |
+|-----|-------------|-------|-----------------|
+| Cotización brand Formmy (1p) | `69db13bc08de318467086cf7` | 3 | `logoUrl`, `nota` |
+| **Cotización profesional (3p, con firma)** | `69db2621c48938f32d652f89` | 5 (`s1..s5`) | `logoUrl`, `pago{N}label`/`pct`/`desc`/`monto`, 6 términos, firma |
+| Factura minimal (1p) | `69db124208de318467086cd0` | 4 | genérica |
+| Factura Formmy brand (1p) | `69db133d08de318467086cd7` | 3 | `logoUrl`, `nota` |
+| Factura CFDI SAT (1p compacta) | `69db138908de318467086cf4` | 4 | `qrUrl`, `uuid`, sellos |
+| Factura CFDI SAT (completa) | `69db12bb08de318467086cd3` | 4 | `qrUrl`, `uuid`, sellos, `totalLetra` |
+| Catálogo Formmy (6p) | `69db196a08de318467086d09` | — | secciones planas |
+| Invitación revista (4p) | `69db105908de318467086cc6` | — | 50+ campos, hero, galería |
+
+Evitar: `69db119008de318467086cc9` (Invoice Panda clon — English schema, "INVOICE"/"Tax 10%" hardcoded).
+
+### Brand assets Formmy
+
+- Logo: `https://viento-latente.easybits.cloud/formmy-logo.jpg`
+- Acento: `#6366F1` (morado)
+
+### Escape hatch: `create_template` desde cero
+
+Cuando ningún template curado sirve:
 
 ```
-1. list_templates                     # see what's available
-2. get_template <id>                  # confirm schema + item count
-3. build data object with EXACT keys from schema
-4. create_doc { templateId, name, data }  # returns PDF inline
-5. if you need tweaks: edit_doc { docId, patch }  # single call, re-renders
+1. get_template de un template parecido → usar su tree como referencia de estructura
+2. Construir nuevo tree: pages[].children[] con nodos {type, style, children}
+   • type: "View" (container flexbox), "Text" (con {{interpolation}}), "Image", "Link"
+   • style: subset de react-pdf styles (flexDirection, fontSize, color, padding…)
+3. dataSchema: { campo: "string" | "url" | "number" }
+4. create_template { name, description, tree, dataSchema, isPublic: true }
+5. create_doc con el nuevo templateId para validar
+```
+
+Si el tree es grande (>200 líneas), considerá clonar y mutar en vez de escribir desde cero.
+
+## Workflow típico
+
+```
+Usuario: "hazme una factura CFDI para X"
+  ↓
+1. list_templates (skip si ya conoces los IDs curados)
+2. get_template_schema <cfdi-id>
+3. Llenar data con keys EXACTAS del schema
+4. create_doc → leer warnings
+5. Si warnings → corregir + edit_doc
+6. Enviar PDF inline al chat
 ```

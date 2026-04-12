@@ -1,13 +1,26 @@
 ---
 name: pdf-gen
-description: Generate beautiful PDFs from templates — invitations, reports, proposals, one-pagers. Use instead of calling fast_pdf directly. Ensures professional density and layout.
+description: DEPRECATED. fast_pdf is out of the core doc toolkit. See the structured-doc skill for the canonical flow. This file is kept for reference only.
 ---
 
-# PDF Generation Guide
+# ⚠️ DEPRECATED — prefer `structured_doc`
+
+`fast_pdf` (Typst) is no longer part of the core doc toolkit. For every new document, follow the **structured-doc** skill:
+
+- Cotizaciones con pago → `fast_quotation`
+- Todo lo demás imprimible (facturas, propuestas, reportes, invitaciones, catálogos) → `structured_doc` (template curado o `create_template` custom)
+- HTML ad-hoc → `create_document`
+- Web → `create_website`
+
+Use `fast_pdf` **solo** si ningún template ni DSL JSON puede expresar lo que necesitás (Typst libre muy específico). Esto es raro.
+
+El resto de este archivo son notas históricas de cuando `fast_pdf` era el camino default.
+
+---
+
+# PDF Generation Guide (histórico)
 
 You have access to `mcp__easybits__fast_pdf` for PDF generation. This guide ensures every PDF looks professional. **Read this before every fast_pdf call.**
-
-> For cotizaciones, facturas, CFDI or any templated doc, use `mcp__easybits__structured_doc` instead and see the **structured-doc** skill. `fast_pdf` is Typst-based free-form; `structured_doc` is template-based with fixed schemas.
 
 ## Universal Rules
 
