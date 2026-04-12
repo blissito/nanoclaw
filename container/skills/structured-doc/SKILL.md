@@ -53,21 +53,21 @@ Templates DSL (JSON-tree) + data. El agente nunca escribe layout; o elige un tem
 5. **Descripciones cortas.** ≤40 chars por item para evitar hyphenation de react-pdf ("For-\nmularios"). Detalle largo va en un campo aparte (`nota`, `proyectoDescripcion`).
 6. **Leé `warnings` del response de `create_doc`.** Listan placeholders sin data o keys de data sin placeholder. Si aparecen, corregí y re-renderizá.
 
-### Templates curados (únicos — todos públicos, todos alta calidad)
+### Descubrimiento de templates (NO hay lista hardcoded en este skill)
 
-| Uso | Template ID | Items | Campos notables |
-|-----|-------------|-------|-----------------|
-| **Cotización profesional (3p, con firma)** | `69db2621c48938f32d652f89` | 5 (`s1..s5`) | `logoUrl`, `pago{N}label`/`pct`/`desc`/`monto`, 6 términos, firma |
-| Cotización Formmy Enterprise (1p, 5 items) | `69db21a108de318467086f62` | 5 | `logoUrl`, `nota`, brand morado |
-| Cotización Formmy Enterprise (1p, 3 items) | `69db13bc08de318467086cf7` | 3 | `logoUrl`, `nota`, brand morado |
-| Factura Formmy Enterprise (1p) | `69db133d08de318467086cd7` | 3 | `logoUrl`, `nota` |
-| Factura minimal (1p, referencia) | `69db124208de318467086cd0` | 4 | genérica, layout limpio |
-| Factura Naranja (1p) | `69db28088196b71d856a8794` | 4 | `logoUrl`, acento `#F97316` |
-| Factura CFDI SAT (1p compacta) | `69db138908de318467086cf4` | 4 | `qrUrl`, `uuid`, sellos recortados |
-| Factura CFDI SAT (completa) | `69db12bb08de318467086cd3` | 4 | `qrUrl`, `uuid`, sellos, `totalLetra` |
-| Invitación revista (4p, referencia de diseño) | `69db105908de318467086cc6` | — | 50+ campos, hero, galería, FAQ |
+La DB es la fuente de verdad. Un skill con una tabla estática se pudre: cada vez que alguien crea o borra un template, la tabla queda mintiendo. **Siempre empezá con `list_templates`** — la descripción de cada template explica para qué sirve y su `dataSchema` te dice qué campos aceptar.
 
-Si ninguno sirve: `create_template` con tree DSL custom (ver escape hatch abajo).
+Heurística para elegir:
+1. `list_templates` → filtrá por nombre/description (matching semántico).
+2. Si ≥1 candidato claro → `get_template_schema <id>` para ver campos.
+3. Si no hay candidato o el schema no alcanza → `create_template` (escape hatch abajo).
+
+Qué buscar en `list_templates`:
+- Nombre + description dicen el caso de uso.
+- `isPublic: true` + `owned: true` → curado por el equipo (confiable).
+- Si ves templates con schema `{}` o casi vacío → son de un solo uso, evitá reutilizarlos.
+
+No confíes en IDs de esta skill — podrían ya no existir. Consultá la DB.
 
 ### Brand assets Formmy
 
