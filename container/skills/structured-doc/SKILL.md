@@ -53,20 +53,21 @@ Templates DSL (JSON-tree) + data. El agente nunca escribe layout; o elige un tem
 5. **Descripciones cortas.** ≤40 chars por item para evitar hyphenation de react-pdf ("For-\nmularios"). Detalle largo va en un campo aparte (`nota`, `proyectoDescripcion`).
 6. **Leé `warnings` del response de `create_doc`.** Listan placeholders sin data o keys de data sin placeholder. Si aparecen, corregí y re-renderizá.
 
-### Templates curados (MX)
+### Templates curados (únicos — todos públicos, todos alta calidad)
 
 | Uso | Template ID | Items | Campos notables |
 |-----|-------------|-------|-----------------|
-| Cotización brand Formmy (1p) | `69db13bc08de318467086cf7` | 3 | `logoUrl`, `nota` |
 | **Cotización profesional (3p, con firma)** | `69db2621c48938f32d652f89` | 5 (`s1..s5`) | `logoUrl`, `pago{N}label`/`pct`/`desc`/`monto`, 6 términos, firma |
-| Factura minimal (1p) | `69db124208de318467086cd0` | 4 | genérica |
-| Factura Formmy brand (1p) | `69db133d08de318467086cd7` | 3 | `logoUrl`, `nota` |
-| Factura CFDI SAT (1p compacta) | `69db138908de318467086cf4` | 4 | `qrUrl`, `uuid`, sellos |
+| Cotización Formmy Enterprise (1p, 5 items) | `69db21a108de318467086f62` | 5 | `logoUrl`, `nota`, brand morado |
+| Cotización Formmy Enterprise (1p, 3 items) | `69db13bc08de318467086cf7` | 3 | `logoUrl`, `nota`, brand morado |
+| Factura Formmy Enterprise (1p) | `69db133d08de318467086cd7` | 3 | `logoUrl`, `nota` |
+| Factura minimal (1p, referencia) | `69db124208de318467086cd0` | 4 | genérica, layout limpio |
+| Factura Naranja (1p) | `69db28088196b71d856a8794` | 4 | `logoUrl`, acento `#F97316` |
+| Factura CFDI SAT (1p compacta) | `69db138908de318467086cf4` | 4 | `qrUrl`, `uuid`, sellos recortados |
 | Factura CFDI SAT (completa) | `69db12bb08de318467086cd3` | 4 | `qrUrl`, `uuid`, sellos, `totalLetra` |
-| Catálogo Formmy (6p) | `69db196a08de318467086d09` | — | secciones planas |
-| Invitación revista (4p) | `69db105908de318467086cc6` | — | 50+ campos, hero, galería |
+| Invitación revista (4p, referencia de diseño) | `69db105908de318467086cc6` | — | 50+ campos, hero, galería, FAQ |
 
-Evitar: `69db119008de318467086cc9` (Invoice Panda clon — English schema, "INVOICE"/"Tax 10%" hardcoded).
+Si ninguno sirve: `create_template` con tree DSL custom (ver escape hatch abajo).
 
 ### Brand assets Formmy
 
