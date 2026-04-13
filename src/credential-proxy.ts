@@ -113,7 +113,10 @@ export function startCredentialProxy(
       if (req.url?.startsWith('/nanoclaw/')) {
         const url = new URL(req.url, `http://${req.headers.host}`);
 
-        if (url.pathname === '/nanoclaw/create-group' && req.method === 'POST') {
+        if (
+          url.pathname === '/nanoclaw/create-group' &&
+          req.method === 'POST'
+        ) {
           const chunks: Buffer[] = [];
           req.on('data', (c) => chunks.push(c));
           req.on('end', () => {
@@ -122,7 +125,9 @@ export function startCredentialProxy(
               if (!name || !handlers.createGroup) {
                 res.writeHead(400, { 'Content-Type': 'application/json' });
                 res.end(
-                  JSON.stringify({ error: 'Missing name or handler not ready' }),
+                  JSON.stringify({
+                    error: 'Missing name or handler not ready',
+                  }),
                 );
                 return;
               }
@@ -137,7 +142,8 @@ export function startCredentialProxy(
                   res.writeHead(500, { 'Content-Type': 'application/json' });
                   res.end(
                     JSON.stringify({
-                      error: err instanceof Error ? err.message : 'Internal error',
+                      error:
+                        err instanceof Error ? err.message : 'Internal error',
                     }),
                   );
                 });
