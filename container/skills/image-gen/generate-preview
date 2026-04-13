@@ -29,8 +29,7 @@ print(json.dumps({
     'model': sys.argv[1],
     'prompt': sys.argv[2],
     'quality': sys.argv[3],
-    'size': '1024x1024',
-    'response_format': 'b64_json'
+    'size': '1024x1024'
 }))
 " "$MODEL" "$PROMPT" "$QUALITY")
 
