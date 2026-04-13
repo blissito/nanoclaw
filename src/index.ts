@@ -1159,6 +1159,41 @@ async function main(): Promise<void> {
     if (!channel || !channel.getInviteLink) return null;
     return channel.getInviteLink(jid);
   };
+  nanoClawHandlers.createGroup = async (name) => {
+    // Use first channel that supports group creation (currently only WhatsApp)
+    const channel = channels.find((c) => typeof c.createGroup === 'function');
+    if (!channel || !channel.createGroup) {
+      throw new Error('No channel supports group creation');
+    }
+    const result = await channel.createGroup(name);
+    // Auto-register the new group so the bot responds to messages there
+    let folder = name
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 40);
+    if (!folder) folder = `group_${Date.now()}`;
+    // Avoid folder collisions by appending a suffix if one exists
+    const existingFolders = new Set(
+      Object.values(registeredGroups).map((g) => g.folder),
+    );
+    let uniqueFolder = folder;
+    let suffix = 2;
+    while (existingFolders.has(uniqueFolder)) {
+      uniqueFolder = `${folder}_${suffix++}`;
+    }
+    registerGroup(result.jid, {
+      name,
+      folder: uniqueFolder,
+      trigger: DEFAULT_TRIGGER,
+      added_at: new Date().toISOString(),
+      requiresTrigger: true,
+      isMain: false,
+    });
+    return result;
+  };
 
   startIpcWatcher({
     sendMessage: (jid, text) => {

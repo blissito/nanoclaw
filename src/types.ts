@@ -125,6 +125,10 @@ export interface Channel {
   syncGroups?(force: boolean): Promise<void>;
   // Optional: get a group invite link.
   getInviteLink?(jid: string): Promise<string | null>;
+  // Optional: create a new group on the platform; returns the new JID + invite link.
+  createGroup?(
+    subject: string,
+  ): Promise<{ jid: string; inviteLink: string | null }>;
   // Optional: update the bot's profile picture.
   updateProfilePicture?(jid: string, filePath: string): Promise<void>;
   // Optional: rename a group/chat.

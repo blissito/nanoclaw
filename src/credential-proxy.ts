@@ -24,6 +24,9 @@ const FALLBACK_MODEL = 'claude-sonnet-4-20250514';
 
 export interface NanoClawHandlers {
   getInviteLink?: (jid: string) => Promise<string | null>;
+  createGroup?: (
+    name: string,
+  ) => Promise<{ jid: string; inviteLink: string | null }>;
 }
 
 export function startCredentialProxy(
@@ -109,6 +112,42 @@ export function startCredentialProxy(
       // NanoClaw internal endpoints (not proxied to Anthropic)
       if (req.url?.startsWith('/nanoclaw/')) {
         const url = new URL(req.url, `http://${req.headers.host}`);
+
+        if (url.pathname === '/nanoclaw/create-group' && req.method === 'POST') {
+          const chunks: Buffer[] = [];
+          req.on('data', (c) => chunks.push(c));
+          req.on('end', () => {
+            try {
+              const { name } = JSON.parse(Buffer.concat(chunks).toString());
+              if (!name || !handlers.createGroup) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(
+                  JSON.stringify({ error: 'Missing name or handler not ready' }),
+                );
+                return;
+              }
+              handlers
+                .createGroup(name)
+                .then((result) => {
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify(result));
+                })
+                .catch((err) => {
+                  logger.error({ err, name }, 'Error creating group');
+                  res.writeHead(500, { 'Content-Type': 'application/json' });
+                  res.end(
+                    JSON.stringify({
+                      error: err instanceof Error ? err.message : 'Internal error',
+                    }),
+                  );
+                });
+            } catch {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+            }
+          });
+          return;
+        }
 
         if (url.pathname === '/nanoclaw/invite-link' && req.method === 'GET') {
           const jid = url.searchParams.get('jid');

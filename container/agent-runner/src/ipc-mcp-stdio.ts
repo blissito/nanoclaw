@@ -573,6 +573,83 @@ Use available_groups.json to find the JID for a group. The folder name must be c
 );
 
 server.tool(
+  'create_group',
+  'Create a new empty WhatsApp group with the bot as admin. The group is auto-registered so the bot will respond to messages there immediately. Returns the invite link to share so people can join.',
+  {
+    name: z.string().describe('Group display name'),
+  },
+  async ({ name }) => {
+    const baseUrl = process.env.ANTHROPIC_BASE_URL;
+    if (!baseUrl) {
+      return {
+        content: [{ type: 'text' as const, text: 'No proxy URL configured.' }],
+        isError: true,
+      };
+    }
+    try {
+      const url = `${baseUrl}/nanoclaw/create-group`;
+      const isHttps = url.startsWith('https');
+      const body = JSON.stringify({ name });
+      const res = await new Promise<{ status: number; body: string }>(
+        (resolve, reject) => {
+          const req = (isHttps ? https : http).request(
+            url,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(body),
+              },
+            },
+            (resp: http.IncomingMessage) => {
+              let data = '';
+              resp.on('data', (c: Buffer) => (data += c));
+              resp.on('end', () =>
+                resolve({ status: resp.statusCode || 500, body: data }),
+              );
+            },
+          );
+          req.on('error', reject);
+          req.write(body);
+          req.end();
+        },
+      );
+      const parsed = JSON.parse(res.body);
+      if (res.status === 200 && parsed.jid) {
+        const link = parsed.inviteLink || '(no invite link available)';
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Group "${name}" created and registered.\nJID: ${parsed.jid}\nInvite link: ${link}`,
+            },
+          ],
+        };
+      }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: parsed.error || 'Could not create group.',
+          },
+        ],
+        isError: true,
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
   'get_invite_link',
   'Get the WhatsApp group invite link for this chat. Returns a https://chat.whatsapp.com/... URL that can be shared with others to join the group. Only works for WhatsApp groups.',
   {},

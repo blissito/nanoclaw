@@ -846,6 +846,26 @@ export class WhatsAppChannel implements Channel {
     }
   }
 
+  async createGroup(
+    subject: string,
+  ): Promise<{ jid: string; inviteLink: string | null }> {
+    if (!this.connected) {
+      throw new Error('WhatsApp not connected');
+    }
+    const meta = await this.sock.groupCreate(subject, []);
+    let inviteLink: string | null = null;
+    try {
+      const code = await this.sock.groupInviteCode(meta.id);
+      if (code) inviteLink = `https://chat.whatsapp.com/${code}`;
+    } catch (err) {
+      logger.warn(
+        { jid: meta.id, err },
+        'Group created but failed to get invite link',
+      );
+    }
+    return { jid: meta.id, inviteLink };
+  }
+
   async setTyping(jid: string, isTyping: boolean): Promise<void> {
     try {
       const status = isTyping ? 'composing' : 'paused';
