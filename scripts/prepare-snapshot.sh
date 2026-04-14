@@ -24,10 +24,21 @@
 #   - Container sessions (data/sessions/) — per-group agent state and memory
 #   - Group data (groups/) — per-group CLAUDE.md and attachments
 #   - SSH keys — personal keys in root and nanoclaw home
+#   - authorized_keys for root and nanoclaw users
 #   - Shell history — may contain pasted tokens or passwords
+#   - Stray shell histories (.viminfo, .lesshst, .python_history, .node_repl_history)
 #   - Mount allowlist (~/.config/nanoclaw/) — personal path references
 #   - Systemd journal — may contain logged secrets
+#   - Non-journal logs in /var/log
+#   - /tmp and /var/tmp
+#   - .git directory and global git identity (user.email/user.name)
+#   - Crontabs (root and nanoclaw)
+#   - npm/yarn caches and logs
+#   - ~/.claude residuals
+#   - Hostname (set to "nanoclaw-clean")
+#   - Loose backups (.bak/.tar.gz/.zip/.sql) in home dirs
 #   - Docker containers and images — stale agent containers
+#   - Final grep verification: aborts if client name still present
 #
 # After deploying the clean snapshot to a new droplet, the client needs to:
 #   1. Fill in .env with their own keys (see .env.template)
@@ -37,10 +48,15 @@
 set -euo pipefail
 
 # --- Config ---
-PROD_DROPLET_NAME="nanoclaw-prod"
+if [ -z "${PROD_DROPLET_NAME:-}" ]; then
+  echo "ERROR: PROD_DROPLET_NAME no especificado."
+  echo "Uso: PROD_DROPLET_NAME=smatch-rulo-waba ./scripts/prepare-snapshot.sh [snapshot-name]"
+  exit 1
+fi
+LEAK_TERMS="${LEAK_TERMS:-bliss|blissito|blissitos|fixtergeek|fixter|ghosty|formmy|collectum|collectumdata|smatch|rulo|siiqtec|waba}"
 CLONE_NAME="nanoclaw-snapshot-tmp"
-CLONE_SIZE="s-1vcpu-1gb"        # Smallest — just needs to boot and get sanitized
-CLONE_REGION="nyc1"             # Same region as prod for fast snapshot
+CLONE_SIZE="${CLONE_SIZE:-s-1vcpu-2gb}"        # Must match or exceed prod disk size
+CLONE_REGION="${CLONE_REGION:-sfo3}"             # Same region as prod for fast snapshot
 SNAPSHOT_NAME="${1:-nanoclaw-client-$(date +%Y-%m-%d)}"
 APP_DIR="/home/nanoclaw/app"
 
@@ -129,7 +145,7 @@ done
 echo ""
 echo "[3/5] Sanitizing clone..."
 
-ssh -o StrictHostKeyChecking=no "root@$CLONE_IP" bash <<'REMOTE_SCRIPT'
+ssh -o StrictHostKeyChecking=no "root@$CLONE_IP" "LEAK_TERMS='$LEAK_TERMS' bash -s" <<'REMOTE_SCRIPT'
 set -euo pipefail
 APP_DIR="/home/nanoclaw/app"
 
@@ -144,43 +160,103 @@ docker rm $(docker ps -aq) 2>/dev/null || true
 docker rmi $(docker images -q) 2>/dev/null || true
 docker system prune -af 2>/dev/null || true
 
-echo "  [1/8] Cleaning .env..."
-if [ -f "$APP_DIR/.env" ]; then
-  sed -i 's/=.*/=/' "$APP_DIR/.env"
-fi
+echo "  [1/12] Cleaning .env..."
+# Truncate fully (comments leak too) — client refills from .env.template
+[ -f "$APP_DIR/.env" ] && > "$APP_DIR/.env"
 
-echo "  [2/8] Cleaning WhatsApp auth..."
+echo "  [2/12] Cleaning WhatsApp auth..."
 rm -rf "$APP_DIR/store/auth"
 rm -f "$APP_DIR/store/pairing-code.txt"
 rm -f "$APP_DIR/store/qr-code.txt"
 rm -f "$APP_DIR/store/qr-auth.html"
 rm -f "$APP_DIR/store/auth-status.txt"
 
-echo "  [3/8] Cleaning message database..."
+echo "  [3/12] Cleaning message database..."
 rm -f "$APP_DIR/store/messages.db"
 rm -f "$APP_DIR/store/messages.db-shm"
 rm -f "$APP_DIR/store/messages.db-wal"
 
-echo "  [4/8] Cleaning container sessions and groups..."
-rm -rf "$APP_DIR/data/sessions"
+echo "  [4/12] Cleaning container sessions, groups, all data and docker volumes..."
+rm -rf "$APP_DIR/data"
 rm -rf "$APP_DIR/groups"
+rm -rf "$APP_DIR/logs" 2>/dev/null || true
+docker volume prune -f 2>/dev/null || true
+rm -rf /var/lib/docker/volumes/* 2>/dev/null || true
+# Other nanoclaw installs sometimes left at /root/nanoclaw (provisioning leftovers)
+for extra in /root/nanoclaw /opt/nanoclaw /srv/nanoclaw; do
+  [ -d "$extra" ] && rm -rf "$extra"
+done
 
-echo "  [5/8] Cleaning SSH keys..."
+echo "  [5/12] Cleaning SSH keys..."
 rm -f /root/.ssh/id_* /root/.ssh/known_hosts
 rm -f /home/nanoclaw/.ssh/id_* /home/nanoclaw/.ssh/known_hosts 2>/dev/null || true
 
-echo "  [6/8] Cleaning shell history..."
+echo "  [6/12] Cleaning shell history..."
 > /root/.bash_history
 > /root/.zsh_history 2>/dev/null || true
 > /home/nanoclaw/.bash_history 2>/dev/null || true
 
-echo "  [7/8] Cleaning local config..."
+echo "  [7/12] Cleaning local config..."
 rm -rf /home/nanoclaw/.config/nanoclaw
 rm -rf /root/.config/nanoclaw
 
-echo "  [8/8] Cleaning systemd journal..."
+echo "  [8/12] Cleaning systemd journal..."
 journalctl --rotate 2>/dev/null || true
 journalctl --vacuum-time=1s 2>/dev/null || true
+
+echo "  [9/12] Cleaning git metadata..."
+if [ -d "$APP_DIR/.git" ]; then
+  rm -rf "$APP_DIR/.git"
+fi
+sudo -u nanoclaw git config --global --unset user.email 2>/dev/null || true
+sudo -u nanoclaw git config --global --unset user.name 2>/dev/null || true
+git config --global --unset user.email 2>/dev/null || true
+git config --global --unset user.name 2>/dev/null || true
+
+echo "  [10/12] Cleaning shell extras + crontabs..."
+rm -f /home/nanoclaw/.ssh/known_hosts 2>/dev/null || true
+rm -f /root/.viminfo /root/.lesshst /root/.python_history /root/.node_repl_history /root/.wget-hsts 2>/dev/null || true
+rm -f /home/nanoclaw/.viminfo /home/nanoclaw/.lesshst /home/nanoclaw/.python_history /home/nanoclaw/.node_repl_history /home/nanoclaw/.wget-hsts 2>/dev/null || true
+crontab -r 2>/dev/null || true
+sudo -u nanoclaw crontab -r 2>/dev/null || true
+
+echo "  [11/12] Cleaning logs and tmp..."
+find /var/log -type f \( -name "*.log" -o -name "*.gz" -o -name "*.[0-9]" \) -exec truncate -s 0 {} \; 2>/dev/null || true
+rm -rf /tmp/* /tmp/.[!.]* /var/tmp/* 2>/dev/null || true
+rm -rf /root/.npm /home/nanoclaw/.npm 2>/dev/null || true
+rm -rf /root/.claude /root/.claude.json /home/nanoclaw/.claude /home/nanoclaw/.claude.json 2>/dev/null || true
+
+echo "  [12/12] Cleaning hostname + extra app residue..."
+hostnamectl set-hostname nanoclaw-clean 2>/dev/null || echo "nanoclaw-clean" > /etc/hostname
+sed -i "s/$(hostname)/nanoclaw-clean/g" /etc/hosts 2>/dev/null || true
+rm -rf "$APP_DIR/store/attachments" "$APP_DIR/store/logs" "$APP_DIR/store/tmp" 2>/dev/null || true
+# App-level personal artifacts
+rm -rf "$APP_DIR/blog" "$APP_DIR/drafts" "$APP_DIR/dist" "$APP_DIR/docs" 2>/dev/null || true
+rm -f "$APP_DIR"/*.log "$APP_DIR/CLAUDE.md" 2>/dev/null || true
+find /root /home/nanoclaw -maxdepth 2 -type f \( -name "*.bak" -o -name "*.tar.gz" -o -name "*.tgz" -o -name "*.zip" -o -name "*.sql" \) -delete 2>/dev/null || true
+rm -f "$APP_DIR"/*.png "$APP_DIR"/*pairing* "$APP_DIR"/*qr* 2>/dev/null || true
+
+echo "  [verify] Scanning for client name leakage (terms: $LEAK_TERMS)..."
+HITS=$(grep -riEw "$LEAK_TERMS" /etc/ /root/ /home/nanoclaw/ "$APP_DIR" 2>/dev/null \
+  --exclude-dir=node_modules --exclude-dir=.cache --exclude-dir=docker \
+  --exclude-dir=container --exclude-dir=src --exclude-dir=scripts \
+  --exclude-dir=deploy --exclude-dir=skills --exclude-dir=.git \
+  --exclude="*.so" --exclude="*.node" --exclude="lvm.conf" --exclude="nanorc" \
+  --exclude="package*.json" --exclude="README.md" --exclude="authorized_keys" \
+  | grep -vE '^Binary file' | head -30 || true)
+if [ -n "$HITS" ]; then
+  echo "  WARNING: posibles fugas encontradas:"
+  echo "$HITS"
+  echo "  Revisar antes de snapshotear. Abortando."
+  exit 1
+fi
+echo "  [verify] OK — sin rastro de cliente"
+
+# Final step (after verify passes): wipe authorized_keys so SSH dies on the clone.
+# Done last so a verify failure leaves SSH usable for debugging.
+echo "  [final] Wiping authorized_keys..."
+> /root/.ssh/authorized_keys 2>/dev/null || true
+> /home/nanoclaw/.ssh/authorized_keys 2>/dev/null || true
 
 echo "  Sanitization complete"
 REMOTE_SCRIPT
