@@ -35,7 +35,13 @@ if (!TOKEN) {
 
 initDatabase();
 
-type Json = Record<string, unknown> | unknown[] | string | number | boolean | null;
+type Json =
+  | Record<string, unknown>
+  | unknown[]
+  | string
+  | number
+  | boolean
+  | null;
 
 function send(res: http.ServerResponse, status: number, body: Json) {
   res.writeHead(status, { 'content-type': 'application/json' });
@@ -96,7 +102,8 @@ function writeClaudeMd(folder: string, content: string) {
   fs.writeFileSync(p, content, 'utf8');
 }
 
-const STORE_DB_PATH = process.env.NANOCLAW_STORE_DB ?? path.resolve('store/messages.db');
+const STORE_DB_PATH =
+  process.env.NANOCLAW_STORE_DB ?? path.resolve('store/messages.db');
 
 function activityFor(jid: string) {
   let db: any;
@@ -108,7 +115,13 @@ function activityFor(jid: string) {
          FROM messages WHERE chat_jid = ? ORDER BY timestamp DESC LIMIT 1`,
       )
       .get(jid) as
-      | { sender_name: string; content: string; timestamp: string; is_from_me: number; is_bot_message: number }
+      | {
+          sender_name: string;
+          content: string;
+          timestamp: string;
+          is_from_me: number;
+          is_bot_message: number;
+        }
       | undefined;
     const lastBot = db
       .prepare(
@@ -118,13 +131,23 @@ function activityFor(jid: string) {
       )
       .get(jid) as { content: string; timestamp: string } | undefined;
     const since24 = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const count24h = (db
-      .prepare(`SELECT COUNT(*) as c FROM messages WHERE chat_jid = ? AND timestamp > ?`)
-      .get(jid, since24) as { c: number }).c;
-    const count7d = (db
-      .prepare(`SELECT COUNT(*) as c FROM messages WHERE chat_jid = ? AND timestamp > ?`)
-      .get(jid, since7d) as { c: number }).c;
+    const since7d = new Date(
+      Date.now() - 7 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const count24h = (
+      db
+        .prepare(
+          `SELECT COUNT(*) as c FROM messages WHERE chat_jid = ? AND timestamp > ?`,
+        )
+        .get(jid, since24) as { c: number }
+    ).c;
+    const count7d = (
+      db
+        .prepare(
+          `SELECT COUNT(*) as c FROM messages WHERE chat_jid = ? AND timestamp > ?`,
+        )
+        .get(jid, since7d) as { c: number }
+    ).c;
     // Recent timeline for preview
     const recent = db
       .prepare(
@@ -133,13 +156,13 @@ function activityFor(jid: string) {
          ORDER BY timestamp DESC LIMIT 20`,
       )
       .all(jid) as Array<{
-        id: string;
-        sender_name: string;
-        content: string;
-        timestamp: string;
-        is_from_me: number;
-        is_bot_message: number;
-      }>;
+      id: string;
+      sender_name: string;
+      content: string;
+      timestamp: string;
+      is_from_me: number;
+      is_bot_message: number;
+    }>;
     return {
       lastMessageAt: last?.timestamp ?? null,
       lastMessage: last
@@ -151,7 +174,10 @@ function activityFor(jid: string) {
           }
         : null,
       lastBotReply: lastBot
-        ? { content: (lastBot.content ?? '').slice(0, 200), timestamp: lastBot.timestamp }
+        ? {
+            content: (lastBot.content ?? '').slice(0, 200),
+            timestamp: lastBot.timestamp,
+          }
         : null,
       messagesLast24h: count24h,
       messagesLast7d: count7d,
@@ -196,13 +222,27 @@ const server = http.createServer(async (req, res) => {
     const parts = url.pathname.split('/').filter(Boolean); // ['admin','agents', ...]
 
     // GET /admin/agents
-    if (method === 'GET' && parts[0] === 'admin' && parts[1] === 'agents' && parts.length === 2) {
+    if (
+      method === 'GET' &&
+      parts[0] === 'admin' &&
+      parts[1] === 'agents' &&
+      parts.length === 2
+    ) {
       const groups = getAllRegisteredGroups();
-      return send(res, 200, Object.entries(groups).map(([jid, g]) => publicGroup(jid, g)));
+      return send(
+        res,
+        200,
+        Object.entries(groups).map(([jid, g]) => publicGroup(jid, g)),
+      );
     }
 
     // GET /admin/agents/:jid
-    if (method === 'GET' && parts[0] === 'admin' && parts[1] === 'agents' && parts.length === 3) {
+    if (
+      method === 'GET' &&
+      parts[0] === 'admin' &&
+      parts[1] === 'agents' &&
+      parts.length === 3
+    ) {
       const jid = decodeURIComponent(parts[2]);
       const g = getAllRegisteredGroups()[jid];
       if (!g) return send(res, 404, { error: 'not_found' });
@@ -243,7 +283,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     // PATCH /admin/agents/:jid
-    if (method === 'PATCH' && parts[0] === 'admin' && parts[1] === 'agents' && parts.length === 3) {
+    if (
+      method === 'PATCH' &&
+      parts[0] === 'admin' &&
+      parts[1] === 'agents' &&
+      parts.length === 3
+    ) {
       const jid = decodeURIComponent(parts[2]);
       const g = getAllRegisteredGroups()[jid];
       if (!g) return send(res, 404, { error: 'not_found' });
@@ -251,11 +296,14 @@ const server = http.createServer(async (req, res) => {
 
       const next: RegisteredGroup = { ...g };
       if (typeof body.trigger === 'string') next.trigger = body.trigger;
-      if (typeof body.requiresTrigger === 'boolean') next.requiresTrigger = body.requiresTrigger;
+      if (typeof body.requiresTrigger === 'boolean')
+        next.requiresTrigger = body.requiresTrigger;
       if (typeof body.name === 'string') next.name = body.name;
       if (Array.isArray(body.mcpServers)) {
         const cc: ContainerConfig = { ...(g.containerConfig ?? {}) };
-        cc.mcpServers = body.mcpServers.filter((x: unknown) => typeof x === 'string');
+        cc.mcpServers = body.mcpServers.filter(
+          (x: unknown) => typeof x === 'string',
+        );
         next.containerConfig = cc;
       }
       setRegisteredGroup(jid, next);
