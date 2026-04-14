@@ -35,7 +35,11 @@ export interface NanoClawHandlers {
     leftInWhatsApp: boolean;
   }>;
   listArchivedGroups?: () => Promise<
-    Array<{ archivedFolder: string; originalFolder: string; archivedAt: string }>
+    Array<{
+      archivedFolder: string;
+      originalFolder: string;
+      archivedAt: string;
+    }>
   >;
   restoreGroup?: (
     archivedFolder: string,
@@ -171,10 +175,7 @@ export function startCredentialProxy(
           return;
         }
 
-        if (
-          url.pathname === '/nanoclaw/leave-group' &&
-          req.method === 'POST'
-        ) {
+        if (url.pathname === '/nanoclaw/leave-group' && req.method === 'POST') {
           const chunks: Buffer[] = [];
           req.on('data', (c) => chunks.push(c));
           req.on('end', () => {

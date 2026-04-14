@@ -1319,7 +1319,10 @@ async function main(): Promise<void> {
       requiresTrigger: true,
       isMain: false,
     });
-    logger.info({ jid, folder, restoredFrom: archivedFolder }, 'Group restored');
+    logger.info(
+      { jid, folder, restoredFrom: archivedFolder },
+      'Group restored',
+    );
     return { jid, folder, restoredFrom: archivedFolder };
   };
 
