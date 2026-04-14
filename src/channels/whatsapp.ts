@@ -866,6 +866,14 @@ export class WhatsAppChannel implements Channel {
     return { jid: meta.id, inviteLink };
   }
 
+  async leaveGroup(jid: string): Promise<void> {
+    if (!this.connected) {
+      throw new Error('WhatsApp not connected');
+    }
+    await this.sock.groupLeave(jid);
+    logger.info({ jid }, 'Left WhatsApp group');
+  }
+
   async setTyping(jid: string, isTyping: boolean): Promise<void> {
     try {
       const status = isTyping ? 'composing' : 'paused';

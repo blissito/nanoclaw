@@ -129,6 +129,8 @@ export interface Channel {
   createGroup?(
     subject: string,
   ): Promise<{ jid: string; inviteLink: string | null }>;
+  // Optional: leave a group on the platform.
+  leaveGroup?(jid: string): Promise<void>;
   // Optional: update the bot's profile picture.
   updateProfilePicture?(jid: string, filePath: string): Promise<void>;
   // Optional: rename a group/chat.
