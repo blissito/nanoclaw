@@ -15,6 +15,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import Database from 'better-sqlite3';
 import {
   getAllRegisteredGroups,
   setRegisteredGroup,
@@ -95,6 +96,83 @@ function writeClaudeMd(folder: string, content: string) {
   fs.writeFileSync(p, content, 'utf8');
 }
 
+const STORE_DB_PATH = process.env.NANOCLAW_STORE_DB ?? path.resolve('store/messages.db');
+
+function activityFor(jid: string) {
+  let db: any;
+  try {
+    db = new Database(STORE_DB_PATH, { readonly: true, fileMustExist: true });
+    const last = db
+      .prepare(
+        `SELECT sender_name, content, timestamp, is_from_me, is_bot_message
+         FROM messages WHERE chat_jid = ? ORDER BY timestamp DESC LIMIT 1`,
+      )
+      .get(jid) as
+      | { sender_name: string; content: string; timestamp: string; is_from_me: number; is_bot_message: number }
+      | undefined;
+    const lastBot = db
+      .prepare(
+        `SELECT content, timestamp FROM messages
+         WHERE chat_jid = ? AND is_bot_message = 1
+         ORDER BY timestamp DESC LIMIT 1`,
+      )
+      .get(jid) as { content: string; timestamp: string } | undefined;
+    const since24 = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const count24h = (db
+      .prepare(`SELECT COUNT(*) as c FROM messages WHERE chat_jid = ? AND timestamp > ?`)
+      .get(jid, since24) as { c: number }).c;
+    const count7d = (db
+      .prepare(`SELECT COUNT(*) as c FROM messages WHERE chat_jid = ? AND timestamp > ?`)
+      .get(jid, since7d) as { c: number }).c;
+    // Recent timeline for preview
+    const recent = db
+      .prepare(
+        `SELECT id, sender_name, content, timestamp, is_from_me, is_bot_message
+         FROM messages WHERE chat_jid = ?
+         ORDER BY timestamp DESC LIMIT 20`,
+      )
+      .all(jid) as Array<{
+        id: string;
+        sender_name: string;
+        content: string;
+        timestamp: string;
+        is_from_me: number;
+        is_bot_message: number;
+      }>;
+    return {
+      lastMessageAt: last?.timestamp ?? null,
+      lastMessage: last
+        ? {
+            senderName: last.sender_name,
+            content: (last.content ?? '').slice(0, 200),
+            isFromBot: !!last.is_bot_message,
+            isFromMe: !!last.is_from_me,
+          }
+        : null,
+      lastBotReply: lastBot
+        ? { content: (lastBot.content ?? '').slice(0, 200), timestamp: lastBot.timestamp }
+        : null,
+      messagesLast24h: count24h,
+      messagesLast7d: count7d,
+      recent: recent.reverse().map((m) => ({
+        id: m.id,
+        senderName: m.sender_name,
+        content: (m.content ?? '').slice(0, 500),
+        timestamp: m.timestamp,
+        isFromBot: !!m.is_bot_message,
+        isFromMe: !!m.is_from_me,
+      })),
+    };
+  } catch (e: any) {
+    return { error: String(e?.message ?? e) };
+  } finally {
+    try {
+      db?.close();
+    } catch {}
+  }
+}
+
 function tailLogs(folder: string, lines: number): string {
   const dir = path.join(GROUPS_DIR, folder, 'logs');
   if (!fs.existsSync(dir)) return '';
@@ -133,6 +211,20 @@ const server = http.createServer(async (req, res) => {
         containerConfig: g.containerConfig ?? null,
         claudeMd: readClaudeMd(g.folder),
       });
+    }
+
+    // GET /admin/agents/:jid/activity
+    if (
+      method === 'GET' &&
+      parts[0] === 'admin' &&
+      parts[1] === 'agents' &&
+      parts[3] === 'activity' &&
+      parts.length === 4
+    ) {
+      const jid = decodeURIComponent(parts[2]);
+      const g = getAllRegisteredGroups()[jid];
+      if (!g) return send(res, 404, { error: 'not_found' });
+      return send(res, 200, activityFor(jid));
     }
 
     // GET /admin/agents/:jid/logs?tail=200
