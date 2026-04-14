@@ -649,6 +649,198 @@ server.tool(
   },
 );
 
+// Shared helper for nanoclaw internal HTTP endpoints via credential proxy.
+async function nanoclawRequest(
+  pathname: string,
+  method: 'GET' | 'POST',
+  body?: object,
+): Promise<{ status: number; body: string }> {
+  const baseUrl = process.env.ANTHROPIC_BASE_URL;
+  if (!baseUrl) throw new Error('No proxy URL configured');
+  const url = `${baseUrl}${pathname}`;
+  const isHttps = url.startsWith('https');
+  const bodyStr = body ? JSON.stringify(body) : '';
+  return new Promise((resolve, reject) => {
+    const req = (isHttps ? https : http).request(
+      url,
+      {
+        method,
+        headers:
+          method === 'POST'
+            ? {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(bodyStr),
+              }
+            : {},
+      },
+      (resp: http.IncomingMessage) => {
+        let data = '';
+        resp.on('data', (c: Buffer) => (data += c));
+        resp.on('end', () =>
+          resolve({ status: resp.statusCode || 500, body: data }),
+        );
+      },
+    );
+    req.on('error', reject);
+    if (bodyStr) req.write(bodyStr);
+    req.end();
+  });
+}
+
+server.tool(
+  'leave_group',
+  `Leave a WhatsApp group and clean up all local state (unregister from DB, cancel scheduled tasks, clear session, archive the group's folder to groups/_archived/).
+
+CRITICAL: always confirm with the user before calling this. Leaving is visible to group members ("Ghosty left") and is hard to reverse — the only way back is a restore_group from the archived folder. Before invoking, show: group name, JID, folder, list of scheduled tasks that will be cancelled. Wait for explicit confirmation ("sí", "confirma", "dale").
+
+Cannot leave the main group (will return an error).`,
+  {
+    jid: z.string().describe('JID of the group to leave'),
+  },
+  async ({ jid }) => {
+    try {
+      const res = await nanoclawRequest('/nanoclaw/leave-group', 'POST', { jid });
+      const parsed = JSON.parse(res.body);
+      if (res.status === 200 && parsed.jid) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                `Left group.\nJID: ${parsed.jid}\nFolder: ${parsed.folder}\n` +
+                `Archived to: ${parsed.archivedPath || '(nothing to archive)'}\n` +
+                `Tasks cancelled: ${parsed.tasksDeleted}\n` +
+                `Left in WhatsApp: ${parsed.leftInWhatsApp ? 'yes' : 'no (may have been kicked already)'}`,
+            },
+          ],
+        };
+      }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: parsed.error || 'Could not leave group.',
+          },
+        ],
+        isError: true,
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'list_archived_groups',
+  'List groups that were previously left via leave_group. Returns archived folder names (suitable for restore_group), their original folder names, and archive timestamps.',
+  {},
+  async () => {
+    try {
+      const res = await nanoclawRequest('/nanoclaw/archived-groups', 'GET');
+      const parsed = JSON.parse(res.body);
+      if (res.status !== 200) {
+        return {
+          content: [
+            { type: 'text' as const, text: parsed.error || 'Error listing.' },
+          ],
+          isError: true,
+        };
+      }
+      if (!parsed.groups || parsed.groups.length === 0) {
+        return {
+          content: [
+            { type: 'text' as const, text: 'No archived groups.' },
+          ],
+        };
+      }
+      const lines = parsed.groups
+        .map(
+          (g: {
+            archivedFolder: string;
+            originalFolder: string;
+            archivedAt: string;
+          }) =>
+            `- ${g.archivedFolder} (original: ${g.originalFolder}, archived: ${g.archivedAt})`,
+        )
+        .join('\n');
+      return { content: [{ type: 'text' as const, text: lines }] };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'restore_group',
+  `Restore a previously-archived group: moves groups/_archived/<archivedFolder>/ back to groups/<originalFolder>/ and registers it with the new JID. Use this when a group the bot used to be in is re-added and you want to recover its memory (CLAUDE.md, conversations, attachments).
+
+First call list_archived_groups to find the archivedFolder name. The user needs to provide the NEW jid of the re-joined group (use available_groups.json if unsure) and confirm name + trigger.`,
+  {
+    archivedFolder: z
+      .string()
+      .describe('Exact archived folder name from list_archived_groups'),
+    jid: z.string().describe('NEW JID of the re-joined group'),
+    name: z.string().describe('Display name for the restored group'),
+    trigger: z.string().describe('Trigger word (e.g. "@Ghosty")'),
+  },
+  async ({ archivedFolder, jid, name, trigger }) => {
+    try {
+      const res = await nanoclawRequest('/nanoclaw/restore-group', 'POST', {
+        archivedFolder,
+        jid,
+        name,
+        trigger,
+      });
+      const parsed = JSON.parse(res.body);
+      if (res.status === 200 && parsed.jid) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Group restored.\nJID: ${parsed.jid}\nFolder: ${parsed.folder}\nRestored from: ${parsed.restoredFrom}`,
+            },
+          ],
+        };
+      }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: parsed.error || 'Could not restore group.',
+          },
+        ],
+        isError: true,
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
 server.tool(
   'get_invite_link',
   'Get the WhatsApp group invite link for this chat. Returns a https://chat.whatsapp.com/... URL that can be shared with others to join the group. Only works for WhatsApp groups.',

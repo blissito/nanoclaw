@@ -6,6 +6,7 @@ import {
   CREDENTIAL_PROXY_PORT,
   DATA_DIR,
   DEFAULT_TRIGGER,
+  GROUPS_DIR,
   getTriggerPattern,
   TRIGGER_PATTERN,
   IDLE_TIMEOUT,
@@ -34,7 +35,10 @@ import {
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
+  deleteRegisteredGroup,
   deleteSession,
+  deleteTask,
+  getTasksForGroup,
   getAllTasks,
   getLastBotMessageTimestamp,
   getMessageFromMe,
@@ -1193,6 +1197,130 @@ async function main(): Promise<void> {
       isMain: false,
     });
     return result;
+  };
+
+  nanoClawHandlers.leaveGroup = async (jid) => {
+    const group = registeredGroups[jid];
+    if (!group) {
+      throw new Error(`Group ${jid} not registered`);
+    }
+    if (group.isMain === true) {
+      throw new Error('Cannot leave the main group');
+    }
+    const folder = group.folder;
+
+    // 1. Try to leave the group in WhatsApp (may fail if already kicked)
+    let leftInWhatsApp = false;
+    const channel = channels.find((c) => typeof c.leaveGroup === 'function');
+    if (channel && channel.leaveGroup) {
+      try {
+        await channel.leaveGroup(jid);
+        leftInWhatsApp = true;
+      } catch (err) {
+        logger.warn({ err, jid }, 'groupLeave failed (continuing cleanup)');
+      }
+    }
+
+    // 2. Delete scheduled tasks
+    const tasks = getTasksForGroup(folder);
+    for (const t of tasks) deleteTask(t.id);
+
+    // 3. Delete session
+    deleteSession(folder);
+
+    // 4. Unregister from DB + in-memory
+    deleteRegisteredGroup(jid);
+    delete registeredGroups[jid];
+
+    // 5. Archive folder
+    let archivedPath: string | null = null;
+    try {
+      const src = resolveGroupFolderPath(folder);
+      if (fs.existsSync(src)) {
+        const archiveBase = path.join(GROUPS_DIR, '_archived');
+        fs.mkdirSync(archiveBase, { recursive: true });
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const dest = path.join(archiveBase, `${folder}-${stamp}`);
+        fs.renameSync(src, dest);
+        archivedPath = dest;
+      }
+    } catch (err) {
+      logger.error({ err, folder }, 'Failed to archive group folder');
+    }
+
+    logger.info(
+      { jid, folder, tasksDeleted: tasks.length, leftInWhatsApp, archivedPath },
+      'Group left and cleaned up',
+    );
+
+    return {
+      jid,
+      folder,
+      archivedPath,
+      tasksDeleted: tasks.length,
+      leftInWhatsApp,
+    };
+  };
+
+  nanoClawHandlers.listArchivedGroups = async () => {
+    const archiveBase = path.join(GROUPS_DIR, '_archived');
+    if (!fs.existsSync(archiveBase)) return [];
+    const entries = fs.readdirSync(archiveBase, { withFileTypes: true });
+    return entries
+      .filter((e) => e.isDirectory())
+      .map((e) => {
+        // Folder format: <originalFolder>-<ISO-timestamp-with-dashes>
+        // Timestamp has 3 dashes in the date portion, then -T...; find the split
+        const m = e.name.match(/^(.+)-(\d{4}-\d{2}-\d{2}T.+)$/);
+        const originalFolder = m ? m[1] : e.name;
+        const archivedAt = m ? m[2] : '';
+        return { archivedFolder: e.name, originalFolder, archivedAt };
+      })
+      .sort((a, b) => b.archivedFolder.localeCompare(a.archivedFolder));
+  };
+
+  nanoClawHandlers.restoreGroup = async (
+    archivedFolder,
+    jid,
+    name,
+    trigger,
+  ) => {
+    const archiveBase = path.join(GROUPS_DIR, '_archived');
+    const src = path.join(archiveBase, archivedFolder);
+    // Security: ensure src is strictly inside _archived/
+    if (!src.startsWith(archiveBase + path.sep) || !fs.existsSync(src)) {
+      throw new Error(`Archived folder not found: ${archivedFolder}`);
+    }
+    // Derive original folder name (strip the -ISO-timestamp suffix)
+    const m = archivedFolder.match(/^(.+)-\d{4}-\d{2}-\d{2}T.+$/);
+    const originalFolder = m ? m[1] : archivedFolder;
+    if (!originalFolder || originalFolder.includes('/')) {
+      throw new Error(`Invalid original folder derived: ${originalFolder}`);
+    }
+    // Avoid collision with an existing active group folder
+    const existingFolders = new Set(
+      Object.values(registeredGroups).map((g) => g.folder),
+    );
+    let folder = originalFolder;
+    let suffix = 2;
+    while (existingFolders.has(folder)) {
+      folder = `${originalFolder}_${suffix++}`;
+    }
+    const dest = resolveGroupFolderPath(folder);
+    if (fs.existsSync(dest)) {
+      throw new Error(`Destination folder already exists: ${folder}`);
+    }
+    fs.renameSync(src, dest);
+    registerGroup(jid, {
+      name,
+      folder,
+      trigger,
+      added_at: new Date().toISOString(),
+      requiresTrigger: true,
+      isMain: false,
+    });
+    logger.info({ jid, folder, restoredFrom: archivedFolder }, 'Group restored');
+    return { jid, folder, restoredFrom: archivedFolder };
   };
 
   startIpcWatcher({

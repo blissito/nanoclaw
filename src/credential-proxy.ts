@@ -27,6 +27,22 @@ export interface NanoClawHandlers {
   createGroup?: (
     name: string,
   ) => Promise<{ jid: string; inviteLink: string | null }>;
+  leaveGroup?: (jid: string) => Promise<{
+    jid: string;
+    folder: string;
+    archivedPath: string | null;
+    tasksDeleted: number;
+    leftInWhatsApp: boolean;
+  }>;
+  listArchivedGroups?: () => Promise<
+    Array<{ archivedFolder: string; originalFolder: string; archivedAt: string }>
+  >;
+  restoreGroup?: (
+    archivedFolder: string,
+    jid: string,
+    name: string,
+    trigger: string,
+  ) => Promise<{ jid: string; folder: string; restoredFrom: string }>;
 }
 
 export function startCredentialProxy(
@@ -139,6 +155,123 @@ export function startCredentialProxy(
                 })
                 .catch((err) => {
                   logger.error({ err, name }, 'Error creating group');
+                  res.writeHead(500, { 'Content-Type': 'application/json' });
+                  res.end(
+                    JSON.stringify({
+                      error:
+                        err instanceof Error ? err.message : 'Internal error',
+                    }),
+                  );
+                });
+            } catch {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+            }
+          });
+          return;
+        }
+
+        if (
+          url.pathname === '/nanoclaw/leave-group' &&
+          req.method === 'POST'
+        ) {
+          const chunks: Buffer[] = [];
+          req.on('data', (c) => chunks.push(c));
+          req.on('end', () => {
+            try {
+              const { jid } = JSON.parse(Buffer.concat(chunks).toString());
+              if (!jid || !handlers.leaveGroup) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(
+                  JSON.stringify({ error: 'Missing jid or handler not ready' }),
+                );
+                return;
+              }
+              handlers
+                .leaveGroup(jid)
+                .then((result) => {
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify(result));
+                })
+                .catch((err) => {
+                  logger.error({ err, jid }, 'Error leaving group');
+                  res.writeHead(500, { 'Content-Type': 'application/json' });
+                  res.end(
+                    JSON.stringify({
+                      error:
+                        err instanceof Error ? err.message : 'Internal error',
+                    }),
+                  );
+                });
+            } catch {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+            }
+          });
+          return;
+        }
+
+        if (
+          url.pathname === '/nanoclaw/archived-groups' &&
+          req.method === 'GET'
+        ) {
+          if (!handlers.listArchivedGroups) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Handler not ready' }));
+            return;
+          }
+          handlers
+            .listArchivedGroups()
+            .then((groups) => {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ groups }));
+            })
+            .catch((err) => {
+              logger.error({ err }, 'Error listing archived groups');
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Internal error' }));
+            });
+          return;
+        }
+
+        if (
+          url.pathname === '/nanoclaw/restore-group' &&
+          req.method === 'POST'
+        ) {
+          const chunks: Buffer[] = [];
+          req.on('data', (c) => chunks.push(c));
+          req.on('end', () => {
+            try {
+              const { archivedFolder, jid, name, trigger } = JSON.parse(
+                Buffer.concat(chunks).toString(),
+              );
+              if (
+                !archivedFolder ||
+                !jid ||
+                !name ||
+                !trigger ||
+                !handlers.restoreGroup
+              ) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(
+                  JSON.stringify({
+                    error:
+                      'Missing archivedFolder/jid/name/trigger or handler not ready',
+                  }),
+                );
+                return;
+              }
+              handlers
+                .restoreGroup(archivedFolder, jid, name, trigger)
+                .then((result) => {
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify(result));
+                })
+                .catch((err) => {
+                  logger.error(
+                    { err, archivedFolder, jid },
+                    'Error restoring group',
+                  );
                   res.writeHead(500, { 'Content-Type': 'application/json' });
                   res.end(
                     JSON.stringify({
