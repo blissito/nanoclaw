@@ -1196,6 +1196,22 @@ async function main(): Promise<void> {
       requiresTrigger: true,
       isMain: false,
     });
+    // Set default group profile picture if configured
+    const defaultPic = process.env.DEFAULT_GROUP_PROFILE_PIC;
+    if (defaultPic && channel.updateProfilePicture) {
+      try {
+        const picPath = path.isAbsolute(defaultPic)
+          ? defaultPic
+          : path.join(GROUPS_DIR, defaultPic);
+        if (fs.existsSync(picPath)) {
+          await channel.updateProfilePicture(result.jid, picPath);
+        } else {
+          logger.warn({ picPath }, 'DEFAULT_GROUP_PROFILE_PIC not found');
+        }
+      } catch (err) {
+        logger.warn({ err, jid: result.jid }, 'Failed to set default group pic');
+      }
+    }
     return result;
   };
 
