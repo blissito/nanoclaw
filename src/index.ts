@@ -1209,7 +1209,10 @@ async function main(): Promise<void> {
           logger.warn({ picPath }, 'DEFAULT_GROUP_PROFILE_PIC not found');
         }
       } catch (err) {
-        logger.warn({ err, jid: result.jid }, 'Failed to set default group pic');
+        logger.warn(
+          { err, jid: result.jid },
+          'Failed to set default group pic',
+        );
       }
     }
     return result;
