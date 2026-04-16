@@ -144,9 +144,7 @@ export function getUsage(groupFolder?: string): UsageEntry[] {
 }
 
 /** Extract usage from Anthropic response body */
-function extractUsage(
-  responseBody: Buffer,
-): {
+function extractUsage(responseBody: Buffer): {
   model: string;
   inputTokens: number;
   outputTokens: number;
@@ -169,10 +167,7 @@ function extractUsage(
 }
 
 /** Enforce policy on outbound request. Returns error string or null if OK. */
-function enforcePolicy(
-  groupFolder: string,
-  body: Buffer,
-): string | null {
+function enforcePolicy(groupFolder: string, body: Buffer): string | null {
   const policy = getGroupPolicy(groupFolder);
 
   if (policy.blocked) {
@@ -514,10 +509,7 @@ export function startCredentialProxy(
       }
 
       // Vault: policy management endpoint
-      if (
-        req.url === '/nanoclaw/vault/policy' &&
-        req.method === 'POST'
-      ) {
+      if (req.url === '/nanoclaw/vault/policy' && req.method === 'POST') {
         const pChunks: Buffer[] = [];
         req.on('data', (c) => pChunks.push(c));
         req.on('end', () => {
