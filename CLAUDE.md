@@ -239,6 +239,21 @@ r2.on('end',()=>{fake.close();process.exit(r2.statusCode===200?0:1);});}).end(b2
 
 Config: `FALLBACK_MODEL` in `src/credential-proxy.ts`. Fatal patterns in `src/index.ts` (`fatalContainerPatterns`). Cooldown in `src/group-queue.ts`.
 
+## Agent Vault (WIP)
+
+Inspired by [OneCLI](https://github.com/onecli/onecli). Implemented in `src/credential-proxy.ts`:
+
+- **Per-group policies** — `setGroupPolicy(folder, { maxRequestsPerWindow, allowedModels, maxInputTokens, blocked })`
+- **Rate limiting** — sliding window counter, enforced before forwarding
+- **Usage logging** — ring buffer (500 entries) with tokens/model/duration/fallback flag
+- **Endpoints**:
+  - `GET /nanoclaw/vault/usage?group=X` — query usage
+  - `POST /nanoclaw/vault/policy` — set policy `{ groupFolder, policy }`
+
+**Open TODO**: group identification. Currently logs as `unknown` unless `X-NanoClaw-Group` header is set. SDK traffic doesn't set headers — needs a scalable mapping (container IP → folder, or other). Do NOT encode in `ANTHROPIC_BASE_URL` per container — dozens of groups daily make it brittle.
+
+Roadmap for EasyBits generalization: `/Users/bliss/easybits/TODO_AGENT_VAULT.md`.
+
 ## Next Steps
 
 - **Meta WABA direct channel** — new `src/channels/meta-waba.ts` that receives webhooks from Meta Cloud API directly, eliminating the Formmy message proxy. Formmy stays as the solution provider (token/number management via Meta Business Manager), but messages flow `WhatsApp → Meta → NanoClaw → Meta → WhatsApp` with no intermediary. This removes Formmy as a SPOF for message routing. Env vars: `META_WABA_VERIFY_TOKEN`, `META_WABA_APP_SECRET`, `META_WABA_ACCESS_TOKEN`, `META_WABA_PHONE_NUMBER_ID`. Same channel pattern as telegram.ts/webhook.ts (~200-300 lines). Covers: webhook verification (Meta challenge), signature validation, inbound message parsing (text, image, audio, location), outbound via Graph API.

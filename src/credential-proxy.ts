@@ -6,6 +6,11 @@
  * Primary: OAuth (Max plan).
  * Fallback: If upstream returns 429 (rate limit) and an API key is
  *           configured, retries with API key + claude-sonnet-4-20250514.
+ *
+ * Vault features (inspired by OneCLI — github.com/onecli/onecli):
+ * - Per-group rate limiting policies
+ * - Usage logging (tokens, cost, model per request)
+ * - Policy enforcement before forwarding
  */
 import { createServer, Server } from 'http';
 import { request as httpsRequest } from 'https';
@@ -21,6 +26,188 @@ export interface ProxyConfig {
 }
 
 const FALLBACK_MODEL = 'claude-sonnet-4-20250514';
+
+// ---------------------------------------------------------------------------
+// Vault: Per-group policies
+// ---------------------------------------------------------------------------
+
+export interface GroupPolicy {
+  /** Max requests per window (0 = unlimited) */
+  maxRequestsPerWindow: number;
+  /** Window size in ms (default: 1 hour) */
+  windowMs: number;
+  /** Allowed models (empty = all allowed) */
+  allowedModels: string[];
+  /** Max input tokens per request (0 = unlimited) */
+  maxInputTokens: number;
+  /** Block the group entirely */
+  blocked: boolean;
+}
+
+const DEFAULT_POLICY: GroupPolicy = {
+  maxRequestsPerWindow: 0,
+  windowMs: 3600_000,
+  allowedModels: [],
+  maxInputTokens: 0,
+  blocked: false,
+};
+
+// In-memory policy store. Loaded from container_config.policy in DB at startup.
+// Future: hot-reload from DB or /nanoclaw/vault/policy endpoint.
+const groupPolicies = new Map<string, GroupPolicy>();
+
+export function setGroupPolicy(
+  groupFolder: string,
+  policy: Partial<GroupPolicy>,
+): void {
+  groupPolicies.set(groupFolder, { ...DEFAULT_POLICY, ...policy });
+}
+
+export function getGroupPolicy(groupFolder: string): GroupPolicy {
+  return groupPolicies.get(groupFolder) || DEFAULT_POLICY;
+}
+
+// ---------------------------------------------------------------------------
+// Vault: Rate limiter (sliding window counter)
+// ---------------------------------------------------------------------------
+
+interface RateWindow {
+  count: number;
+  windowStart: number;
+}
+
+const rateLimiterState = new Map<string, RateWindow>();
+
+function checkRateLimit(groupFolder: string, policy: GroupPolicy): boolean {
+  if (policy.maxRequestsPerWindow <= 0) return true; // unlimited
+
+  const now = Date.now();
+  const state = rateLimiterState.get(groupFolder);
+
+  if (!state || now - state.windowStart >= policy.windowMs) {
+    rateLimiterState.set(groupFolder, { count: 1, windowStart: now });
+    return true;
+  }
+
+  if (state.count >= policy.maxRequestsPerWindow) {
+    return false; // exceeded
+  }
+
+  state.count++;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Vault: Usage logging
+// ---------------------------------------------------------------------------
+
+export interface UsageEntry {
+  timestamp: string;
+  groupFolder: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  durationMs: number;
+  authMode: AuthMode;
+  wasFallback: boolean;
+}
+
+// Ring buffer — keeps last N entries in memory, flushable to DB/disk.
+const USAGE_BUFFER_SIZE = 500;
+const usageBuffer: UsageEntry[] = [];
+
+function logUsage(entry: UsageEntry): void {
+  usageBuffer.push(entry);
+  if (usageBuffer.length > USAGE_BUFFER_SIZE) {
+    usageBuffer.shift();
+  }
+  logger.info(
+    {
+      group: entry.groupFolder,
+      model: entry.model,
+      inputTokens: entry.inputTokens,
+      outputTokens: entry.outputTokens,
+      cacheRead: entry.cacheReadTokens,
+      durationMs: entry.durationMs,
+      fallback: entry.wasFallback,
+    },
+    'vault:usage',
+  );
+}
+
+/** Get recent usage, optionally filtered by group */
+export function getUsage(groupFolder?: string): UsageEntry[] {
+  if (!groupFolder) return [...usageBuffer];
+  return usageBuffer.filter((e) => e.groupFolder === groupFolder);
+}
+
+/** Extract usage from Anthropic response body */
+function extractUsage(
+  responseBody: Buffer,
+): {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+} | null {
+  try {
+    const parsed = JSON.parse(responseBody.toString());
+    if (!parsed.usage) return null;
+    return {
+      model: parsed.model || 'unknown',
+      inputTokens: parsed.usage.input_tokens || 0,
+      outputTokens: parsed.usage.output_tokens || 0,
+      cacheReadTokens: parsed.usage.cache_read_input_tokens || 0,
+      cacheCreationTokens: parsed.usage.cache_creation_input_tokens || 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Enforce policy on outbound request. Returns error string or null if OK. */
+function enforcePolicy(
+  groupFolder: string,
+  body: Buffer,
+): string | null {
+  const policy = getGroupPolicy(groupFolder);
+
+  if (policy.blocked) {
+    return 'Group is blocked by vault policy';
+  }
+
+  if (!checkRateLimit(groupFolder, policy)) {
+    return `Rate limit exceeded: ${policy.maxRequestsPerWindow} requests per ${policy.windowMs / 60000}min`;
+  }
+
+  if (policy.allowedModels.length > 0 || policy.maxInputTokens > 0) {
+    try {
+      const parsed = JSON.parse(body.toString());
+      if (
+        policy.allowedModels.length > 0 &&
+        parsed.model &&
+        !policy.allowedModels.includes(parsed.model)
+      ) {
+        return `Model ${parsed.model} not allowed for this group`;
+      }
+      // Rough token estimate: 4 chars ≈ 1 token
+      if (policy.maxInputTokens > 0) {
+        const contentStr = JSON.stringify(parsed.messages || '');
+        const estimatedTokens = Math.ceil(contentStr.length / 4);
+        if (estimatedTokens > policy.maxInputTokens) {
+          return `Estimated input tokens (${estimatedTokens}) exceeds limit (${policy.maxInputTokens})`;
+        }
+      }
+    } catch {
+      // Can't parse — let it through
+    }
+  }
+
+  return null;
+}
 
 export interface NanoClawHandlers {
   getInviteLink?: (jid: string) => Promise<string | null>;
@@ -317,10 +504,81 @@ export function startCredentialProxy(
         return;
       }
 
+      // Vault: usage stats endpoint
+      if (req.url?.startsWith('/nanoclaw/vault/usage')) {
+        const url = new URL(req.url, `http://${req.headers.host}`);
+        const group = url.searchParams.get('group') || undefined;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ usage: getUsage(group) }));
+        return;
+      }
+
+      // Vault: policy management endpoint
+      if (
+        req.url === '/nanoclaw/vault/policy' &&
+        req.method === 'POST'
+      ) {
+        const pChunks: Buffer[] = [];
+        req.on('data', (c) => pChunks.push(c));
+        req.on('end', () => {
+          try {
+            const { groupFolder, policy } = JSON.parse(
+              Buffer.concat(pChunks).toString(),
+            );
+            if (!groupFolder) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Missing groupFolder' }));
+              return;
+            }
+            setGroupPolicy(groupFolder, policy || {});
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(
+              JSON.stringify({
+                ok: true,
+                policy: getGroupPolicy(groupFolder),
+              }),
+            );
+          } catch {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid JSON' }));
+          }
+        });
+        return;
+      }
+
       const chunks: Buffer[] = [];
       req.on('data', (c) => chunks.push(c));
       req.on('end', () => {
         const body = Buffer.concat(chunks);
+
+        // Vault: group identification.
+        // TODO: map container source IP → group folder via Docker network inspect
+        // or accept X-NanoClaw-Group from agent-runner IPC calls (not SDK calls).
+        // For now, all SDK traffic logs as 'unknown'. IPC calls can set the header.
+        const groupFolder =
+          (req.headers['x-nanoclaw-group'] as string) || 'unknown';
+        const requestStart = Date.now();
+
+        // Vault: enforce policy before forwarding
+        const policyError = enforcePolicy(groupFolder, body);
+        if (policyError) {
+          logger.warn(
+            { group: groupFolder, error: policyError },
+            'vault:policy-blocked',
+          );
+          res.writeHead(429, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              type: 'error',
+              error: {
+                type: 'rate_limit_error',
+                message: policyError,
+              },
+            }),
+          );
+          return;
+        }
+
         const baseHeaders: Record<
           string,
           string | number | string[] | undefined
@@ -334,6 +592,8 @@ export function startCredentialProxy(
         delete baseHeaders['connection'];
         delete baseHeaders['keep-alive'];
         delete baseHeaders['transfer-encoding'];
+        // Strip internal vault header before forwarding to Anthropic
+        delete baseHeaders['x-nanoclaw-group'];
 
         const headers = { ...baseHeaders };
 
@@ -343,32 +603,81 @@ export function startCredentialProxy(
           injectOAuth(headers, req.url);
         }
 
+        // Helper: buffer response, log usage, then forward to client
+        const bufferAndLog = (
+          upRes: import('http').IncomingMessage,
+          wasFallback: boolean,
+        ) => {
+          const respChunks: Buffer[] = [];
+          upRes.on('data', (c: Buffer) => respChunks.push(c));
+          upRes.on('end', () => {
+            const respBody = Buffer.concat(respChunks);
+            const usage = extractUsage(respBody);
+            if (usage) {
+              logUsage({
+                timestamp: new Date().toISOString(),
+                groupFolder,
+                model: usage.model,
+                inputTokens: usage.inputTokens,
+                outputTokens: usage.outputTokens,
+                cacheReadTokens: usage.cacheReadTokens,
+                cacheCreationTokens: usage.cacheCreationTokens,
+                durationMs: Date.now() - requestStart,
+                authMode: wasFallback ? 'api-key' : authMode,
+                wasFallback,
+              });
+            }
+            res.writeHead(upRes.statusCode!, upRes.headers);
+            res.end(respBody);
+          });
+        };
+
         // Determine if this is a retryable request (messages endpoint, not exchange)
         const isMessagesEndpoint =
           req.url?.includes('/v1/messages') && req.method === 'POST';
         const shouldRetryOn429 = canFallback && isMessagesEndpoint;
 
         if (!shouldRetryOn429) {
-          // No fallback possible — pipe directly (fast path)
-          const upstream = makeRequest(
-            buildUpstreamOpts(req.url, req.method, headers),
-            (upRes) => {
-              res.writeHead(upRes.statusCode!, upRes.headers);
-              upRes.pipe(res);
-            },
-          );
-          upstream.on('error', (err) => {
-            logger.error(
-              { err, url: req.url },
-              'Credential proxy upstream error',
+          // No fallback — buffer for usage logging if messages endpoint
+          if (isMessagesEndpoint) {
+            const upstream = makeRequest(
+              buildUpstreamOpts(req.url, req.method, headers),
+              (upRes) => bufferAndLog(upRes, false),
             );
-            if (!res.headersSent) {
-              res.writeHead(502);
-              res.end('Bad Gateway');
-            }
-          });
-          upstream.write(body);
-          upstream.end();
+            upstream.on('error', (err) => {
+              logger.error(
+                { err, url: req.url },
+                'Credential proxy upstream error',
+              );
+              if (!res.headersSent) {
+                res.writeHead(502);
+                res.end('Bad Gateway');
+              }
+            });
+            upstream.write(body);
+            upstream.end();
+          } else {
+            // Non-messages endpoint — pipe directly (fast path, no logging)
+            const upstream = makeRequest(
+              buildUpstreamOpts(req.url, req.method, headers),
+              (upRes) => {
+                res.writeHead(upRes.statusCode!, upRes.headers);
+                upRes.pipe(res);
+              },
+            );
+            upstream.on('error', (err) => {
+              logger.error(
+                { err, url: req.url },
+                'Credential proxy upstream error',
+              );
+              if (!res.headersSent) {
+                res.writeHead(502);
+                res.end('Bad Gateway');
+              }
+            });
+            upstream.write(body);
+            upstream.end();
+          }
           return;
         }
 
@@ -377,13 +686,12 @@ export function startCredentialProxy(
           buildUpstreamOpts(req.url, req.method, headers),
           (upRes) => {
             if (upRes.statusCode !== 429) {
-              // Not rate limited — forward normally
-              res.writeHead(upRes.statusCode!, upRes.headers);
-              upRes.pipe(res);
+              // Not rate limited — buffer for usage logging
+              bufferAndLog(upRes, false);
               return;
             }
 
-            // Rate limited — consume the response and retry with API key + Haiku
+            // Rate limited — consume the response and retry with API key
             const discardChunks: Buffer[] = [];
             upRes.on('data', (c) => discardChunks.push(c));
             upRes.on('end', () => {
@@ -399,10 +707,7 @@ export function startCredentialProxy(
 
               const retry = makeRequest(
                 buildUpstreamOpts(req.url, req.method, fallbackHeaders),
-                (retryRes) => {
-                  res.writeHead(retryRes.statusCode!, retryRes.headers);
-                  retryRes.pipe(res);
-                },
+                (retryRes) => bufferAndLog(retryRes, true),
               );
               retry.on('error', (err) => {
                 logger.error(
