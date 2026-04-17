@@ -28,8 +28,9 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     imagemagick \
     python3-pip \
+    libreoffice-calc \
     unzip \
-    && pip3 install --break-system-packages yt-dlp \
+    && pip3 install --break-system-packages yt-dlp openpyxl pandas \
     && curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
