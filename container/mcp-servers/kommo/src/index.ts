@@ -170,6 +170,69 @@ server.tool(
 );
 
 server.tool(
+  'create_pipeline',
+  'Create a new lead pipeline. Optionally seed it with initial statuses. Only one pipeline can be main at a time — setting is_main=true demotes the previous main pipeline.',
+  {
+    name: z.string().describe('Pipeline name'),
+    sort: z.number().int().optional().describe('Display order (lower = earlier)'),
+    is_main: z.boolean().optional().describe('Make this the default pipeline'),
+    is_unsorted_on: z.boolean().optional().describe('Enable the Incoming Leads stage'),
+    statuses: z
+      .array(
+        z.object({
+          name: z.string(),
+          sort: z.number().int().optional(),
+          color: z.string().optional().describe('Hex color, e.g. #fffeb2'),
+        }),
+      )
+      .optional()
+      .describe('Initial statuses to create along with the pipeline (Won/Lost are auto-added by Kommo)'),
+  },
+  async ({ name, sort, is_main, is_unsorted_on, statuses }) => {
+    const payload: Record<string, unknown> = { name };
+    if (sort !== undefined) payload.sort = sort;
+    if (is_main !== undefined) payload.is_main = is_main;
+    if (is_unsorted_on !== undefined) payload.is_unsorted_on = is_unsorted_on;
+    if (statuses?.length) payload._embedded = { statuses };
+    return toToolResult(await kommo.post('/api/v4/leads/pipelines', [payload]));
+  },
+);
+
+server.tool(
+  'update_pipeline',
+  'Update an existing pipeline — rename, reorder, toggle main/unsorted.',
+  {
+    pipeline_id: z.number().int().describe('Kommo pipeline id'),
+    name: z.string().optional(),
+    sort: z.number().int().optional(),
+    is_main: z.boolean().optional(),
+    is_unsorted_on: z.boolean().optional(),
+  },
+  async ({ pipeline_id, ...rest }) => {
+    const payload: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(rest)) if (v !== undefined) payload[k] = v;
+    return toToolResult(await kommo.patch(`/api/v4/leads/pipelines/${pipeline_id}`, payload));
+  },
+);
+
+server.tool(
+  'create_pipeline_status',
+  'Add a new status (stage) to an existing pipeline. Provide color as a Kommo-accepted hex (e.g. #fffeb2, #ffdc7f, #d6eaff, #c1e0ff, #98cbff).',
+  {
+    pipeline_id: z.number().int().describe('Kommo pipeline id'),
+    name: z.string().describe('Status name'),
+    sort: z.number().int().optional().describe('Position within the pipeline'),
+    color: z.string().optional().describe('Hex color (one of Kommo\'s palette)'),
+  },
+  async ({ pipeline_id, name, sort, color }) => {
+    const payload: Record<string, unknown> = { name };
+    if (sort !== undefined) payload.sort = sort;
+    if (color !== undefined) payload.color = color;
+    return toToolResult(await kommo.post(`/api/v4/leads/pipelines/${pipeline_id}/statuses`, [payload]));
+  },
+);
+
+server.tool(
   'add_note',
   'Add a text note to a lead or contact.',
   {
