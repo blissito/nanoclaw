@@ -969,6 +969,125 @@ function sendSesEmail(to: string, subject: string, bodyHtml: string, bodyText?: 
   });
 }
 
+// --- AWS CloudWatch metric reader (raw HTTPS, no SDK) ---
+
+function cwGetMetricSum(metricName: string, configSet: string, startIso: string, endIso: string, periodSec: number): Promise<number> {
+  const region = process.env.SES_REGION || 'us-east-2';
+  const accessKey = process.env.SES_KEY!;
+  const secretKey = process.env.SES_SECRET!;
+
+  const host = `monitoring.${region}.amazonaws.com`;
+  const now = new Date();
+  const amzDate = now.toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+  const dateStamp = amzDate.slice(0, 8);
+
+  const params = new URLSearchParams();
+  params.append('Action', 'GetMetricStatistics');
+  params.append('Version', '2010-08-01');
+  params.append('Namespace', 'AWS/SES');
+  params.append('MetricName', metricName);
+  params.append('Dimensions.member.1.Name', 'ses:configuration-set');
+  params.append('Dimensions.member.1.Value', configSet);
+  params.append('StartTime', startIso);
+  params.append('EndTime', endIso);
+  params.append('Period', String(periodSec));
+  params.append('Statistics.member.1', 'Sum');
+
+  const body = params.toString();
+  const payloadHash = awsSha256(body);
+  const canonicalHeaders = `content-type:application/x-www-form-urlencoded\nhost:${host}\nx-amz-date:${amzDate}\n`;
+  const signedHeaders = 'content-type;host;x-amz-date';
+  const canonicalRequest = `POST\n/\n\n${canonicalHeaders}\n${signedHeaders}\n${payloadHash}`;
+  const credScope = `${dateStamp}/${region}/monitoring/aws4_request`;
+  const stringToSign = `AWS4-HMAC-SHA256\n${amzDate}\n${credScope}\n${awsSha256(canonicalRequest)}`;
+
+  let signingKey = awsSign(Buffer.from('AWS4' + secretKey), dateStamp);
+  signingKey = awsSign(signingKey, region);
+  signingKey = awsSign(signingKey, 'monitoring');
+  signingKey = awsSign(signingKey, 'aws4_request');
+  const signature = crypto.createHmac('sha256', signingKey).update(stringToSign).digest('hex');
+  const authHeader = `AWS4-HMAC-SHA256 Credential=${accessKey}/${credScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: host,
+      method: 'POST',
+      path: '/',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Host': host,
+        'X-Amz-Date': amzDate,
+        'Authorization': authHeader,
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        if (res.statusCode !== 200) {
+          reject(new Error(`CloudWatch error ${res.statusCode}: ${data}`));
+          return;
+        }
+        const sums = [...data.matchAll(/<Sum>([0-9.eE+-]+)<\/Sum>/g)].map(m => parseFloat(m[1]));
+        const total = sums.reduce((a, b) => a + b, 0);
+        resolve(total);
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+server.tool(
+  'get_email_stats',
+  'Get email delivery stats (sends, opens, clicks, bounces, complaints) for emails sent via send_email in the last N hours. Stats come from AWS CloudWatch and may lag 5-15 min behind real events. Aggregate only — cannot identify which recipient opened.',
+  {
+    hours: z.number().min(1).max(336).default(24).describe('How many hours back to look (default 24, max 336 = 14 days)'),
+  },
+  async (args) => {
+    if (!process.env.SES_KEY) {
+      return {
+        content: [{ type: 'text' as const, text: 'Email stats unavailable: SES credentials missing.' }],
+        isError: true,
+      };
+    }
+    const configSet = process.env.SES_CONFIGURATION_SET || 'ghosty';
+    const end = new Date();
+    const start = new Date(end.getTime() - args.hours * 3600 * 1000);
+    const startIso = start.toISOString().replace(/\.\d+Z$/, 'Z');
+    const endIso = end.toISOString().replace(/\.\d+Z$/, 'Z');
+    // Period must divide window evenly; use 1h buckets for <=48h, else 1d
+    const periodSec = args.hours <= 48 ? 3600 : 86400;
+
+    const metrics = ['Send', 'Delivery', 'Open', 'Click', 'Bounce', 'Complaint', 'Reject'];
+    try {
+      const results = await Promise.all(
+        metrics.map(m => cwGetMetricSum(m, configSet, startIso, endIso, periodSec).then(v => [m, v] as [string, number]))
+      );
+      const counts = Object.fromEntries(results);
+      const sent = counts.Send || 0;
+      const pct = (n: number) => sent > 0 ? ` (${Math.round((n / sent) * 100)}%)` : '';
+      const lines = [
+        `Config set: ${configSet} · últimas ${args.hours}h`,
+        `Enviados:    ${sent}`,
+        `Entregados:  ${counts.Delivery || 0}${pct(counts.Delivery || 0)}`,
+        `Aperturas:   ${counts.Open || 0}${pct(counts.Open || 0)}`,
+        `Clicks:      ${counts.Click || 0}${pct(counts.Click || 0)}`,
+        `Bounces:     ${counts.Bounce || 0}`,
+        `Quejas:      ${counts.Complaint || 0}`,
+        `Rechazos:    ${counts.Reject || 0}`,
+      ];
+      return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Failed to fetch email stats: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
 server.tool(
   'send_email',
   'Send an email via AWS SES. Use for sending reports, notifications, or any content the user requests via email. Supports HTML body for rich formatting.',
