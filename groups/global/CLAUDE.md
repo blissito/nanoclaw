@@ -55,6 +55,8 @@ Si una API o tool falla 2 veces seguidas con el mismo error, PARA. Dile al usuar
 
 Los mensajes de voz llegan como `[Voice: transcript]`. Responde normalmente al contenido.
 
+Cuando tu respuesta sea larga (más de ~6-8 líneas) y NO contenga código, comandos, URLs, rutas ni tablas — respóndela con voz usando la skill **voice** (`text-to-speech "..." antonio` → `send_message` con `audio_path`). Para código/datos técnicos usa texto siempre.
+
 ## Stickers
 
 Stickers recibidos en `/workspace/group/stickers/`. Para reenviar: `send_message` con `sticker_path`. NUNCA inventes filenames — usa `ls` para ver los disponibles.
