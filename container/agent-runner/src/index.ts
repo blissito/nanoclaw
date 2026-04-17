@@ -408,6 +408,14 @@ function getAllMcpServers(containerInput: ContainerInput, mcpServerPath: string)
         GROUPS: 'geo,social,business,ecommerce,finance',
       },
     },
+    kommo: {
+      command: 'node',
+      args: ['/app/mcp-servers/kommo/dist/index.js'],
+      env: {
+        KOMMO_BASE_URL: process.env.KOMMO_BASE_URL || '',
+        KOMMO_ACCESS_TOKEN: process.env.KOMMO_ACCESS_TOKEN || '',
+      },
+    },
   };
 }
 

@@ -388,6 +388,12 @@ function buildEnvFile(
   const bdToken = readEnvFile(['BRIGHTDATA_API_TOKEN']).BRIGHTDATA_API_TOKEN;
   if (bdToken) envLines.push(`BRIGHTDATA_API_TOKEN=${bdToken}`);
 
+  const kommoEnv = readEnvFile(['KOMMO_BASE_URL', 'KOMMO_ACCESS_TOKEN']);
+  if (kommoEnv.KOMMO_ACCESS_TOKEN) {
+    envLines.push(`KOMMO_BASE_URL=${kommoEnv.KOMMO_BASE_URL || ''}`);
+    envLines.push(`KOMMO_ACCESS_TOKEN=${kommoEnv.KOMMO_ACCESS_TOKEN}`);
+  }
+
   // Per-group env overrides (from container_config.env)
   if (containerConfig?.env) {
     for (const [key, value] of Object.entries(containerConfig.env)) {

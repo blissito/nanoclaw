@@ -62,6 +62,12 @@ COPY agent-runner/ ./
 # Build TypeScript
 RUN npm run build
 
+# Build bundled Kommo MCP server
+COPY mcp-servers/kommo/package*.json /app/mcp-servers/kommo/
+RUN cd /app/mcp-servers/kommo && npm install
+COPY mcp-servers/kommo/ /app/mcp-servers/kommo/
+RUN cd /app/mcp-servers/kommo && npm run build
+
 # Install pdf-reader CLI
 COPY skills/pdf-reader/pdf-reader /usr/local/bin/pdf-reader
 RUN chmod +x /usr/local/bin/pdf-reader
@@ -91,7 +97,7 @@ RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/
 RUN printf '#!/bin/bash\nset -e\ncat > /tmp/input.json\nif [ /app/src/index.ts -nt /app/dist/index.js ]; then\n  cd /app && npx tsc --outDir dist 2>/dev/null\nfi\nnode /app/dist/index.js < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Set ownership to node user (non-root) for writable directories
-RUN chown -R node:node /workspace /app/dist && chmod 777 /home/node
+RUN chown -R node:node /workspace /app/dist /app/mcp-servers/kommo/dist && chmod 777 /home/node
 
 # Switch to non-root user (required for --dangerously-skip-permissions)
 USER node
