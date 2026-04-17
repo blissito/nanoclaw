@@ -32,6 +32,7 @@ interface ContainerInput {
   mcpServers?: string[];
   allowedTools?: string[];
   reportToJid?: string;
+  script?: string;
   imageAttachments?: Array<{ relativePath: string; mediaType: string; publicUrl?: string }>;
 }
 
