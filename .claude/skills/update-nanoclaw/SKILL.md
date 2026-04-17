@@ -112,6 +112,28 @@ Bucket the upstream changed files:
 - **Build/config** (`package.json`, `package-lock.json`, `tsconfig*.json`, `container/`, `launchd/`): review needed
 - **Other**: docs, tests, misc
 
+# Step 2.5: Fork surface audit (hotspot identification)
+Before picking a strategy, measure how much the fork already diverges from upstream on the files upstream is about to touch. High divergence = high conflict risk.
+
+For each file in the upstream changeset, compute line-count divergence:
+- `git diff --shortstat upstream/$UPSTREAM_BRANCH...HEAD -- <file>`
+
+Identify the top 5 most-diverged files and present them as **hotspots** to the user. Examples from real NanoClaw forks: `src/channels/whatsapp.ts`, `src/index.ts`, `src/credential-proxy.ts`, `container/agent-runner/src/index.ts`. Flag any hotspot that upstream commits touch — those are the likely-conflict commits.
+
+# Step 2.6: Duplicate and architectural-conflict detection
+Before recommending a strategy, check for two traps:
+
+**Duplicates** — commits the fork already merged under a different SHA. Upstream subjects may be identical to local commits:
+- `git log HEAD --oneline --since="6 months ago" | awk -F' ' '{$1=""; print $0}' | sort > /tmp/local-subjects.txt`
+- `git log $BASE..upstream/$UPSTREAM_BRANCH --oneline | awk -F' ' '{$1=""; print $0}' | sort > /tmp/upstream-subjects.txt`
+- `comm -12 /tmp/local-subjects.txt /tmp/upstream-subjects.txt`
+
+For each subject match, verify with a grep for a distinctive token from the commit (e.g., a new field name, a class name). If confirmed duplicate, **exclude from the cherry-pick list** and note it in the summary.
+
+**Architectural conflicts** — upstream commits that rewrite a hotspot file end-to-end (50%+ of lines). These can't be safely cherry-picked without a separate design decision:
+- For each upstream commit: `git show --shortstat <sha>` → compute `(insertions+deletions) / total-lines-in-target-file`.
+- If > 0.5 on any hotspot file, flag as "architectural" and **ask the user** before including. Typical outcome: skip and document as debt.
+
 Present these buckets to the user and ask them to choose one path using AskUserQuestion:
 - A) **Full update**: merge all upstream changes
 - B) **Selective update**: cherry-pick specific upstream commits
@@ -149,8 +171,9 @@ If conflicts occur:
 If user chose Selective:
 - Recompute BASE if needed: `BASE=$(git merge-base HEAD upstream/$UPSTREAM_BRANCH)`
 - Show commit list again: `git log --oneline $BASE..upstream/$UPSTREAM_BRANCH`
+- Filter out merge commits from the candidate list (`git log --no-merges`). Merge commits fail without `-m <parent>`; almost always the feature commit from the PR branch is the one to pick, not the merge.
 - Ask user which commit hashes they want.
-- Apply: `git cherry-pick <hash1> <hash2> ...`
+- Apply one chain at a time: `git cherry-pick <hash1> <hash2> ...`
 
 If conflicts during cherry-pick:
 - Resolve only conflict markers, then:
@@ -158,6 +181,23 @@ If conflicts during cherry-pick:
   - `git cherry-pick --continue`
 If user wants to stop:
   - `git cherry-pick --abort`
+
+**Lockfile conflicts (`package-lock.json`, `package-lock.json` under subpackages):**
+- Do NOT try to resolve markers manually — lockfiles are machine-generated.
+- Take upstream's version and regenerate: `git checkout --theirs package-lock.json && npm install`
+- Then `git add package-lock.json && git cherry-pick --continue`
+
+**Build-config conflicts (`Dockerfile`, `tsconfig.json`):**
+- Treat as source-file conflicts but expect layer-ordering or path resolution changes. Run `docker build` (if Dockerfile) or `npx tsc --noEmit` (if tsconfig) after resolving, before `--continue`.
+
+**Type-chain cherry-picks (commits that add/move fields across files):**
+- After each commit in the chain, run `npx tsc --noEmit` (host) AND `(cd container/agent-runner && npx tsc --noEmit)`. Catches interface drift that `npm run build` at the end would bury under many errors.
+- If interfaces in the fork need an extra field the upstream commit assumed, add it in a follow-up `fix(types): ...` commit rather than amending the cherry-pick. Keeps upstream SHAs cleanly traceable.
+
+**Cascade conflicts (same file conflicts on 2+ consecutive commits):**
+- After the first resolution, run `git diff HEAD~..HEAD -- <file>` to confirm the resolution applied cleanly.
+- If the second cherry-pick conflicts in the same file again: inspect whether the two upstream commits are semantically layered (B edits A's additions). If yes, resolve by re-applying the upstream intent on top of your resolved file. If no, the conflict is spurious — abort both cherry-picks and pick them in a single `git cherry-pick <A>^..<B>` which may auto-rebase them together.
+- Abort criterion: if the same file conflicts 3+ times in a chain, stop — the commits may need a merge instead of cherry-pick, or should be applied as a single squash.
 
 # Step 4C: Rebase (only if user explicitly chose option D)
 Run:
@@ -181,6 +221,11 @@ If build fails:
 - Only fix issues clearly caused by the merge (missing imports, type mismatches from merged code).
 - Do not refactor unrelated code.
 - If unclear, ask the user before making changes.
+- **Type mismatches at fork/upstream boundary**: if fork interfaces are missing fields that upstream code now uses, add them in a follow-up `fix(types): ...` commit (see Step 4B type-chain guidance). Don't amend a cherry-picked SHA.
+
+If the update introduced ESLint (or any lint tool the fork didn't previously have):
+- Pre-existing lint errors/warnings in fork-only files are expected. Document in the summary as debt but do not block.
+- Only fix lint errors clearly introduced by the new cherry-picks (e.g., unused imports in files the merge touched).
 
 # Step 6: Breaking changes check
 After validation succeeds, check if the update introduced any breaking changes.
@@ -233,3 +278,21 @@ Tell the user:
 - Restart the service to apply changes:
   - If using launchd: `launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist && launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist`
   - If running manually: restart `npm run dev`
+
+---
+
+# Case study: blissito fork update 2026-04-17 (334 commits behind)
+
+Real dolor points this protocol update addresses:
+
+1. **4 of 14 targeted commits were duplicates** (already merged locally under different SHAs). Detected by commit-subject match: `ee599b9` (reply context) matched local `8023342`; `db3440f`/`f77f9ce` (SDK + threshold) matched package.json / agent-runner state; `67020f9` (session cleanup) matched existing `src/session-cleanup.ts`. Without Step 2.6, these would have wasted 20+ minutes of cherry-pick attempts.
+
+2. **Architectural conflict averted on OneCLI** (`e936961`). Upstream replaced `src/credential-proxy.ts` wholesale; fork had 760 lines of custom OAuth + fallback + Vault logic. Categorized as "architectural" via Step 2.6's 50% rewrite heuristic, skipped, documented as debt in memory. Keeps the door open to evaluate OneCLI in a dedicated session rather than pretending it's a regular cherry-pick.
+
+3. **Lockfile conflict on ESLint** (`30ebcaa`). Merge markers in `package-lock.json` are unresolvable by hand. Recipe: `git checkout --theirs package-lock.json && npm install`.
+
+4. **Merge commit in cherry-pick list** (`b2fa85b` for channel-formatting). Failed with "is a merge but no -m option was given". The feature commit (`7bba21a`) was the right pick. Step 4B's `--no-merges` filter prevents this.
+
+5. **Type drift across a 4-commit chain** (scheduled-task `script` field: `675acff` → `42d098c` → `0f283cb` → `9f5aff9`). Upstream commits passed `script` through the call chain assuming interfaces supported it; fork's `ContainerInput` (both host and agent-runner) didn't. Final `npm run build` caught it; intermediate `tsc --noEmit` would have caught it at the first commit. Fixed via a separate `fix(types):` commit rather than amending upstream SHAs.
+
+6. **Fork hotspots known upfront changed the whole strategy**. Listing `credential-proxy.ts` (+713), `whatsapp.ts` (+1044), `index.ts` (+986), `agent-runner/index.ts` (+447) before picking a strategy made the user's decision about OneCLI obvious before any git operation ran.
