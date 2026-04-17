@@ -355,6 +355,7 @@ function getAllMcpServers(containerInput: ContainerInput, mcpServerPath: string)
         SES_SECRET: process.env.SES_SECRET || '',
         SES_FROM_EMAIL: process.env.SES_FROM_EMAIL || '',
         SES_FROM_NAME: process.env.SES_FROM_NAME || '',
+        SES_CONFIGURATION_SET: process.env.SES_CONFIGURATION_SET || '',
       },
     },
     easybits: {

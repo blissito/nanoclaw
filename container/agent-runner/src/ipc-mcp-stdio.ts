@@ -898,6 +898,7 @@ function sendSesEmail(to: string, subject: string, bodyHtml: string, bodyText?: 
   const secretKey = process.env.SES_SECRET!;
   const fromEmail = process.env.SES_FROM_EMAIL!;
   const fromName = process.env.SES_FROM_NAME || 'Ghosty';
+  const configSet = process.env.SES_CONFIGURATION_SET || 'ghosty';
 
   const host = `email.${region}.amazonaws.com`;
   const now = new Date();
@@ -916,6 +917,9 @@ function sendSesEmail(to: string, subject: string, bodyHtml: string, bodyText?: 
   }
   params.append('Message.Body.Text.Data', bodyText || subject);
   params.append('Message.Body.Text.Charset', 'UTF-8');
+  if (configSet) {
+    params.append('ConfigurationSetName', configSet);
+  }
 
   const body = params.toString();
   const payloadHash = awsSha256(body);

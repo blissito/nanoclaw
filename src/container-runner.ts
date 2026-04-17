@@ -371,6 +371,7 @@ function buildEnvFile(
     'SES_SECRET',
     'SES_FROM_EMAIL',
     'SES_FROM_NAME',
+    'SES_CONFIGURATION_SET',
   ]);
   if (sesEnv.SES_KEY) {
     envLines.push(`SES_REGION=${sesEnv.SES_REGION || 'us-east-2'}`);
@@ -378,6 +379,9 @@ function buildEnvFile(
     envLines.push(`SES_SECRET=${sesEnv.SES_SECRET || ''}`);
     envLines.push(`SES_FROM_EMAIL=${sesEnv.SES_FROM_EMAIL || ''}`);
     envLines.push(`SES_FROM_NAME=${sesEnv.SES_FROM_NAME || ''}`);
+    if (sesEnv.SES_CONFIGURATION_SET) {
+      envLines.push(`SES_CONFIGURATION_SET=${sesEnv.SES_CONFIGURATION_SET}`);
+    }
   }
 
   const smatchEnv = readEnvFile(['SMATCH_MONGODB_URI', 'SMATCH_CLUB_ID']);
