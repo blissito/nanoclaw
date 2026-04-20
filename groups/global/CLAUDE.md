@@ -118,6 +118,22 @@ Colores dark themes (inline styles): fondos `#0B1120`/`#0F172A`, cards `#1E293B`
 
 `generate-html "descripción" [--type landing|doc|dashboard|email]` → publica con `create_website` + `deploy_website_file`. Con imagen de referencia: `generate-html "..." /path/image.jpg --type landing`.
 
+### Assets que van dentro de páginas publicadas
+
+Imágenes, videos, PDFs linkeados, fuentes — cualquier cosa referenciada desde `<img>`, `<video>`, `<a href>`, `background-image`:
+
+| Caso | Tool |
+|------|------|
+| Ya hay `websiteId` | `upload_website_file` |
+| Texto/binario <1MB | `deploy_website_file` |
+| Storage privado del usuario (no va en HTML público) | `upload_file` |
+
+Nunca uses `upload_file` para un asset embebido sin pasar `access: "public"` — el default es `private` y la URL da 403 en el browser.
+
+URLs públicas válidas empiezan con `https://easybits-public.fly.storage.tigris.dev/`. Si una URL contiene `/mcp/` o `signed=` es privada y romperá el `<img>`. Usa siempre el campo `url` que devuelve la tool; no construyas URLs a mano desde `websiteId` + `fileName`.
+
+Antes de dar por cerrada una página con imágenes: relee el HTML que desplegaste y verifica que cada `<img src>`/`<video src>` apunte a una URL pública (que tú produjiste con una tool pública, o dominio externo tipo pexels/unsplash). Si alguna no cumple, corrígela con otro `deploy_website_file` antes de reportar al usuario.
+
 ## Extracción de productos (fotos de estante)
 
 ImageMagick grid crop: `convert image.jpg -crop 1x3@ row_%d.jpg` → split rows → `convert row_0.jpg -crop 7x1@ product_0_%d.jpg` → review → upload con `upload_file`.
