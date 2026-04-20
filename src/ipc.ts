@@ -808,12 +808,24 @@ export async function processTaskIpc(
         // Preserve isMain from the existing registration so IPC config
         // updates (e.g. adding additionalMounts) don't strip the flag.
         const existingGroup = registeredGroups[data.jid];
+        // Shallow-merge containerConfig so partial updates (e.g. just env, or
+        // just mcpServers) don't wipe previously-set fields.
+        const incomingConfig =
+          (data.containerConfig as Record<string, unknown> | undefined) ??
+          undefined;
+        const existingConfig = existingGroup?.containerConfig as
+          | Record<string, unknown>
+          | undefined;
+        const mergedConfig =
+          incomingConfig || existingConfig
+            ? { ...(existingConfig || {}), ...(incomingConfig || {}) }
+            : undefined;
         deps.registerGroup(data.jid, {
           name: data.name,
           folder: data.folder,
           trigger: data.trigger,
           added_at: new Date().toISOString(),
-          containerConfig: data.containerConfig,
+          containerConfig: mergedConfig,
           requiresTrigger: data.requiresTrigger,
           isMain: existingGroup?.isMain,
         });

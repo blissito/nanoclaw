@@ -514,6 +514,10 @@ server.tool(
 
 To add/change MCP servers on an existing group, call this with the group's current jid, name, folder, and trigger — plus the updated mcp_servers list. The host will upsert (create or update).
 
+To lock a group to a single tenant (e.g., one Smatch club), pass env with the tenant-scoped vars — for example env={"SMATCH_CLUB_ID":"abc123"}. These overrides apply only to containers spawned for this group; the global .env file is never modified. Pass env={} to clear all overrides.
+
+container_config is shallow-merged with the existing one: omitted fields are preserved, provided fields are overwritten. This means you can update just mcp_servers without wiping env (and vice versa).
+
 Use available_groups.json to find the JID for a group. The folder name must be channel-prefixed: "{channel}_{group-name}" (e.g., "whatsapp_family-chat", "telegram_dev-team", "discord_general"). Use lowercase with hyphens for the group name part.`,
   {
     jid: z
@@ -530,6 +534,7 @@ Use available_groups.json to find the JID for a group. The folder name must be c
     trigger: z.string().describe('Trigger word (e.g., "@Andy")'),
     requires_trigger: z.boolean().optional().describe('Whether @trigger prefix is needed. Default true for groups, set false for 1-on-1 chats.'),
     mcp_servers: z.array(z.string()).optional().describe('Which extra MCP servers to enable for this group (e.g., ["easybits", "smatch"]). "nanoclaw" is always included. Omit to enable all servers.'),
+    env: z.record(z.string(), z.string()).optional().describe('Per-group env var overrides applied only to containers of this group (e.g., {"SMATCH_CLUB_ID":"abc123"} locks the group to one club). Never touches the global .env. Pass {} to clear.'),
   },
   async (args) => {
     if (!isMain) {
@@ -555,8 +560,11 @@ Use available_groups.json to find the JID for a group. The folder name must be c
     if (args.requires_trigger !== undefined) {
       data.requiresTrigger = args.requires_trigger;
     }
-    if (args.mcp_servers) {
-      data.containerConfig = { mcpServers: args.mcp_servers };
+    const containerConfig: Record<string, unknown> = {};
+    if (args.mcp_servers !== undefined) containerConfig.mcpServers = args.mcp_servers;
+    if (args.env !== undefined) containerConfig.env = args.env;
+    if (Object.keys(containerConfig).length > 0) {
+      data.containerConfig = containerConfig;
     }
 
     writeIpcFile(TASKS_DIR, data);
