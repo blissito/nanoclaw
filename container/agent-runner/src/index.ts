@@ -444,7 +444,6 @@ function buildAllowedTools(containerInput: ContainerInput, mcpServerPath: string
   }
 
   return [
-    'Agent',
     'Bash',
     'Read', 'Write', 'Edit', 'Glob', 'Grep',
     'WebSearch', 'WebFetch',

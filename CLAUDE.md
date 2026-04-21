@@ -209,7 +209,16 @@ After deploying the clean snapshot, the client fills `.env` from `.env.template`
 
 ## Parallel Sub-agents (Agent tool)
 
-Tested and working: adding `'Agent'` to `buildAllowedTools()` in `container/agent-runner/src/index.ts` enables Claude Code's Agent tool inside containers. Sub-agents spawn as `claude` CLI processes (already installed globally in the image). Each sub-agent uses ~100-150MB RAM, so the 2GB droplet is tight for 2-3 parallel agents. Currently **disabled** — re-enable when there's a compelling use case (e.g., parallel codebase exploration). For web research tasks, sequential `WebSearch` is fast enough. When re-enabling, also add a progress message instruction to `groups/global/CLAUDE.md` so users get feedback while sub-agents work.
+**Status: disabled.** Not supported on current droplet sizes until we test on bigger instances. The `Agent` tool is removed from the default `buildAllowedTools()` list in `container/agent-runner/src/index.ts`.
+
+Why disabled: observed in production (smatch-rulo-waba, 2026-04-20) that Rulo delegated a Smatch tournament query to `Agent` → sub-agent does NOT inherit parent MCP servers → sub-agent fell back to writing a raw mongoose script in `/tmp` and ran it via Bash. Took 3+ minutes, no progress feedback to the user, and bypassed the MCP's safety layer. General pattern: sub-agents spawned from Agent tool lose MCP context, so any task that needs MCP tools should stay on the main agent.
+
+Technical notes for re-enablement (future, bigger droplets):
+- Sub-agents spawn as `claude` CLI processes (installed globally in the image). Each uses ~100-150MB RAM, so 2GB is tight for 2-3 parallel agents.
+- Current value: none for web research (sequential `WebSearch` is fast enough) or for DB queries (can't access MCP anyway).
+- When re-enabling, also (a) propagate MCP servers to sub-agents OR document the loss clearly, and (b) add a progress message instruction to `groups/global/CLAUDE.md` so users get feedback while sub-agents work.
+
+Per-group override still works: groups can set `allowedTools` in `container_config` to include `Agent` and opt back in selectively.
 
 ## Rate Limit Fallback
 
