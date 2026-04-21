@@ -179,6 +179,8 @@ Common patterns:
 - **Multi-tenant isolation**: `env={"SMATCH_CLUB_ID":"<club-id>"}` on a demo group locks `smatch-mcp` to one club (no cross-tenant leakage). Without this override, `SMATCH_CLUB_ID` is empty and the MCP enters super-admin / multi-club mode.
 - **Per-group prod vs staging DB**: `env={"SMATCH_MONGODB_URI":"<prod-uri>"}` on the admin group keeps it on prod data while public-facing demo groups stay on staging.
 
+**⚠️ SMATCH_MONGODB_URI must include the DB name.** `smatch-mcp` calls `mongoose.connect(uri)`. If the URI ends in `/` without a database name (e.g. `mongodb+srv://user:pass@smatch-prod-cluster0.inq1top.mongodb.net/`), mongoose silently connects to the default `test` DB — which in the smatch-prod cluster exists with the same collection names (`clubs`, `tournaments`, `courts`, ...) but empty. Symptom: agent reports "DB vacía, cero clubs" even though credentials and cluster are correct, and the `SMATCH_CLUB_ID` object is not found. Always terminate the URI with the real DB name: `.../smatch-prod`. Verify inside a running container with `docker exec <name> env | grep SMATCH_MONGODB_URI`. Incident 2026-04-20 (`whatsapp_m2m-x-smatch` on smatch-rulo-waba, client Magnolia).
+
 ### Currently registered MCP servers
 
 | Name | Package | Env Vars | Purpose |
