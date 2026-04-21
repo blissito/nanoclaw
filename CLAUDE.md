@@ -73,7 +73,7 @@ This must be part of every deploy. See the deploy checklist in memory.
 
 The container buildkit caches the build context aggressively. `--no-cache` alone does NOT invalidate COPY steps — the builder's volume retains stale files. To force a truly clean rebuild, prune the builder then re-run `./container/build.sh`.
 
-**Agent-runner code changes do NOT require container rebuild.** The entrypoint auto-recompiles TypeScript when the mounted source (`/app/src`) is newer than the compiled output (`/app/dist`). Just `git pull` on prod and restart the service. Rebuild is only needed for Dockerfile changes (apt packages, global npm installs, entrypoint script).
+**Agent-runner code changes REQUIRE a container rebuild.** Even though `container/agent-runner/src` is mounted into `/app/src` and the entrypoint has a "recompile if newer" check (`/app/src/index.ts -nt /app/dist/index.js`), the test fires unreliably because mounted-file mtimes often lag behind the baked `/app/dist`. Confirmed twice in production (incidents 2026-04-14 and 2026-04-20): edits landed on host, host TS rebuilt, service restarted, but containers kept exposing the old tool surface because they ran the baked `/app/dist/*.js`. Always `./container/build.sh` after touching anything under `container/agent-runner/src/`. Rebuild is also needed for Dockerfile changes (apt packages, global npm installs, entrypoint script).
 
 ## Auth Mode Switching (Production)
 
@@ -103,6 +103,18 @@ ssh root@$(doctl compute droplet list --format Name,PublicIPv4 --no-header | gre
 - EasyBits MCP integration for file/image storage
 - Production running on DigitalOcean droplet (systemd, `/home/nanoclaw/app`)
 - Container agents detach on service restart (not killed) — must `docker kill` stale containers manually
+
+## Trigger semantics in shared-number deployments
+
+When the bot has a dedicated WhatsApp number (`ASSISTANT_HAS_OWN_NUMBER=true`), Baileys' `fromMe=true` reliably means "the bot wrote this" — `is_bot_message` is set to `fromMe` and bot messages are filtered out before the trigger check.
+
+When the bot shares a WhatsApp account with humans (default, `ASSISTANT_HAS_OWN_NUMBER` unset/false — e.g. NanoClaw running on a personal phone or as a linked device on someone's number), `fromMe=true` can be ANY human linked-device sibling, not just the bot. Bot messages are detected by their `${ASSISTANT_NAME}:` prefix instead.
+
+Crucially, the trigger check (`src/index.ts`) only honors the `is_from_me` bypass when `ASSISTANT_HAS_OWN_NUMBER=true`:
+```ts
+((ASSISTANT_HAS_OWN_NUMBER && m.is_from_me) || isTriggerAllowed(...))
+```
+Without that gate, a sibling on the same WA account would silently spawn the agent on every message they sent — observed in production on smatch-rulo-waba where a group member shared the bot's LID and was triggering containers without `@trigger`. In shared mode, every sender (including bot's account siblings) must use `@trigger` or be in the sender allowlist.
 
 ## Adding MCP Servers
 
@@ -154,11 +166,18 @@ ssh root@<ip> 'cd /home/nanoclaw/app && git pull && ./container/build.sh'
 
 ### Per-group env overrides
 
-Add `"env": {"KEY": "value"}` to `container_config` to override `.env` values for a specific group:
+Add `"env": {"KEY": "value"}` to `container_config` to override `.env` values for a specific group. Overrides apply only to containers spawned for that group; the global `.env` file is never touched. Two ways to set:
+
+**From chat (preferred when bot is healthy):** the main group's admin agent calls the `register_group` MCP tool with the group's existing `jid`/`name`/`folder`/`trigger` plus `env={KEY: "value"}`. The host shallow-merges the incoming `containerConfig` over whatever was previously stored — pass `mcp_servers` to update only servers, pass `env` to update only env, pass both to update both. Omitted fields are preserved (e.g. you don't lose `additionalMounts` when adding `env`).
+
+**Direct SQL (fastest from SSH):**
 ```sql
 UPDATE registered_groups SET container_config = '{"mcpServers":["smatch-public"],"env":{"SMATCH_CLUB_ID":"abc123"}}' WHERE folder = 'my_group';
 ```
-Overrides replace the global `.env` value for that container only. Other groups are unaffected.
+
+Common patterns:
+- **Multi-tenant isolation**: `env={"SMATCH_CLUB_ID":"<club-id>"}` on a demo group locks `smatch-mcp` to one club (no cross-tenant leakage). Without this override, `SMATCH_CLUB_ID` is empty and the MCP enters super-admin / multi-club mode.
+- **Per-group prod vs staging DB**: `env={"SMATCH_MONGODB_URI":"<prod-uri>"}` on the admin group keeps it on prod data while public-facing demo groups stay on staging.
 
 ### Currently registered MCP servers
 
@@ -167,8 +186,8 @@ Overrides replace the global `.env` value for that container only. Other groups 
 | `nanoclaw` | built-in | (auto) | Core tools: group mgmt, IPC, email |
 | `easybits` | `@easybits.cloud/mcp` | `EASYBITS_API_KEY` | File/image/document storage |
 | `panel` | `panel-mcp` | `PANEL_API_KEY`, `PANEL_URL` | Server panel management |
-| `smatch` | `smatch-mcp` | `SMATCH_MONGODB_URI`, `SMATCH_CLUB_ID` | Club admin (full CRUD) |
-| `smatch-public` | `smatch-mcp-public` | `SMATCH_MONGODB_URI`, `SMATCH_CLUB_ID` | Public read-only + reservation requests |
+| `smatch` | `smatch-mcp` | `SMATCH_MONGODB_URI`, `SMATCH_CLUB_ID` (optional → admin/multi-club mode) | Club admin (full CRUD). Empty `SMATCH_CLUB_ID` enables `list_clubs` and per-call `clubId` parameter. |
+| `smatch-public` | `smatch-mcp-public` | `SMATCH_MONGODB_URI`, `SMATCH_CLUB_ID` | Public read-only + reservation requests. Same admin/club-mode behavior as `smatch`. |
 | `brightdata` | `@brightdata/mcp` | `BRIGHTDATA_API_TOKEN` | Web scraping/search |
 
 ## Client Snapshot (Deploy to New Droplet)
