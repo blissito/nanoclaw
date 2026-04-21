@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  ASSISTANT_HAS_OWN_NUMBER,
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
   DATA_DIR,
@@ -331,7 +332,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           isMainGroup ||
           !reqTrigger ||
           (hasTrigger &&
-            (msg.is_from_me ||
+            ((ASSISTANT_HAS_OWN_NUMBER && msg.is_from_me) ||
               isTriggerAllowed(chatJid, msg.sender, loadSenderAllowlist())))
         );
       },
@@ -349,7 +350,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       (m) =>
         (triggerPattern.test(m.content.trim()) ||
           (stickerTrigger && m.content.includes('[Sticker:'))) &&
-        (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
+        ((ASSISTANT_HAS_OWN_NUMBER && m.is_from_me) ||
+          isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
     );
     if (!hasTrigger) {
       return true;
@@ -870,7 +872,7 @@ async function startMessageLoop(): Promise<void> {
               (m) =>
                 (triggerPattern.test(m.content.trim()) ||
                   (stickerTrigger && m.content.includes('[Sticker:'))) &&
-                (m.is_from_me ||
+                ((ASSISTANT_HAS_OWN_NUMBER && m.is_from_me) ||
                   isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
             );
             if (!hasTrigger) continue;
