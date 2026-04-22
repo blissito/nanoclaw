@@ -372,21 +372,6 @@ function getAllMcpServers(containerInput: ContainerInput, mcpServerPath: string)
         EASYBITS_API_KEY: process.env.EASYBITS_API_KEY || '',
       },
     },
-    roboflow: {
-      command: 'python3',
-      args: ['-m', 'roboflow_mcp'],
-      env: {
-        ROBOFLOW_API_KEY: process.env.ROBOFLOW_API_KEY || '',
-      },
-    },
-    panel: {
-      command: 'npx',
-      args: ['-y', 'panel-mcp'],
-      env: {
-        PANEL_API_KEY: process.env.PANEL_API_KEY || '',
-        PANEL_URL: process.env.PANEL_URL || '',
-      },
-    },
     smatch: {
       command: 'npx',
       args: ['-y', 'smatch-mcp'],

@@ -61,6 +61,19 @@ systemctl --user restart nanoclaw
 
 **WhatsApp linked device deleted / need to re-link:** Run `./scripts/wa-reconnect.sh`. It stops the service, clears auth, gets a pairing code, and restarts after linking. Enter the code in WhatsApp > Linked Devices > Link with phone number. Default phone: 527717759013. Pass a different number as argument if needed.
 
+**Re-pair with a DIFFERENT phone number (nuke old registered_groups):** The SQLite `registered_groups` table is **account-specific** — group membership belongs to a WhatsApp account, not a JID. When you re-pair a droplet to a new number, old rows in `registered_groups` may reference groups the new account isn't even a member of. Symptoms: messages reach Baileys socket but `src/channels/whatsapp.ts` drops them before persistence because `groups[chatJid]` misses (handler only stores messages for registered groups). The chat name in `chats` may still show the old friendly name (cached from the previous pair), making it look like the group is still accessible — it isn't.
+
+Checklist after re-pair with new number:
+1. `sqlite3 /home/nanoclaw/app/store/messages.db "SELECT * FROM registered_groups;"` — audit.
+2. `DELETE FROM registered_groups WHERE ...;` — purge the old entries.
+3. `systemctl restart nanoclaw` — registered_groups is cached in memory at startup (see "SQL UPDATE cache" below), restart is mandatory.
+4. User adds new bot to the groups they want controlled; each new group appears in `chats` with `name = jid` (unresolved) because full group-metadata sync trails behind first messages.
+5. Tip to find the active admin group among several new ones: `ls store/auth/sender-key-*@g.us-*` — groups with sender-key files are the ones where bot already received distribution messages (real activity).
+6. `INSERT INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main) VALUES (...);` — register the new admin group with `is_main=1`, `folder='main'`.
+7. Restart nanoclaw again so the cache picks up the new registration.
+
+Without step 2, you can spend hours chasing phantom WebSocket/encryption bugs. Incident 2026-04-22 on siiqtec-0: re-paired with new dedicated number, `ghosty_siiqtec` (old main) stayed in `registered_groups`, every `@sofi` in new groups was silently dropped by the message handler filter. Only the name cache in `chats` kept showing the old "Sofi" group as resolved, masking the real issue.
+
 ## Skill Sync & Permissions
 
 Skills are synced from `container/skills/` into each group's `.claude/skills/` at container startup (`container-runner.ts`). Since `git pull` on prod runs as root, new skill directories are owned by root. The service runs as `nanoclaw` and cannot overwrite root-owned files on subsequent syncs, causing EACCES errors that trigger retry loops.
@@ -187,7 +200,7 @@ Common patterns:
 |------|---------|----------|---------|
 | `nanoclaw` | built-in | (auto) | Core tools: group mgmt, IPC, email |
 | `easybits` | `@easybits.cloud/mcp` | `EASYBITS_API_KEY` | File/image/document storage |
-| `panel` | `panel-mcp` | `PANEL_API_KEY`, `PANEL_URL` | Server panel management |
+| `kommo` | bundled (`container/mcp-servers/kommo`) | `KOMMO_BASE_URL`, `KOMMO_ACCESS_TOKEN` | Kommo CRM (leads, contacts, pipelines read/write) |
 | `smatch` | `smatch-mcp` | `SMATCH_MONGODB_URI`, `SMATCH_CLUB_ID` (optional → admin/multi-club mode) | Club admin (full CRUD). Empty `SMATCH_CLUB_ID` enables `list_clubs` and per-call `clubId` parameter. |
 | `smatch-public` | `smatch-mcp-public` | `SMATCH_MONGODB_URI`, `SMATCH_CLUB_ID` | Public read-only + reservation requests. Same admin/club-mode behavior as `smatch`. |
 | `brightdata` | `@brightdata/mcp` | `BRIGHTDATA_API_TOKEN` | Web scraping/search |

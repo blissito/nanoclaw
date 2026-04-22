@@ -318,13 +318,6 @@ function buildEnvFile(
   const ebKey = readEnvFile(['EASYBITS_API_KEY']).EASYBITS_API_KEY;
   if (ebKey) envLines.push(`EASYBITS_API_KEY=${ebKey}`);
 
-  const panelKey = readEnvFile(['PANEL_API_KEY']).PANEL_API_KEY;
-  const panelUrl = readEnvFile(['PANEL_URL']).PANEL_URL;
-  if (panelKey) {
-    envLines.push(`PANEL_API_KEY=${panelKey}`);
-    envLines.push(`PANEL_URL=${panelUrl || ''}`);
-  }
-
   const openaiKey = readEnvFile(['OPENAI_API_KEY']).OPENAI_API_KEY;
   if (openaiKey) envLines.push(`OPENAI_API_KEY=${openaiKey}`);
 
@@ -335,9 +328,6 @@ function buildEnvFile(
     'GOOGLE_GENERATIVE_AI_API_KEY',
   ]).GOOGLE_GENERATIVE_AI_API_KEY;
   if (geminiKey) envLines.push(`GOOGLE_GENERATIVE_AI_API_KEY=${geminiKey}`);
-
-  const roboflowKey = readEnvFile(['ROBOFLOW_API_KEY']).ROBOFLOW_API_KEY;
-  if (roboflowKey) envLines.push(`ROBOFLOW_API_KEY=${roboflowKey}`);
 
   const gistToken = readEnvFile(['GITHUB_GIST_TOKEN']).GITHUB_GIST_TOKEN;
   if (gistToken) envLines.push(`GITHUB_GIST_TOKEN=${gistToken}`);
