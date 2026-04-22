@@ -378,7 +378,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // directly via the queue, bypassing startMessageLoop where markReceived normally fires.
   // markReceived is idempotent (rejects duplicates), so this is safe for normal-path messages too.
   for (const msg of actionableMessages) {
-    statusTracker.markReceived(msg.id, chatJid, false);
+    statusTracker.markReceived(msg.id, chatJid, false, msg.sender);
   }
 
   // Mark all user messages as thinking (container is spawning)
@@ -881,7 +881,7 @@ async function startMessageLoop(): Promise<void> {
           // Mark each user message as received (status emoji)
           for (const msg of groupMessages) {
             if (!msg.is_from_me && !msg.is_bot_message) {
-              statusTracker.markReceived(msg.id, chatJid, false);
+              statusTracker.markReceived(msg.id, chatJid, false, msg.sender);
             }
           }
 
@@ -1106,7 +1106,12 @@ async function main(): Promise<void> {
     sendReaction: async (chatJid, messageKey, emoji) => {
       const channel = findChannel(channels, chatJid);
       if (!channel?.sendReaction) return;
-      await channel.sendReaction(chatJid, messageKey.id, emoji);
+      await channel.sendReaction(
+        chatJid,
+        messageKey.id,
+        emoji,
+        messageKey.participant,
+      );
     },
     sendMessage: async (chatJid, text) => {
       const channel = findChannel(channels, chatJid);
