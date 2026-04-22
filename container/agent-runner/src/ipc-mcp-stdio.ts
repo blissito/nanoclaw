@@ -581,6 +581,96 @@ Use available_groups.json to find the JID for a group. The folder name must be c
 );
 
 server.tool(
+  'refresh_groups',
+  `Force an immediate resync of group metadata (names/subjects) from the underlying channel. Main group only.
+
+Use when available_groups.json shows groups whose name equals the JID (e.g. "120363...@g.us") — that means the bot was added to the group but the scheduled daily sync hasn't run yet. This tool triggers the host to call the channel's group metadata fetch right away and rewrite available_groups.json.
+
+Returns the count of groups whose name got resolved by this refresh. Safe to call multiple times; no side effects beyond the sync.`,
+  {},
+  async () => {
+    if (!isMain) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'Only the main group can refresh group metadata.',
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const snapshotPath = '/workspace/ipc/available_groups.json';
+
+    type GroupEntry = { jid: string; name: string; isRegistered: boolean };
+    type Snapshot = { groups: GroupEntry[]; lastSync: string };
+
+    const readSnapshot = (): Snapshot | null => {
+      try {
+        return JSON.parse(fs.readFileSync(snapshotPath, 'utf-8')) as Snapshot;
+      } catch {
+        return null;
+      }
+    };
+
+    const before = readSnapshot();
+    const beforeLastSync = before?.lastSync ?? '';
+    const beforeUnresolved = new Set(
+      (before?.groups ?? [])
+        .filter((g) => g.name === g.jid)
+        .map((g) => g.jid),
+    );
+
+    writeIpcFile(TASKS_DIR, {
+      type: 'refresh_groups',
+      timestamp: new Date().toISOString(),
+    });
+
+    const deadline = Date.now() + 8000;
+    let after: Snapshot | null = null;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 500));
+      const snap = readSnapshot();
+      if (snap && snap.lastSync !== beforeLastSync) {
+        after = snap;
+        break;
+      }
+    }
+
+    if (!after) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'Refresh requested. Snapshot did not update within 8s — re-read available_groups.json in a moment.',
+          },
+        ],
+      };
+    }
+
+    const resolved = after.groups.filter(
+      (g) => beforeUnresolved.has(g.jid) && g.name !== g.jid,
+    );
+    const stillUnresolved = after.groups.filter((g) => g.name === g.jid).length;
+
+    const lines = [
+      `Refreshed ${after.groups.length} groups. ${resolved.length} newly resolved, ${stillUnresolved} still unresolved.`,
+    ];
+    if (resolved.length > 0) {
+      lines.push('Newly resolved:');
+      for (const g of resolved) {
+        lines.push(`- ${g.name} (${g.jid})`);
+      }
+    }
+
+    return {
+      content: [{ type: 'text' as const, text: lines.join('\n') }],
+    };
+  },
+);
+
+server.tool(
   'create_group',
   'Create a new empty WhatsApp group with the bot as admin. The group is auto-registered so the bot will respond to messages there immediately. Returns the invite link to share so people can join.',
   {
