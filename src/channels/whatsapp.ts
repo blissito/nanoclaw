@@ -103,7 +103,11 @@ export class WhatsAppChannel implements Channel {
       browser: Browsers.macOS('Chrome'),
     });
 
-    // Use pairing code when phone number is provided (more reliable than QR for remote setups)
+    // Use pairing code when phone number is provided (more reliable than QR for remote setups).
+    // Delay must be > noise handshake completion. Baileys 7 sometimes closes
+    // the socket with a 405 right at ~3000ms (the registration handshake's
+    // own deadline), racing our requestPairingCode call and surfacing as
+    // "Connection Closed (428)". 5000ms gives reliable margin in production.
     const phoneNumber = process.env.WHATSAPP_PHONE_NUMBER;
     if (phoneNumber && !state.creds.registered) {
       setTimeout(async () => {
@@ -115,9 +119,14 @@ export class WhatsAppChannel implements Channel {
           const pairingFile = path.join(STORE_DIR, 'pairing-code.txt');
           fs.writeFileSync(pairingFile, code);
         } catch (err) {
+          // If we couldn't get a code, don't let the process limp into the
+          // reconnect/login flow — Baileys will try to log in with partial
+          // devicePairingData and WhatsApp returns 401, masking the real
+          // failure. Exit fast so systemd or wa-reconnect.sh can react.
           logger.error({ err }, 'Failed to request pairing code');
+          process.exit(1);
         }
-      }, 3000);
+      }, 5000);
     }
 
     this.sock.ev.on('connection.update', (update) => {
