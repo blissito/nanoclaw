@@ -62,7 +62,7 @@ describe('StatusTracker', () => {
       const emojis = deps.sendReaction.mock.calls.map((c) => c[2]);
       expect(emojis).toEqual([
         '\u{1F440}',
-        '\u{1F4AD}',
+        '\u{1F9E0}',
         '\u{1F504}',
         '\u{2705}',
       ]);
@@ -189,7 +189,7 @@ describe('StatusTracker', () => {
       await tracker.flush();
       expect(order).toEqual([
         '\u{1F440}',
-        '\u{1F4AD}',
+        '\u{1F9E0}',
         '\u{1F504}',
         '\u{2705}',
       ]);
@@ -310,10 +310,10 @@ describe('StatusTracker', () => {
       tracker.heartbeatCheck();
       await tracker.flush();
 
-      // Only the 👀 and 💭 reactions, no ❌
+      // Only the 👀 and 🧠 reactions, no ❌
       expect(deps.sendReaction).toHaveBeenCalledTimes(2);
       const emojis = deps.sendReaction.mock.calls.map((c) => c[2]);
-      expect(emojis).toEqual(['👀', '💭']);
+      expect(emojis).toEqual(['👀', '🧠']);
     });
 
     it('skips RECEIVED messages within grace period even if container is dead', async () => {
@@ -499,7 +499,7 @@ describe('StatusTracker', () => {
       await tracker.flush();
 
       const thinkingCalls = deps.sendReaction.mock.calls.filter(
-        (c) => c[2] === '💭',
+        (c) => c[2] === '🧠',
       );
       expect(thinkingCalls).toHaveLength(3);
     });

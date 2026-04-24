@@ -99,7 +99,7 @@ export class StatusTracker {
   }
 
   markThinking(messageId: string): boolean {
-    return this.transition(messageId, StatusState.THINKING, '\u{1F4AD}');
+    return this.transition(messageId, StatusState.THINKING, '\u{1F9E0}');
   }
 
   markWorking(messageId: string): boolean {
