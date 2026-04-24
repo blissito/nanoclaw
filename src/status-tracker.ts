@@ -79,7 +79,6 @@ export class StatusTracker {
     fromMe: boolean,
     participant?: string,
   ): boolean {
-    if (!this.deps.isMainGroup(chatJid)) return false;
     if (this.tracked.has(messageId)) return false;
 
     const msg: TrackedMessage = {
