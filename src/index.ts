@@ -347,7 +347,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const triggerPattern = needsTrigger ? getTriggerPattern(group.trigger) : null;
   const stickerTrigger = group.containerConfig?.stickerTrigger !== false;
   const allowlistCfg = loadSenderAllowlist();
-  const isInvokingMessage = (m: typeof missedMessages[number]): boolean => {
+  const isInvokingMessage = (m: (typeof missedMessages)[number]): boolean => {
     if (!needsTrigger) return true;
     return (
       (triggerPattern!.test(m.content.trim()) ||
