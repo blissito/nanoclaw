@@ -6,6 +6,7 @@ import makeWASocket, {
   Browsers,
   DisconnectReason,
   downloadMediaMessage,
+  GroupParticipant,
   normalizeMessageContent,
   WASocket,
   fetchLatestWaWebVersion,
@@ -45,6 +46,9 @@ import {
 import { registerChannel, ChannelOpts } from './registry.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+// Latin letters incl. accented (À-ɏ covers Western European + extended Latin)
+const MENTION_REGEX = /@[\wÀ-ɏ]+/g;
 
 export interface WhatsAppChannelOpts {
   onMessage: OnInboundMessage;
@@ -620,40 +624,23 @@ export class WhatsAppChannel implements Channel {
       );
       return;
     }
-    // Resolve @mentions to JIDs for real WhatsApp tagging
-    const mentionMatches = prefixed.match(/@[\w\u00C0-\u024F]+/g);
-    let mentions: string[] | undefined;
-    if (mentionMatches && jid.endsWith('@g.us')) {
-      const names = mentionMatches.map((m) => m.slice(1).toLowerCase());
-      const dbMembers = findMembersByName(jid, names);
-      logger.debug(
-        {
-          mentionMatches,
-          names,
-          jid,
-          dbMembersCount: dbMembers.length,
-          dbMembers,
-        },
-        'Mention resolution',
-      );
-      if (dbMembers.length > 0) {
-        // Translate LID JIDs to phone JIDs for real WhatsApp mentions
-        const resolved = await Promise.all(
-          dbMembers.map((m) => this.translateJid(m.jid)),
-        );
-        mentions = resolved.filter((j) => j.endsWith('@s.whatsapp.net'));
-        // If no phone JIDs resolved, try LID JIDs directly as fallback
-        if (mentions.length === 0) {
-          mentions = dbMembers.map((m) => m.jid);
-        }
-        logger.debug({ resolved, mentions }, 'Mention JIDs after translation');
-      }
-    }
+    // Resolve @mentions: rewrite @Name -> @<number> in text and build the
+    // mentionedJid array. WhatsApp only fires the push notification + name
+    // highlight when the text contains @<number> matching a JID in the
+    // mentions array; @Name with a JID array attached renders as plain text.
+    const { text: finalText, mentions } = await this.resolveMentions(
+      jid,
+      prefixed,
+    );
+
 
     try {
-      await this.sock.sendMessage(jid, { text: prefixed, mentions });
+      await this.sock.sendMessage(jid, {
+        text: finalText,
+        mentions: mentions.length > 0 ? mentions : undefined,
+      });
       logger.info(
-        { jid, length: prefixed.length, mentions: mentions?.length ?? 0 },
+        { jid, length: finalText.length, mentions: mentions.length },
         'Message sent',
       );
       // Warn if group is admin-only and bot is not admin (message will be silently dropped by WA)
@@ -1023,6 +1010,94 @@ export class WhatsAppChannel implements Channel {
     }
 
     return jid;
+  }
+
+  /**
+   * Resolve @Name tokens in `text` using the group's participant list as the
+   * source of truth. WhatsApp mentions only fire push notifications when the
+   * message text contains @<number> matching a JID in the mentions array, so
+   * we rewrite @Name -> @<number> before send.
+   */
+  private async resolveMentions(
+    jid: string,
+    text: string,
+  ): Promise<{ text: string; mentions: string[] }> {
+    if (!jid.endsWith('@g.us')) return { text, mentions: [] };
+    const matches = text.match(MENTION_REGEX);
+    if (!matches || matches.length === 0) return { text, mentions: [] };
+
+    let participants: GroupParticipant[] = [];
+    try {
+      const meta = await this.sock.groupMetadata(jid);
+      participants = meta.participants || [];
+    } catch (err) {
+      logger.debug(
+        { err, jid },
+        'resolveMentions: groupMetadata fetch failed',
+      );
+    }
+
+    const uniqueNames = Array.from(
+      new Set(matches.map((m) => m.slice(1).toLowerCase())),
+    );
+    const dbMembers = findMembersByName(jid, uniqueNames);
+    const dbByName = new Map<string, { jid: string; name: string }>();
+    for (const m of dbMembers) {
+      const lower = m.name.toLowerCase();
+      for (const n of uniqueNames) {
+        if (lower.includes(n) && !dbByName.has(n)) {
+          dbByName.set(n, m);
+        }
+      }
+    }
+
+    const resolveByLid = (lidJid: string): GroupParticipant | undefined => {
+      const target = lidJid.split('@')[0].split(':')[0];
+      return participants.find((p) => {
+        const pId = (p.id || '').split('@')[0].split(':')[0];
+        const pLid = (p.lid || '').split('@')[0].split(':')[0];
+        return pId === target || pLid === target;
+      });
+    };
+
+    let outText = text;
+    const mentionJids = new Set<string>();
+
+    for (const original of new Set(matches)) {
+      const name = original.slice(1).toLowerCase();
+      const db = dbByName.get(name);
+      if (!db) continue;
+
+      let mentionNumber: string | undefined;
+      let mentionJid: string | undefined;
+
+      const participant = resolveByLid(db.jid);
+      if (participant?.phoneNumber) {
+        mentionJid = participant.phoneNumber;
+        mentionNumber = participant.phoneNumber.split('@')[0];
+      } else if (db.jid.endsWith('@s.whatsapp.net')) {
+        mentionJid = db.jid;
+        mentionNumber = db.jid.split('@')[0];
+      } else if (participant?.id) {
+        mentionJid = participant.id;
+        mentionNumber = participant.id.split('@')[0].split(':')[0];
+      } else {
+        mentionJid = db.jid;
+        mentionNumber = db.jid.split('@')[0].split(':')[0];
+      }
+
+      outText = outText.split(original).join(`@${mentionNumber}`);
+      mentionJids.add(mentionJid);
+    }
+
+    const mentions = Array.from(mentionJids);
+    if (mentions.length > 0) {
+      logger.debug(
+        { jid, originalMatches: matches, mentions, rewritten: outText },
+        'resolveMentions: success',
+      );
+    }
+    return { text: outText, mentions };
   }
 
   private async flushOutgoingQueue(): Promise<void> {
