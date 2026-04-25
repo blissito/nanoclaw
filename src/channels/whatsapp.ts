@@ -762,10 +762,31 @@ export class WhatsAppChannel implements Channel {
         '.doc': 'application/msword',
         '.docx':
           'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        '.xls': 'application/vnd.ms-excel',
         '.xlsx':
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        '.ppt': 'application/vnd.ms-powerpoint',
+        '.pptx':
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation',
         '.csv': 'text/csv',
         '.txt': 'text/plain',
+        '.json': 'application/json',
+        '.md': 'text/markdown',
+        '.html': 'text/html',
+        '.xml': 'application/xml',
+        '.zip': 'application/zip',
+        '.mp3': 'audio/mpeg',
+        '.ogg': 'audio/ogg',
+        '.m4a': 'audio/mp4',
+        '.wav': 'audio/wav',
+        '.mp4': 'video/mp4',
+        '.mov': 'video/quicktime',
+        '.webm': 'video/webm',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.webp': 'image/webp',
+        '.gif': 'image/gif',
       };
       const mimetype = mimeMap[ext] || 'application/octet-stream';
       await this.sock.sendMessage(jid, {
