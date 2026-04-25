@@ -342,17 +342,22 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // --- End session command interception ---
 
   // Check if trigger is required and present (applies to any group with requiresTrigger)
-  if (group.requiresTrigger !== false && group.trigger !== '.*') {
-    const triggerPattern = getTriggerPattern(group.trigger);
-    const allowlistCfg = loadSenderAllowlist();
-    const stickerTrigger = group.containerConfig?.stickerTrigger !== false;
-    const hasTrigger = missedMessages.some(
-      (m) =>
-        (triggerPattern.test(m.content.trim()) ||
-          (stickerTrigger && m.content.includes('[Sticker:'))) &&
-        ((ASSISTANT_HAS_OWN_NUMBER && m.is_from_me) ||
-          isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
+  const needsTrigger =
+    group.requiresTrigger !== false && group.trigger !== '.*';
+  const triggerPattern = needsTrigger ? getTriggerPattern(group.trigger) : null;
+  const stickerTrigger = group.containerConfig?.stickerTrigger !== false;
+  const allowlistCfg = loadSenderAllowlist();
+  const isInvokingMessage = (m: typeof missedMessages[number]): boolean => {
+    if (!needsTrigger) return true;
+    return (
+      (triggerPattern!.test(m.content.trim()) ||
+        (stickerTrigger && m.content.includes('[Sticker:'))) &&
+      ((ASSISTANT_HAS_OWN_NUMBER && m.is_from_me) ||
+        isTriggerAllowed(chatJid, m.sender, allowlistCfg))
     );
+  };
+  if (needsTrigger) {
+    const hasTrigger = missedMessages.some(isInvokingMessage);
     if (!hasTrigger) {
       return true;
     }
@@ -377,7 +382,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Ensure all user messages are tracked — recovery messages enter processGroupMessages
   // directly via the queue, bypassing startMessageLoop where markReceived normally fires.
   // markReceived is idempotent (rejects duplicates), so this is safe for normal-path messages too.
+  // Only react to invoking messages — context messages in the same batch stay silent.
   for (const msg of actionableMessages) {
+    if (!isInvokingMessage(msg)) continue;
     statusTracker.markReceived(msg.id, chatJid, false, msg.sender);
   }
 
@@ -859,30 +866,38 @@ async function startMessageLoop(): Promise<void> {
 
           const needsTrigger =
             group.requiresTrigger !== false && group.trigger !== '.*';
+          const triggerPattern = needsTrigger
+            ? getTriggerPattern(group.trigger)
+            : null;
+          const stickerTrigger =
+            group.containerConfig?.stickerTrigger !== false;
+          const allowlistCfg = loadSenderAllowlist();
+          const isInvokingMessage = (
+            m: (typeof groupMessages)[number],
+          ): boolean => {
+            if (!needsTrigger) return true;
+            return (
+              (triggerPattern!.test(m.content.trim()) ||
+                (stickerTrigger && m.content.includes('[Sticker:'))) &&
+              ((ASSISTANT_HAS_OWN_NUMBER && m.is_from_me) ||
+                isTriggerAllowed(chatJid, m.sender, allowlistCfg))
+            );
+          };
 
           // Only act on trigger messages when trigger is required.
           // Non-trigger messages accumulate in DB and get pulled as
           // context when a trigger eventually arrives.
           if (needsTrigger) {
-            const triggerPattern = getTriggerPattern(group.trigger);
-            const allowlistCfg = loadSenderAllowlist();
-            const stickerTrigger =
-              group.containerConfig?.stickerTrigger !== false;
-            const hasTrigger = groupMessages.some(
-              (m) =>
-                (triggerPattern.test(m.content.trim()) ||
-                  (stickerTrigger && m.content.includes('[Sticker:'))) &&
-                ((ASSISTANT_HAS_OWN_NUMBER && m.is_from_me) ||
-                  isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
-            );
+            const hasTrigger = groupMessages.some(isInvokingMessage);
             if (!hasTrigger) continue;
           }
 
-          // Mark each user message as received (status emoji)
+          // React only to invoking messages — context messages in the same
+          // batch stay silent so the bot doesn't spam 👀 on every comment.
           for (const msg of groupMessages) {
-            if (!msg.is_from_me && !msg.is_bot_message) {
-              statusTracker.markReceived(msg.id, chatJid, false, msg.sender);
-            }
+            if (msg.is_from_me || msg.is_bot_message) continue;
+            if (!isInvokingMessage(msg)) continue;
+            statusTracker.markReceived(msg.id, chatJid, false, msg.sender);
           }
 
           // Pull all messages since lastAgentTimestamp so non-trigger
