@@ -755,7 +755,6 @@ export class WhatsAppChannel implements Channel {
       return;
     }
     try {
-      const buffer = fs.readFileSync(filePath);
       const ext = path.extname(filePath).toLowerCase();
       const mimeMap: Record<string, string> = {
         '.pdf': 'application/pdf',
@@ -789,8 +788,13 @@ export class WhatsAppChannel implements Channel {
         '.gif': 'image/gif',
       };
       const mimetype = mimeMap[ext] || 'application/octet-stream';
+      // Pass by url, not Buffer: with rc.9, Buffer-uploaded documents land
+      // with broken media metadata on iOS/Android receivers ("This audio is
+      // no longer available" / "Descarga fallida") while web works because
+      // it caches the local blob. Url-based send goes through Baileys'
+      // streaming upload pipeline, which produces consistent CDN entries.
       await this.sock.sendMessage(jid, {
-        document: buffer,
+        document: { url: filePath },
         mimetype,
         fileName: filename,
         caption,
