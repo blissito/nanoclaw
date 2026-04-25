@@ -39,6 +39,18 @@ describe('extractSessionCommand', () => {
   it('is case-sensitive for the command', () => {
     expect(extractSessionCommand('/Compact', trigger)).toBeNull();
   });
+
+  it('detects bare /clear', () => {
+    expect(extractSessionCommand('/clear', trigger)).toBe('/clear');
+  });
+
+  it('detects /clear with trigger prefix', () => {
+    expect(extractSessionCommand('@Andy /clear', trigger)).toBe('/clear');
+  });
+
+  it('rejects /clear with extra args', () => {
+    expect(extractSessionCommand('/clear all', trigger)).toBeNull();
+  });
 });
 
 describe('isSessionCommandAllowed', () => {
@@ -85,6 +97,7 @@ function makeDeps(
     advanceCursor: vi.fn(),
     formatMessages: vi.fn().mockReturnValue('<formatted>'),
     canSenderInteract: vi.fn().mockReturnValue(true),
+    clearSession: vi.fn(),
     ...overrides,
   };
 }
@@ -120,6 +133,44 @@ describe('handleSessionCommand', () => {
       '/compact',
       expect.any(Function),
     );
+    expect(deps.advanceCursor).toHaveBeenCalledWith('100');
+  });
+
+  it('handles /clear by clearing session and acking — no agent call', async () => {
+    const deps = makeDeps();
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/clear')],
+      isMainGroup: true,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.clearSession).toHaveBeenCalledTimes(1);
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      expect.stringMatching(/limpia/i),
+    );
+    expect(deps.runAgent).not.toHaveBeenCalled();
+    expect(deps.advanceCursor).toHaveBeenCalledWith('100');
+  });
+
+  it('/clear drops pre-clear messages in same batch', async () => {
+    const deps = makeDeps();
+    const result = await handleSessionCommand({
+      missedMessages: [
+        makeMsg('hola', { id: 'msg-0', timestamp: '50' }),
+        makeMsg('/clear'),
+      ],
+      isMainGroup: true,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.runAgent).not.toHaveBeenCalled();
+    // cursor advances to /clear's timestamp; pre-clear msg ('50') is dropped
     expect(deps.advanceCursor).toHaveBeenCalledWith('100');
   });
 

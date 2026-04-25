@@ -14,6 +14,7 @@ export function extractSessionCommand(
   if (text === '/compact') return '/compact';
   const compactMatch = text.match(/^\/compact\s+(\S+)$/);
   if (compactMatch) return `/compact ${compactMatch[1]}`;
+  if (text === '/clear') return '/clear';
   return null;
 }
 
@@ -50,6 +51,8 @@ export interface SessionCommandDeps {
   formatMessages: (msgs: NewMessage[], timezone: string) => string;
   /** Whether the denied sender would normally be allowed to interact (for denial messages). */
   canSenderInteract: (msg: NewMessage) => boolean;
+  /** Drop the SDK session ID (in-memory + DB) so the next message starts fresh. */
+  clearSession: () => void | Promise<void>;
 }
 
 function resultToText(result: string | object | null | undefined): string {
@@ -104,6 +107,18 @@ export async function handleSessionCommand(opts: {
 
   // AUTHORIZED: process pre-compact messages first, then run the command
   logger.info({ group: groupName, command }, 'Session command');
+
+  // /clear: destructive session reset. Pre-clear messages in the same batch
+  // are dropped (cursor advances past them) — the user typed /clear meaning
+  // they want a fresh slate, processing them in the old session would defeat
+  // the purpose. Messages after /clear remain pending and will run in the
+  // new (no-resume) session on the next poll.
+  if (command === '/clear') {
+    await deps.clearSession();
+    await deps.sendMessage('Sesión limpia. 🧹');
+    deps.advanceCursor(cmdMsg.timestamp);
+    return { handled: true, success: true };
+  }
 
   const cmdIndex = missedMessages.indexOf(cmdMsg);
   const preCompactMsgs = missedMessages.slice(0, cmdIndex);

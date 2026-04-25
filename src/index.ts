@@ -336,6 +336,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               isTriggerAllowed(chatJid, msg.sender, loadSenderAllowlist())))
         );
       },
+      clearSession: () => {
+        delete sessions[group.folder];
+        deleteSession(group.folder);
+        logger.info(
+          { group: group.name, folder: group.folder },
+          'Session cleared via /clear',
+        );
+      },
     },
   });
   if (cmdResult.handled) return cmdResult.success;
