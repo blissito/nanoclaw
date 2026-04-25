@@ -98,6 +98,66 @@ sqlite3 store/messages.db "SELECT * FROM reactions ORDER BY timestamp DESC LIMIT
 
 Ask the agent to react to a message via the `react_to_message` MCP tool. Check your phone — the reaction should appear on the message.
 
+## Behavior: mention-only ack reactions in trigger groups
+
+In groups that require a trigger (`requiresTrigger !== false` and `trigger !== '.*'`), the 👀 acknowledgment fires **only on the message that individually invoked the bot** — not on every message in the processing batch. Context messages stay silent so the bot doesn't spam reactions on every comment in a group where it's one of many participants.
+
+Main groups (`trigger: '.*'`) keep reacting to every user message.
+
+This mirrors OpenClaw's `ackReaction.group: "mentions"` mode (see [docs.openclaw.ai/channels/whatsapp](https://docs.openclaw.ai/channels/whatsapp)).
+
+### Why it matters
+
+Without this filter, a single batch like `["@bot summarize", "lol", "agreed", "👍"]` produces four 👀 reactions because all four advance through the message loop together. Users perceive it as the bot "watching" every comment in the group, even when it wasn't invoked.
+
+### Implementation pattern
+
+`src/index.ts` derives an `isInvokingMessage(msg)` predicate **once per turn**, then uses it both for the trigger gate (`some`) and the `markReceived` loop (`filter`):
+
+```ts
+const needsTrigger = group.requiresTrigger !== false && group.trigger !== '.*';
+const triggerPattern = needsTrigger ? getTriggerPattern(group.trigger) : null;
+const stickerTrigger = group.containerConfig?.stickerTrigger !== false;
+const allowlistCfg = loadSenderAllowlist();
+
+const isInvokingMessage = (m): boolean => {
+  if (!needsTrigger) return true; // main group: react to everything
+  return (
+    (triggerPattern!.test(m.content.trim()) ||
+      (stickerTrigger && m.content.includes('[Sticker:'))) &&
+    ((ASSISTANT_HAS_OWN_NUMBER && m.is_from_me) ||
+      isTriggerAllowed(chatJid, m.sender, allowlistCfg))
+  );
+};
+
+// Trigger gate: at least one invoking message present?
+if (needsTrigger && !messages.some(isInvokingMessage)) return;
+
+// Ack loop: only the invokers get 👀
+for (const msg of messages) {
+  if (msg.is_from_me || msg.is_bot_message) continue;
+  if (!isInvokingMessage(msg)) continue;
+  statusTracker.markReceived(msg.id, chatJid, false, msg.sender);
+}
+```
+
+The same predicate must be applied in **both** call sites where `markReceived` fires:
+
+- `processGroupMessages` (recovery / direct queue path)
+- The main `startMessageLoop` poll cycle
+
+If you only patch one of them, recovery messages or piped batches will leak reactions.
+
+### What stays unchanged
+
+- `markThinking`/`markDone`/`markFailed` use forward-only transitions, so non-tracked context messages no-op safely — no extra filtering needed downstream.
+- The `is_from_me || is_bot_message` filter still excludes the bot's own messages (linked-device siblings in shared-number setups, plus bot-prefixed media).
+- `stickerTrigger` and the sender allowlist participate in the predicate, so sticker-triggered turns and allowlisted senders still get their 👀.
+
+### Reference commit
+
+`81feb6a feat(reactions): only react to invoking message, not whole batch` — adds the predicate-based filter to both call sites in `src/index.ts`. If your skill branch was forked before this commit, apply the pattern manually using the snippet above.
+
 ## Troubleshooting
 
 ### Reactions not appearing in database
