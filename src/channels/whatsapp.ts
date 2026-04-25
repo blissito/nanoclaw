@@ -633,7 +633,6 @@ export class WhatsAppChannel implements Channel {
       prefixed,
     );
 
-
     try {
       await this.sock.sendMessage(jid, {
         text: finalText,
@@ -1031,10 +1030,7 @@ export class WhatsAppChannel implements Channel {
       const meta = await this.sock.groupMetadata(jid);
       participants = meta.participants || [];
     } catch (err) {
-      logger.debug(
-        { err, jid },
-        'resolveMentions: groupMetadata fetch failed',
-      );
+      logger.debug({ err, jid }, 'resolveMentions: groupMetadata fetch failed');
     }
 
     const uniqueNames = Array.from(
