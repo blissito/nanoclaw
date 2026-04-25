@@ -99,11 +99,11 @@ export class StatusTracker {
   }
 
   markThinking(messageId: string): boolean {
-    return this.transition(messageId, StatusState.THINKING, '\u{1F9E0}');
+    return this.transition(messageId, StatusState.THINKING, null);
   }
 
   markWorking(messageId: string): boolean {
-    return this.transition(messageId, StatusState.WORKING, '\u{1F504}');
+    return this.transition(messageId, StatusState.WORKING, null);
   }
 
   markDone(messageId: string): boolean {
@@ -264,7 +264,7 @@ export class StatusTracker {
   private transition(
     messageId: string,
     newState: number,
-    emoji: string,
+    emoji: string | null,
   ): boolean {
     const msg = this.tracked.get(messageId);
     if (!msg) return false;
@@ -276,7 +276,10 @@ export class StatusTracker {
     if (newState === StatusState.THINKING) {
       msg.trackedAt = Date.now();
     }
-    this.enqueueSend(msg, emoji);
+    // Intermediate states (THINKING, WORKING) advance internally for heartbeat/timeout
+    // tracking but do not emit reactions — 👀 stays visible through the whole in-progress
+    // window so the agent's own mood reactions (or ✅/❌) are the only other visible states.
+    if (emoji) this.enqueueSend(msg, emoji);
     this.persist();
     return true;
   }

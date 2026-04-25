@@ -49,7 +49,7 @@ describe('StatusTracker', () => {
   });
 
   describe('forward-only transitions', () => {
-    it('transitions RECEIVED -> THINKING -> WORKING -> DONE', async () => {
+    it('emits 👀 on received and ✅ on done; skips intermediate THINKING/WORKING', async () => {
       tracker.markReceived('msg1', 'main@s.whatsapp.net', false);
       tracker.markThinking('msg1');
       tracker.markWorking('msg1');
@@ -58,14 +58,9 @@ describe('StatusTracker', () => {
       // Wait for all reaction sends to complete
       await tracker.flush();
 
-      expect(deps.sendReaction).toHaveBeenCalledTimes(4);
+      expect(deps.sendReaction).toHaveBeenCalledTimes(2);
       const emojis = deps.sendReaction.mock.calls.map((c) => c[2]);
-      expect(emojis).toEqual([
-        '\u{1F440}',
-        '\u{1F9E0}',
-        '\u{1F504}',
-        '\u{2705}',
-      ]);
+      expect(emojis).toEqual(['\u{1F440}', '\u{2705}']);
     });
 
     it('rejects backward transitions (WORKING -> THINKING is no-op)', async () => {
@@ -76,8 +71,9 @@ describe('StatusTracker', () => {
       const result = tracker.markThinking('msg1');
       expect(result).toBe(false);
 
+      // Only 👀 is emitted; intermediate transitions are silent
       await tracker.flush();
-      expect(deps.sendReaction).toHaveBeenCalledTimes(3);
+      expect(deps.sendReaction).toHaveBeenCalledTimes(1);
     });
 
     it('rejects duplicate transitions (DONE -> DONE is no-op)', async () => {
@@ -187,12 +183,8 @@ describe('StatusTracker', () => {
       tracker.markDone('msg1');
 
       await tracker.flush();
-      expect(order).toEqual([
-        '\u{1F440}',
-        '\u{1F9E0}',
-        '\u{1F504}',
-        '\u{2705}',
-      ]);
+      // Intermediate states are silent; only 👀 → ✅ reach the channel
+      expect(order).toEqual(['\u{1F440}', '\u{2705}']);
     });
   });
 
@@ -310,10 +302,9 @@ describe('StatusTracker', () => {
       tracker.heartbeatCheck();
       await tracker.flush();
 
-      // Only the 👀 and 🧠 reactions, no ❌
-      expect(deps.sendReaction).toHaveBeenCalledTimes(2);
-      const emojis = deps.sendReaction.mock.calls.map((c) => c[2]);
-      expect(emojis).toEqual(['👀', '🧠']);
+      // Only 👀 — THINKING is silent, no ❌ because container is alive
+      expect(deps.sendReaction).toHaveBeenCalledTimes(1);
+      expect(deps.sendReaction.mock.calls[0][2]).toBe('👀');
     });
 
     it('skips RECEIVED messages within grace period even if container is dead', async () => {
@@ -486,39 +477,38 @@ describe('StatusTracker', () => {
   });
 
   describe('batch transitions', () => {
-    it('markThinking can be called on multiple messages independently', async () => {
+    it('markThinking advances state for multiple messages without emitting reactions', async () => {
       tracker.markReceived('msg1', 'main@s.whatsapp.net', false);
       tracker.markReceived('msg2', 'main@s.whatsapp.net', false);
       tracker.markReceived('msg3', 'main@s.whatsapp.net', false);
 
-      // Mark all as thinking (simulates batch behavior)
-      tracker.markThinking('msg1');
-      tracker.markThinking('msg2');
-      tracker.markThinking('msg3');
+      expect(tracker.markThinking('msg1')).toBe(true);
+      expect(tracker.markThinking('msg2')).toBe(true);
+      expect(tracker.markThinking('msg3')).toBe(true);
 
       await tracker.flush();
 
-      const thinkingCalls = deps.sendReaction.mock.calls.filter(
-        (c) => c[2] === '🧠',
-      );
-      expect(thinkingCalls).toHaveLength(3);
+      // Only the 3 initial 👀 reactions fire; THINKING is silent
+      expect(deps.sendReaction).toHaveBeenCalledTimes(3);
+      const emojis = deps.sendReaction.mock.calls.map((c) => c[2]);
+      expect(emojis.every((e) => e === '👀')).toBe(true);
     });
 
-    it('markWorking can be called on multiple messages independently', async () => {
+    it('markWorking advances state for multiple messages without emitting reactions', async () => {
       tracker.markReceived('msg1', 'main@s.whatsapp.net', false);
       tracker.markReceived('msg2', 'main@s.whatsapp.net', false);
       tracker.markThinking('msg1');
       tracker.markThinking('msg2');
 
-      tracker.markWorking('msg1');
-      tracker.markWorking('msg2');
+      expect(tracker.markWorking('msg1')).toBe(true);
+      expect(tracker.markWorking('msg2')).toBe(true);
 
       await tracker.flush();
 
-      const workingCalls = deps.sendReaction.mock.calls.filter(
-        (c) => c[2] === '🔄',
-      );
-      expect(workingCalls).toHaveLength(2);
+      // Only the 2 initial 👀 reactions fire; THINKING + WORKING are silent
+      expect(deps.sendReaction).toHaveBeenCalledTimes(2);
+      const emojis = deps.sendReaction.mock.calls.map((c) => c[2]);
+      expect(emojis.every((e) => e === '👀')).toBe(true);
     });
   });
 });
