@@ -516,6 +516,8 @@ async function runQuery(
 
   let newSessionId: string | undefined;
   let lastAssistantUuid: string | undefined;
+  let lastModel: string | undefined;
+  let lastServiceTier: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
   let numTurns = 0;
@@ -568,6 +570,11 @@ async function runQuery(
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
+      const am = message as { message?: { model?: string } };
+      if (am.message?.model) lastModel = am.message.model;
+      const tier = (message as { message?: { usage?: { service_tier?: string } } })
+        .message?.usage?.service_tier;
+      if (tier) lastServiceTier = tier;
     }
 
     if (message.type === 'system' && message.subtype === 'init') {
@@ -609,6 +616,8 @@ async function runQuery(
             cache_creation_input_tokens: r.usage?.cacheCreationInputTokens || 0,
             num_turns: r.num_turns || 0,
             duration_ms: r.duration_ms || 0,
+            model: lastModel,
+            service_tier: lastServiceTier,
           },
         }),
       });

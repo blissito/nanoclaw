@@ -1014,8 +1014,8 @@ export interface UsageLog {
   duration_ms: number;
 }
 
-export function logUsage(log: UsageLog): void {
-  db.prepare(
+export function logUsage(log: UsageLog): number {
+  const result = db.prepare(
     `INSERT INTO usage_logs (group_folder, chat_jid, total_cost_usd, input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens, num_turns, duration_ms, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
@@ -1030,6 +1030,7 @@ export function logUsage(log: UsageLog): void {
     log.duration_ms,
     new Date().toISOString(),
   );
+  return Number(result.lastInsertRowid);
 }
 
 export interface UsageStats {

@@ -83,6 +83,7 @@ import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { parseImageReferences } from './image.js';
 import { StatusTracker } from './status-tracker.js';
 import { logger } from './logger.js';
+import { initUsageReporter, reportTurnUsage } from './usage-reporter.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -477,6 +478,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     imageAttachments,
     async (result) => {
       // Streaming output callback — called for each agent result
+      let sentTextThisResult = false;
       if (result.result) {
         if (!firstOutputSeen) {
           firstOutputSeen = true;
@@ -510,13 +512,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         if (text && !isMetaNoResponse) {
           await channel.sendMessage(chatJid, text);
           outputSentToUser = true;
+          sentTextThisResult = true;
         }
         // Only reset idle timer on actual results, not session-update markers (result: null)
         resetIdleTimer();
       }
 
       if (result.usage) {
-        logUsage({
+        const usageId = logUsage({
           group_folder: group.folder,
           chat_jid: chatJid,
           ...result.usage,
@@ -529,6 +532,28 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           },
           'Usage logged',
         );
+
+        // Push to ghosty.studio: only when we actually delivered a reply.
+        // Tool-only turns (no text sent) are skipped per the reporter contract.
+        const sessionId = sessions[group.folder];
+        if (sentTextThisResult && sessionId && result.usage.model) {
+          const lastUser = userMessages[userMessages.length - 1];
+          reportTurnUsage({
+            agent_group_id: group.folder,
+            messaging_group_id: chatJid,
+            session_id: sessionId,
+            turn_idempotency_key: `${sessionId}:${usageId}`,
+            model: result.usage.model,
+            input_tokens: result.usage.input_tokens,
+            output_tokens: result.usage.output_tokens,
+            cache_creation_input_tokens:
+              result.usage.cache_creation_input_tokens,
+            cache_read_input_tokens: result.usage.cache_read_input_tokens,
+            service_tier: result.usage.service_tier,
+            occurred_at: new Date().toISOString(),
+            user_id: lastUser?.sender,
+          });
+        }
       }
 
       if (result.status === 'success') {
@@ -1021,6 +1046,7 @@ async function main(): Promise<void> {
   logger.info('Database initialized');
   loadState();
   restoreRemoteControl();
+  initUsageReporter();
 
   // Start credential proxy (containers route API calls through this)
   const nanoClawHandlers: NanoClawHandlers = {};

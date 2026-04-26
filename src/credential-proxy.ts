@@ -15,7 +15,6 @@
 import { createServer, Server } from 'http';
 import { request as httpsRequest } from 'https';
 import { request as httpRequest, RequestOptions } from 'http';
-import { hostname } from 'os';
 
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
@@ -136,95 +135,6 @@ function logUsage(entry: UsageEntry): void {
     },
     'vault:usage',
   );
-  pushToStudio(entry);
-}
-
-// ---------------------------------------------------------------------------
-// Vault: Push usage to Ghosty Studio (fire-and-forget)
-// ---------------------------------------------------------------------------
-
-interface StudioConfig {
-  url: URL;
-  token: string;
-  droplet: string;
-}
-
-let studioConfig: StudioConfig | null | undefined;
-
-function getStudioConfig(): StudioConfig | null {
-  if (studioConfig !== undefined) return studioConfig;
-  const env = readEnvFile([
-    'STUDIO_USAGE_URL',
-    'STUDIO_USAGE_TOKEN',
-    'DROPLET_NAME',
-  ]);
-  if (!env.STUDIO_USAGE_URL || !env.STUDIO_USAGE_TOKEN) {
-    studioConfig = null;
-    return null;
-  }
-  try {
-    studioConfig = {
-      url: new URL(env.STUDIO_USAGE_URL),
-      token: env.STUDIO_USAGE_TOKEN,
-      droplet: env.DROPLET_NAME || hostname(),
-    };
-    return studioConfig;
-  } catch {
-    studioConfig = null;
-    return null;
-  }
-}
-
-function pushToStudio(entry: UsageEntry): void {
-  const cfg = getStudioConfig();
-  if (!cfg) return;
-
-  const payload = JSON.stringify({
-    ts: Date.parse(entry.timestamp),
-    droplet: cfg.droplet,
-    groupName: entry.groupFolder === 'unknown' ? null : entry.groupFolder,
-    model: entry.model,
-    inputTokens:
-      entry.inputTokens + entry.cacheReadTokens + entry.cacheCreationTokens,
-    outputTokens: entry.outputTokens,
-    source: entry.wasFallback
-      ? 'fallback'
-      : entry.authMode === 'oauth'
-        ? 'oauth'
-        : 'api_key',
-  });
-
-  const isHttps = cfg.url.protocol === 'https:';
-  const send = isHttps ? httpsRequest : httpRequest;
-  const req = send(
-    {
-      hostname: cfg.url.hostname,
-      port: cfg.url.port || (isHttps ? 443 : 80),
-      path: cfg.url.pathname + (cfg.url.search || ''),
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'content-length': Buffer.byteLength(payload),
-        'x-studio-token': cfg.token,
-      },
-      timeout: 3000,
-    },
-    (res) => {
-      res.resume(); // drain
-      if (res.statusCode && res.statusCode >= 400) {
-        logger.warn(
-          { status: res.statusCode, group: entry.groupFolder },
-          'studio:push-failed',
-        );
-      }
-    },
-  );
-  req.on('error', (err) => {
-    logger.warn({ err: err.message }, 'studio:push-error');
-  });
-  req.on('timeout', () => req.destroy());
-  req.write(payload);
-  req.end();
 }
 
 /** Get recent usage, optionally filtered by group */

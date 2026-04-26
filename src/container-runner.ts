@@ -66,6 +66,8 @@ export interface ContainerOutput {
     cache_creation_input_tokens: number;
     num_turns: number;
     duration_ms: number;
+    model?: string;
+    service_tier?: string;
   };
 }
 
