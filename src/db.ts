@@ -1015,21 +1015,23 @@ export interface UsageLog {
 }
 
 export function logUsage(log: UsageLog): number {
-  const result = db.prepare(
-    `INSERT INTO usage_logs (group_folder, chat_jid, total_cost_usd, input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens, num_turns, duration_ms, created_at)
+  const result = db
+    .prepare(
+      `INSERT INTO usage_logs (group_folder, chat_jid, total_cost_usd, input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens, num_turns, duration_ms, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    log.group_folder,
-    log.chat_jid,
-    log.total_cost_usd,
-    log.input_tokens,
-    log.output_tokens,
-    log.cache_read_input_tokens,
-    log.cache_creation_input_tokens,
-    log.num_turns,
-    log.duration_ms,
-    new Date().toISOString(),
-  );
+    )
+    .run(
+      log.group_folder,
+      log.chat_jid,
+      log.total_cost_usd,
+      log.input_tokens,
+      log.output_tokens,
+      log.cache_read_input_tokens,
+      log.cache_creation_input_tokens,
+      log.num_turns,
+      log.duration_ms,
+      new Date().toISOString(),
+    );
   return Number(result.lastInsertRowid);
 }
 

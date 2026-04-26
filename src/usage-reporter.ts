@@ -41,10 +41,7 @@ export function initUsageReporter(): void {
   const endpoint = process.env.GHOSTY_STUDIO_USAGE_URL || DEFAULT_ENDPOINT;
   try {
     config = { url: new URL(endpoint), token };
-    logger.info(
-      { endpoint: config.url.toString() },
-      'usage-reporter: enabled',
-    );
+    logger.info({ endpoint: config.url.toString() }, 'usage-reporter: enabled');
   } catch (err) {
     logger.warn(
       { err: err instanceof Error ? err.message : String(err), endpoint },
