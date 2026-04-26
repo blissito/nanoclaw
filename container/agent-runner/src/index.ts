@@ -589,11 +589,18 @@ async function runQuery(
 
     if (message.type === 'result') {
       resultCount++;
+      // SDK result.usage uses snake_case (BetaUsage from @anthropic-ai/sdk).
+      // Per-model breakdown lives in modelUsage with camelCase fields.
       const r = message as {
         result?: string;
         subtype?: string;
         total_cost_usd?: number;
-        usage?: { inputTokens?: number; outputTokens?: number; cacheReadInputTokens?: number; cacheCreationInputTokens?: number };
+        usage?: {
+          input_tokens?: number;
+          output_tokens?: number;
+          cache_read_input_tokens?: number;
+          cache_creation_input_tokens?: number;
+        };
         num_turns?: number;
         duration_ms?: number;
       };
@@ -601,7 +608,7 @@ async function runQuery(
       if (r.num_turns) numTurns = r.num_turns;
       log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
       if (r.total_cost_usd != null) {
-        log(`Usage: cost=$${r.total_cost_usd.toFixed(4)} input=${r.usage?.inputTokens || 0} output=${r.usage?.outputTokens || 0} cache_read=${r.usage?.cacheReadInputTokens || 0} turns=${r.num_turns || 0} duration=${r.duration_ms || 0}ms`);
+        log(`Usage: cost=$${r.total_cost_usd.toFixed(4)} input=${r.usage?.input_tokens || 0} output=${r.usage?.output_tokens || 0} cache_read=${r.usage?.cache_read_input_tokens || 0} turns=${r.num_turns || 0} duration=${r.duration_ms || 0}ms`);
       }
       writeOutput({
         status: 'success',
@@ -610,10 +617,10 @@ async function runQuery(
         ...(r.total_cost_usd != null && {
           usage: {
             total_cost_usd: r.total_cost_usd,
-            input_tokens: r.usage?.inputTokens || 0,
-            output_tokens: r.usage?.outputTokens || 0,
-            cache_read_input_tokens: r.usage?.cacheReadInputTokens || 0,
-            cache_creation_input_tokens: r.usage?.cacheCreationInputTokens || 0,
+            input_tokens: r.usage?.input_tokens || 0,
+            output_tokens: r.usage?.output_tokens || 0,
+            cache_read_input_tokens: r.usage?.cache_read_input_tokens || 0,
+            cache_creation_input_tokens: r.usage?.cache_creation_input_tokens || 0,
             num_turns: r.num_turns || 0,
             duration_ms: r.duration_ms || 0,
             model: lastModel,
