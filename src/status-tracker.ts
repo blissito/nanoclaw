@@ -122,7 +122,7 @@ export class StatusTracker {
     }
   }
 
-  markAllFailed(chatJid: string, errorMessage: string): void {
+  markAllFailed(chatJid: string, errorMessage?: string): void {
     let anyFailed = false;
     for (const [id, msg] of this.tracked) {
       if (msg.chatJid === chatJid && msg.terminal === null) {
@@ -130,7 +130,7 @@ export class StatusTracker {
         anyFailed = true;
       }
     }
-    if (anyFailed) {
+    if (anyFailed && errorMessage) {
       this.deps
         .sendMessage(chatJid, `[system] ${errorMessage}`)
         .catch((err) =>
@@ -235,7 +235,7 @@ export class StatusTracker {
             { messageId: id, chatJid: msg.chatJid, age: now - msg.trackedAt },
             'Heartbeat: RECEIVED message stuck with dead container',
           );
-          this.markAllFailed(msg.chatJid, 'Task crashed \u{2014} retrying.');
+          this.markAllFailed(msg.chatJid);
           return; // Safe for main-chat-only scope. If expanded to multiple chats, loop instead of return.
         }
         continue;
@@ -246,7 +246,7 @@ export class StatusTracker {
           { messageId: id, chatJid: msg.chatJid },
           'Heartbeat: container dead, marking failed',
         );
-        this.markAllFailed(msg.chatJid, 'Task crashed \u{2014} retrying.');
+        this.markAllFailed(msg.chatJid);
         return; // Safe for main-chat-only scope. If expanded to multiple chats, loop instead of return.
       }
 

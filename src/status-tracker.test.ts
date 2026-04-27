@@ -288,10 +288,7 @@ describe('StatusTracker', () => {
         (c) => c[2] === '❌',
       );
       expect(failCalls).toHaveLength(1);
-      expect(deps.sendMessage).toHaveBeenCalledWith(
-        'main@s.whatsapp.net',
-        '[system] Task crashed — retrying.',
-      );
+      expect(deps.sendMessage).not.toHaveBeenCalled();
     });
 
     it('does nothing when container is alive', async () => {
@@ -336,10 +333,7 @@ describe('StatusTracker', () => {
         (c) => c[2] === '❌',
       );
       expect(failCalls).toHaveLength(1);
-      expect(deps.sendMessage).toHaveBeenCalledWith(
-        'main@s.whatsapp.net',
-        '[system] Task crashed — retrying.',
-      );
+      expect(deps.sendMessage).not.toHaveBeenCalled();
     });
 
     it('does NOT fail RECEIVED messages after grace period when container is alive', async () => {

@@ -588,7 +588,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           { group: group.name },
           'Agent error after output, rolled back piped messages for retry',
         );
-        statusTracker.markAllFailed(chatJid, 'Task crashed — retrying.');
+        statusTracker.markAllFailed(chatJid);
         return false;
       }
       logger.warn(
@@ -606,7 +606,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       { group: group.name },
       'Agent error, rolled back message cursor for retry',
     );
-    statusTracker.markAllFailed(chatJid, 'Task crashed — retrying.');
+    statusTracker.markAllFailed(chatJid);
     return false;
   }
 
