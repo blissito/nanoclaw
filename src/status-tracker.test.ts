@@ -224,16 +224,16 @@ describe('StatusTracker', () => {
 
       await tracker.recover();
 
-      // Should send ❌ reaction for the 2 non-terminal entries only
+      // Should send 🟢 reaction for the 2 non-terminal entries only
       const failCalls = deps.sendReaction.mock.calls.filter(
-        (c) => c[2] === '❌',
+        (c) => c[2] === '🟢',
       );
       expect(failCalls).toHaveLength(2);
 
-      // Should send one error message per chatJid
+      // Should send one recovery message per chatJid
       expect(deps.sendMessage).toHaveBeenCalledWith(
         'main@s.whatsapp.net',
-        '[system] Restarted — reprocessing your message.',
+        '🟢 system clean',
       );
       expect(deps.sendMessage).toHaveBeenCalledTimes(1);
     });
@@ -267,9 +267,9 @@ describe('StatusTracker', () => {
 
       await tracker.recover(false);
 
-      // Still sends ❌ reaction
+      // Still sends 🟢 reaction
       expect(deps.sendReaction).toHaveBeenCalledTimes(1);
-      expect(deps.sendReaction.mock.calls[0][2]).toBe('❌');
+      expect(deps.sendReaction.mock.calls[0][2]).toBe('🟢');
       // But no text message
       expect(deps.sendMessage).not.toHaveBeenCalled();
     });

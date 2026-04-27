@@ -17,6 +17,7 @@ export enum StatusState {
 
 const DONE_EMOJI = '\u{2705}';
 const FAILED_EMOJI = '\u{274C}';
+const RECOVERED_EMOJI = '\u{1F7E2}';
 
 const CLEANUP_DELAY_MS = 5000;
 const RECEIVED_GRACE_MS = 30_000;
@@ -187,7 +188,7 @@ export class StatusTracker {
         trackedAt: entry.trackedAt,
       };
       this.tracked.set(entry.messageId, msg);
-      this.transitionTerminal(entry.messageId, 'failed', FAILED_EMOJI);
+      this.transitionTerminal(entry.messageId, 'done', RECOVERED_EMOJI);
       orphanedByChat.set(
         entry.chatJid,
         (orphanedByChat.get(entry.chatJid) || 0) + 1,
@@ -197,10 +198,7 @@ export class StatusTracker {
     if (sendErrorMessage) {
       for (const [chatJid] of orphanedByChat) {
         this.deps
-          .sendMessage(
-            chatJid,
-            `[system] Restarted \u{2014} reprocessing your message.`,
-          )
+          .sendMessage(chatJid, '\u{1F7E2} system clean')
           .catch((err) =>
             logger.error({ chatJid, err }, 'Failed to send recovery message'),
           );
