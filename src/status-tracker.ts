@@ -16,7 +16,7 @@ export enum StatusState {
 }
 
 const DONE_EMOJI = '\u{2705}';
-const FAILED_EMOJI = '\u{274C}';
+const FAILED_EMOJI = '\u{26A0}\u{FE0F}';
 const RECOVERED_EMOJI = '\u{1F7E2}';
 
 const CLEANUP_DELAY_MS = 5000;
