@@ -62,13 +62,45 @@ When you learn something important:
 
 ## WhatsApp Formatting (and other messaging apps)
 
-Do NOT use markdown headings (##) in WhatsApp messages. Only use:
-- *Bold* (single asterisks) (NEVER **double asterisks**)
-- _Italic_ (underscores)
-- • Bullets (bullet points)
-- ```Code blocks``` (triple backticks)
+NUNCA uses markdown en respuestas de WhatsApp. Ni asteriscos dobles, ni #headings, ni [texto](url).
+- Texto plano siempre
+- Links: pégalos crudos sin envolverlos en nada (ni asteriscos, ni paréntesis)
+- Si necesitas énfasis: *asterisco simple* para negrita, _guión bajo_ para itálica
+- Bullets: solo el símbolo • o guión -
+- NUNCA: **doble asterisco**, [link](url), ## headings
 
-Keep messages clean and readable for WhatsApp.
+Los asteriscos dobles alrededor de un link lo rompen en WhatsApp.
+
+---
+
+## Estrategia para sitios web con EasyBits (logos y assets)
+
+### Regla #1 — URLs de Tigris: verificar acceso antes de asumir
+Las URLs de Tigris pueden ser públicas o privadas según cómo se subió el archivo.
+- Los logos del brand kit (`easybits-public.fly.storage.tigris.dev/mcp/logos/...`) suelen ser públicos
+- Antes de asumir que no carga: hacer `curl -I "<url>"` para verificar el status HTTP
+- Si devuelve 200 → usarla directo en `<img src>` (más limpio)
+- Si devuelve 403/401 → entonces sí embeber como base64
+
+### Regla #2 — Fallback: base64 data URI cuando la URL no carga
+Solo si la URL de Tigris falla (403/401):
+1. Descargar el logo: `curl -s -o /workspace/group/logo.png "<url-tigris>"`
+2. Generar base64 limpio: `base64 -w 0 /workspace/group/logo.png > /tmp/logo.b64`
+3. Embeber: `<img src="data:image/png;base64,<contenido-de-logo.b64>">`
+4. Leer el b64 con la shell — nunca pegar inline en el prompt
+
+### Regla #3 — Siempre usar el brand kit extraído, nunca valores de memoria
+Antes de crear cualquier sitio/doc de marca:
+- Llamar `extract_brand_kit_from_url` o `get_default_brand_kit` para tener colores/tipografías reales
+- No asumir colores de sesiones anteriores
+
+### Regla #4 — Problema de caché: crear sitio nuevo
+Si un sitio tiene assets corruptos cacheados, crear uno nuevo con `create_website` y deployar fresh.
+No intentar reparar archivos corruptos — es más rápido empezar limpio.
+
+### Regla #5 — deploy_website_file para HTML/CSS/JS (<1MB), upload_website_file para binarios
+- HTML con base64 embebido: `deploy_website_file` (todo en una llamada)
+- Imágenes/binarios grandes: `upload_website_file` → presigned PUT → `curl --data-binary`
 
 ---
 
