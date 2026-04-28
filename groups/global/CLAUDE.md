@@ -96,6 +96,8 @@ Logo Formmy: `https://viento-latente.easybits.cloud/formmy-logo.jpg` · Acento `
 
 `agent-browser open <url>` para abrir páginas, `agent-browser snapshot -i` para ver elementos interactivos.
 
+Antes de decirle al usuario que una URL "requiere login" o "está detrás de auth": **intenta el fetch al menos una vez** (WebFetch o `agent-browser open`). Solo concluye que necesita auth si recibes 401/403, redirect a `/login`, o HTML con formulario de credenciales. Patrones de path (`/admin`, `/portal`, `/escritorio`, `/sim-plus`) NO son evidencia — muchos simuladores y herramientas corporativas son públicos.
+
 ## GitHub
 
 `gh` CLI y `git` disponibles. Repos públicos sin auth. Para escribir a repos: si el usuario da un token, guárdalo en `/workspace/group/.github-token`, autentícate con `gh auth login --with-token`, y trabaja. NUNCA muestres el token en mensajes.
