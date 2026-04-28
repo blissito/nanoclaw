@@ -4,8 +4,10 @@
  * The proxy injects real credentials so containers never see them.
  *
  * Primary: OAuth (Max plan).
- * Fallback: If upstream returns 429 (rate limit) and an API key is
- *           configured, retries with API key + claude-sonnet-4-20250514.
+ * Fallback: If upstream returns 429 (rate limit) or 529 (overloaded) and
+ *           an API key is configured, retries with API key + claude-sonnet-4-20250514.
+ *           529s are typically per-model — switching to the fallback model
+ *           usually clears even when both auths hit the same upstream.
  *
  * Vault features (inspired by OneCLI — github.com/onecli/onecli):
  * - Per-group rate limiting policies
@@ -673,9 +675,9 @@ export function startCredentialProxy(
         // Determine if this is a retryable request (messages endpoint, not exchange)
         const isMessagesEndpoint =
           req.url?.includes('/v1/messages') && req.method === 'POST';
-        const shouldRetryOn429 = canFallback && isMessagesEndpoint;
+        const shouldRetryOnFailure = canFallback && isMessagesEndpoint;
 
-        if (!shouldRetryOn429) {
+        if (!shouldRetryOnFailure) {
           // No fallback — buffer for usage logging if messages endpoint
           if (isMessagesEndpoint) {
             const upstream = makeRequest(
@@ -719,23 +721,26 @@ export function startCredentialProxy(
           return;
         }
 
-        // Retryable path — buffer response to check for 429
+        // Retryable path — buffer response to check for 429/529
         const upstream = makeRequest(
           buildUpstreamOpts(req.url, req.method, headers),
           (upRes) => {
-            if (upRes.statusCode !== 429) {
-              // Not rate limited — buffer for usage logging
+            const status = upRes.statusCode;
+            if (status !== 429 && status !== 529) {
+              // Not rate limited or overloaded — buffer for usage logging
               bufferAndLog(upRes, false);
               return;
             }
 
-            // Rate limited — consume the response and retry with API key
+            // Rate limited or overloaded — consume the response and retry with API key
             const discardChunks: Buffer[] = [];
             upRes.on('data', (c) => discardChunks.push(c));
             upRes.on('end', () => {
               logger.warn(
-                { url: req.url, fallbackModel: FALLBACK_MODEL },
-                'Rate limited on OAuth, retrying with API key + fallback model',
+                { url: req.url, status, fallbackModel: FALLBACK_MODEL },
+                status === 529
+                  ? 'Upstream overloaded on OAuth, retrying with API key + fallback model'
+                  : 'Rate limited on OAuth, retrying with API key + fallback model',
               );
 
               const fallbackBody = swapModelInBody(body);
