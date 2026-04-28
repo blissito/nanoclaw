@@ -402,58 +402,86 @@ export class WhatsAppChannel implements Channel {
                   mime.includes('wordprocessing') ||
                   mime === 'application/vnd.ms-excel' ||
                   mime === 'application/msword';
+                const isArchive =
+                  ['.zip', '.tar', '.gz', '.tgz', '.7z', '.rar', '.bz2'].includes(ext) ||
+                  mime === 'application/zip' ||
+                  mime === 'application/x-zip-compressed' ||
+                  mime === 'application/x-tar' ||
+                  mime === 'application/gzip' ||
+                  mime === 'application/x-gzip' ||
+                  mime === 'application/x-7z-compressed' ||
+                  mime === 'application/x-rar-compressed' ||
+                  mime === 'application/vnd.rar';
 
-                if (isPdf || isText || isMedia || isOffice) {
-                  const buffer = await downloadMediaMessage(msg, 'buffer', {});
-                  const groupDir = path.join(
-                    GROUPS_DIR,
-                    groups[chatJid].folder,
-                  );
-                  const attachDir = path.join(groupDir, 'attachments');
-                  fs.mkdirSync(attachDir, { recursive: true });
-                  const filename = path.basename(
-                    fileName ||
-                      `doc-${Date.now()}${isPdf ? '.pdf' : ext || '.txt'}`,
-                  );
-                  const filePath = path.join(attachDir, filename);
-                  fs.writeFileSync(filePath, buffer as Buffer);
-                  const sizeKB = Math.round((buffer as Buffer).length / 1024);
-                  const caption = normalized.documentMessage.caption || '';
+                // Always save the document; emit a content hint so the agent
+                // sees the message even for unknown types (no silent drops).
+                const buffer = await downloadMediaMessage(msg, 'buffer', {});
+                const groupDir = path.join(
+                  GROUPS_DIR,
+                  groups[chatJid].folder,
+                );
+                const attachDir = path.join(groupDir, 'attachments');
+                fs.mkdirSync(attachDir, { recursive: true });
+                const filename = path.basename(
+                  fileName ||
+                    `doc-${Date.now()}${isPdf ? '.pdf' : ext || '.bin'}`,
+                );
+                const filePath = path.join(attachDir, filename);
+                fs.writeFileSync(filePath, buffer as Buffer);
+                const sizeKB = Math.round((buffer as Buffer).length / 1024);
+                const caption = normalized.documentMessage.caption || '';
 
-                  if (isPdf) {
-                    const pdfRef = `[PDF: attachments/${filename} (${sizeKB}KB)]\nUse: pdf-reader extract attachments/${filename}`;
-                    content = caption ? `${caption}\n\n${pdfRef}` : pdfRef;
-                  } else if (isOffice) {
-                    const officeRef = `[Office: attachments/${filename} (${sizeKB}KB)]\nUse: office-reader extract attachments/${filename}`;
-                    content = caption
-                      ? `${caption}\n\n${officeRef}`
-                      : officeRef;
-                  } else if (isMedia) {
-                    const mediaType = mime.startsWith('video/')
-                      ? 'Video'
-                      : 'Audio';
-                    const mediaRef = `[${mediaType}: attachments/${filename} (${sizeKB}KB)]`;
-                    content = caption ? `${caption}\n\n${mediaRef}` : mediaRef;
+                if (isPdf) {
+                  const pdfRef = `[PDF: attachments/${filename} (${sizeKB}KB)]\nUse: pdf-reader extract attachments/${filename}`;
+                  content = caption ? `${caption}\n\n${pdfRef}` : pdfRef;
+                } else if (isOffice) {
+                  const officeRef = `[Office: attachments/${filename} (${sizeKB}KB)]\nUse: office-reader extract attachments/${filename}`;
+                  content = caption
+                    ? `${caption}\n\n${officeRef}`
+                    : officeRef;
+                } else if (isMedia) {
+                  const mediaType = mime.startsWith('video/')
+                    ? 'Video'
+                    : 'Audio';
+                  const mediaRef = `[${mediaType}: attachments/${filename} (${sizeKB}KB)]`;
+                  content = caption ? `${caption}\n\n${mediaRef}` : mediaRef;
+                } else if (isArchive) {
+                  const stem = filename.replace(/\.(zip|tar\.gz|tgz|tar|gz|7z|rar|bz2)$/i, '');
+                  const isTar = /\.(tar|tar\.gz|tgz)$/i.test(filename);
+                  const is7z = /\.7z$/i.test(filename);
+                  const isRar = /\.rar$/i.test(filename);
+                  const cmd = isTar
+                    ? `mkdir -p attachments/${stem} && tar -xf attachments/${filename} -C attachments/${stem}`
+                    : is7z
+                      ? `mkdir -p attachments/${stem} && 7z x attachments/${filename} -oattachments/${stem}`
+                      : isRar
+                        ? `mkdir -p attachments/${stem} && unrar x attachments/${filename} attachments/${stem}/`
+                        : `unzip -o attachments/${filename} -d attachments/${stem}`;
+                  const archiveRef = `[Archive: attachments/${filename} (${sizeKB}KB)]\nUse: ${cmd}`;
+                  content = caption ? `${caption}\n\n${archiveRef}` : archiveRef;
+                } else if (isText) {
+                  const INLINE_MAX_KB = 500;
+                  if (sizeKB > INLINE_MAX_KB) {
+                    const isCsv = ext === '.csv' || mime === 'text/csv';
+                    const hint = isCsv
+                      ? `Use: pandas in Bash (e.g. python3 -c "import pandas as pd; df=pd.read_csv('attachments/${filename}'); print(df.head())")`
+                      : `Use: head/awk/grep on attachments/${filename}`;
+                    const docRef = `[Document: attachments/${filename} (${sizeKB}KB) — too large to inline]\n${hint}`;
+                    content = caption ? `${caption}\n\n${docRef}` : docRef;
                   } else {
-                    const INLINE_MAX_KB = 500;
-                    if (sizeKB > INLINE_MAX_KB) {
-                      const isCsv = ext === '.csv' || mime === 'text/csv';
-                      const hint = isCsv
-                        ? `Use: pandas in Bash (e.g. python3 -c "import pandas as pd; df=pd.read_csv('attachments/${filename}'); print(df.head())")`
-                        : `Use: head/awk/grep on attachments/${filename}`;
-                      const docRef = `[Document: attachments/${filename} (${sizeKB}KB) — too large to inline]\n${hint}`;
-                      content = caption ? `${caption}\n\n${docRef}` : docRef;
-                    } else {
-                      const textContent = (buffer as Buffer).toString('utf-8');
-                      const docRef = `[Document: attachments/${filename} (${sizeKB}KB)]\n\n${textContent}`;
-                      content = caption ? `${caption}\n\n${docRef}` : docRef;
-                    }
+                    const textContent = (buffer as Buffer).toString('utf-8');
+                    const docRef = `[Document: attachments/${filename} (${sizeKB}KB)]\n\n${textContent}`;
+                    content = caption ? `${caption}\n\n${docRef}` : docRef;
                   }
-                  logger.info(
-                    { jid: chatJid, filename, mime },
-                    'Downloaded document attachment',
-                  );
+                } else {
+                  // Unknown document type — store anyway with a generic hint
+                  const fileRef = `[File: attachments/${filename} (${sizeKB}KB, ${mime || 'unknown mime'})]\nUse: file attachments/${filename} to identify, then read with the appropriate tool`;
+                  content = caption ? `${caption}\n\n${fileRef}` : fileRef;
                 }
+                logger.info(
+                  { jid: chatJid, filename, mime, sizeKB },
+                  'Downloaded document attachment',
+                );
               } catch (err) {
                 logger.warn(
                   { err, jid: chatJid },
