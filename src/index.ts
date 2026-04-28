@@ -101,6 +101,11 @@ const channels: Channel[] = [];
 const queue = new GroupQueue();
 let statusTracker: StatusTracker;
 
+function pickReceivedEmoji(content: string): string {
+  if (/^\[(Voice|Audio)\b/.test(content)) return '\u{1F442}';
+  return '\u{1F440}';
+}
+
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
   const agentTs = getRouterState('last_agent_timestamp');
@@ -394,7 +399,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Only react to invoking messages — context messages in the same batch stay silent.
   for (const msg of actionableMessages) {
     if (!isInvokingMessage(msg)) continue;
-    statusTracker.markReceived(msg.id, chatJid, false, msg.sender);
+    statusTracker.markReceived(
+      msg.id,
+      chatJid,
+      false,
+      msg.sender,
+      pickReceivedEmoji(msg.content),
+    );
   }
 
   // Mark all user messages as thinking (container is spawning)
@@ -930,7 +941,13 @@ async function startMessageLoop(): Promise<void> {
           for (const msg of groupMessages) {
             if (msg.is_from_me || msg.is_bot_message) continue;
             if (!isInvokingMessage(msg)) continue;
-            statusTracker.markReceived(msg.id, chatJid, false, msg.sender);
+            statusTracker.markReceived(
+              msg.id,
+              chatJid,
+              false,
+              msg.sender,
+              pickReceivedEmoji(msg.content),
+            );
           }
 
           // Pull all messages since lastAgentTimestamp so non-trigger

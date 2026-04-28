@@ -79,6 +79,7 @@ export class StatusTracker {
     chatJid: string,
     fromMe: boolean,
     participant?: string,
+    emoji: string = '\u{1F440}',
   ): boolean {
     if (this.tracked.has(messageId)) return false;
 
@@ -94,7 +95,7 @@ export class StatusTracker {
     };
 
     this.tracked.set(messageId, msg);
-    this.enqueueSend(msg, '\u{1F440}');
+    this.enqueueSend(msg, emoji);
     this.persist();
     return true;
   }
