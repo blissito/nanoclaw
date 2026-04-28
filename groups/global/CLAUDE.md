@@ -157,3 +157,18 @@ Cuando Bliss pida cambiar comportamiento de otro grupo: escribe la instrucción 
 ## Sub-agents
 
 Como sub-agent o teammate, solo usa `send_message` si el agente principal te lo indica.
+
+## Tareas largas (>20 min) — chunk en scheduled_tasks, no inline
+
+El container tiene un wallclock de **30 min** (`CONTAINER_TIMEOUT=1800000ms`). Si excedes ese tiempo en una sola sesión, el status-tracker corta con `[system] Task timed out — retrying.` y pierdes el progreso a medias. Aplica a cualquier I/O bloqueante: subidas masivas, scrapes largos, generación de N PDFs/imágenes, batch de queries DB lentas.
+
+**Regla:** si estimas >20 min de trabajo, NO lo hagas inline. Chunk:
+
+1. Estima el total y divide en N tareas de ≤15 min cada una (margen de 5 min para reportes/cleanup).
+2. Por cada chunk, crea un `mcp__nanoclaw__schedule_task` con firing escalonado.
+3. Cada task hace su trabajo + reporta progreso con `mcp__nanoclaw__send_to_whatsapp`.
+4. La última task manda el resumen final.
+
+**Mal patrón (lo que rompe):** "sube 70 imágenes con 35s entre cada una" → 41 min inline → wallclock corta a los 30 min → retry pierde estado.
+
+**Buen patrón:** dividir en 4 tandas de ~17 imgs (~12 min c/u). Cada task entra a su container fresh con su propio wallclock — ninguna se acerca al límite. Devuelves control al usuario en segundos con un "voy a hacerlo en 4 tandas, te aviso al terminar cada una".
