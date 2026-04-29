@@ -391,6 +391,16 @@ function buildEnvFile(
     envLines.push(`KOMMO_ACCESS_TOKEN=${kommoEnv.KOMMO_ACCESS_TOKEN}`);
   }
 
+  // Canva MCP needs to call ghosty.studio for OAuth + permits.
+  // Reuses NANOCLAW_ADMIN_TOKEN (same Bearer that admin-api / usage-reporter use).
+  const canvaEnv = readEnvFile(['NANOCLAW_ADMIN_TOKEN', 'GHOSTY_STUDIO_URL']);
+  if (canvaEnv.NANOCLAW_ADMIN_TOKEN) {
+    envLines.push(`NANOCLAW_ADMIN_TOKEN=${canvaEnv.NANOCLAW_ADMIN_TOKEN}`);
+    envLines.push(
+      `GHOSTY_STUDIO_URL=${canvaEnv.GHOSTY_STUDIO_URL || 'https://ghosty.studio'}`,
+    );
+  }
+
   // Per-group env overrides (from container_config.env)
   if (containerConfig?.env) {
     for (const [key, value] of Object.entries(containerConfig.env)) {

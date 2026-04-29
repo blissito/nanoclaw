@@ -404,6 +404,16 @@ function getAllMcpServers(containerInput: ContainerInput, mcpServerPath: string)
         KOMMO_ACCESS_TOKEN: process.env.KOMMO_ACCESS_TOKEN || '',
       },
     },
+    canva: {
+      command: 'node',
+      args: ['/app/mcp-servers/canva/dist/index.js'],
+      env: {
+        GHOSTY_STUDIO_URL: process.env.GHOSTY_STUDIO_URL || 'https://ghosty.studio',
+        NANOCLAW_ADMIN_TOKEN: process.env.NANOCLAW_ADMIN_TOKEN || '',
+        NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
+        NANOCLAW_CHAT_JID: containerInput.chatJid,
+      },
+    },
   };
 }
 
