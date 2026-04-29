@@ -12,6 +12,7 @@ Tienes 7 tools MCP para hablar con Canva en nombre del user actual. La conexión
 | Tool | Para qué | Costo |
 |------|----------|-------|
 | `canva_connect` | Genera link mágico para que el user vincule su Canva | 0 |
+| `canva_disconnect` | Desconecta la cuenta vinculada del user (borra tokens + revoca en Canva) | 0 |
 | `canva_get_user_profile` | Confirmar qué cuenta está vinculada | 1 |
 | `canva_list_designs` | Listar diseños del user (paginado, filtrable) | 1 |
 | `canva_get_design` | Detalles de un diseño (URL de edición, thumbnail) | 1 |
@@ -62,6 +63,16 @@ Si una tool devuelve `needs_oauth`:
 4. Una vez autorizado, todas las tools funcionan sin pasos adicionales
 
 **Nunca pretendas que el user ya conectó su Canva.** Si la tool dice `needs_oauth`, sigue el flujo arriba.
+
+### Desconexión
+
+Si el user pide explícitamente "desconecta canva", "desvincula", "olvida mi canva", "revoca acceso", llama `canva_disconnect`. Borra el token guardado y best-effort revoca el refresh en Canva. Respuesta posible:
+
+- `revoked: true, remote_revoke: 'ok'` → confirma al user: "Listo, desvinculé tu Canva."
+- `revoked: true, remote_revoke: 'failed'` → "Borré la conexión local pero no logré revocarla en Canva. Si quieres revocar manualmente: canva.com → Settings → Connected apps."
+- `revoked: false` → "No tenías ninguna cuenta vinculada en este chat."
+
+Después de un disconnect, cualquier tool de Canva volverá a `needs_oauth` y tocará `canva_connect` para vincular de nuevo.
 
 ## Cuotas — sé eficiente
 

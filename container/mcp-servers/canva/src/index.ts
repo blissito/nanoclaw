@@ -15,7 +15,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { callCanva, getConnectLink, uploadAsset, importDesign } from './api.js';
+import { callCanva, getConnectLink, uploadAsset, importDesign, disconnectCanva } from './api.js';
 
 const server = new McpServer({ name: 'canva', version: '1.0.0' });
 
@@ -24,6 +24,13 @@ server.tool(
   'Genera un link mágico para que el usuario conecte su cuenta de Canva. Ejecuta esta tool PRIMERO si el usuario aún no autorizó, o si otra tool devuelve "needs_oauth". Manda el link al usuario por WhatsApp; el link expira en 10 minutos.',
   {},
   async () => getConnectLink(),
+);
+
+server.tool(
+  'canva_disconnect',
+  'Desconecta la cuenta de Canva del usuario actual: borra los tokens guardados y revoca el refresh_token en Canva (best-effort). Úsala cuando el user pida explícitamente "desconecta canva", "desvincula", "olvida mi canva", "revoca acceso". Después de esto, la próxima tool que necesite Canva pedirá `canva_connect` de nuevo.',
+  {},
+  async () => disconnectCanva(),
 );
 
 server.tool(

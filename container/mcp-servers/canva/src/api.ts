@@ -137,6 +137,46 @@ export async function getConnectLink(): Promise<ToolResult> {
   });
 }
 
+export async function disconnectCanva(): Promise<ToolResult> {
+  const cfg = configError();
+  if (cfg) return cfg;
+
+  const r = await fetch(`${STUDIO_URL}/api/oauth/canva/disconnect`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${STUDIO_TOKEN}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      agent_group_id: AGENT_GROUP_ID,
+      user_id: USER_ID,
+    }),
+  });
+  const text = await r.text();
+  let data: any;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    return err('invalid_disconnect_response', text.slice(0, 300));
+  }
+  if (!r.ok) return err(data?.error || `disconnect_${r.status}`, data?.detail);
+
+  if (!data.revoked) {
+    return ok({
+      revoked: false,
+      message: 'No había una conexión activa que desconectar.',
+    });
+  }
+  return ok({
+    revoked: true,
+    remote_revoke: data.remote_revoke,
+    message:
+      data.remote_revoke === 'ok'
+        ? 'Conexión Canva desconectada y token revocado en Canva.'
+        : 'Conexión local borrada. Si quieres revocar también del lado de Canva manualmente: canva.com → Settings → Connected apps.',
+  });
+}
+
 export async function callCanva(
   endpoint: string,
   init: { method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'; path: string; body?: unknown; cost?: number },
