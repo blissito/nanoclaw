@@ -1,9 +1,27 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
 const STUDIO_URL = (process.env.GHOSTY_STUDIO_URL || 'https://ghosty.studio').replace(/\/$/, '');
 const STUDIO_TOKEN = process.env.NANOCLAW_ADMIN_TOKEN || '';
 const AGENT_GROUP_ID = process.env.NANOCLAW_GROUP_FOLDER || '';
 const USER_ID = process.env.NANOCLAW_CHAT_JID || '';
 
 const CANVA_API = 'https://api.canva.com/rest/v1';
+
+const MIME_BY_EXT: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.mp4': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.pdf': 'application/pdf',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.doc': 'application/msword',
+};
 
 export type ToolResult = {
   content: { type: 'text'; text: string }[];
@@ -150,4 +168,74 @@ export async function callCanva(
     return err(`Canva ${r.status}: ${typeof data === 'string' ? data.slice(0, 300) : JSON.stringify(data).slice(0, 300)}`);
   }
   return ok(data);
+}
+
+async function callCanvaBinary(
+  endpoint: string,
+  init: { path: string; metadataHeader: string; metadata: Record<string, unknown>; body: Buffer; cost: number },
+): Promise<ToolResult> {
+  const tokenResult = await getCanvaToken(endpoint, init.cost);
+  if ('content' in tokenResult) return tokenResult;
+  const token = tokenResult.token;
+
+  const r = await fetch(`${CANVA_API}${init.path}`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/octet-stream',
+      [init.metadataHeader]: JSON.stringify(init.metadata),
+      accept: 'application/json',
+    },
+    body: new Uint8Array(init.body),
+  });
+  const text = await r.text();
+  let data: any;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+  if (!r.ok) {
+    return err(`Canva ${r.status}: ${typeof data === 'string' ? data.slice(0, 300) : JSON.stringify(data).slice(0, 300)}`);
+  }
+  return ok(data);
+}
+
+function b64(s: string): string {
+  return Buffer.from(s, 'utf-8').toString('base64');
+}
+
+export async function uploadAsset(filePath: string, name?: string): Promise<ToolResult> {
+  if (!fs.existsSync(filePath)) {
+    return err(`Archivo no existe: ${filePath}`);
+  }
+  const buffer = fs.readFileSync(filePath);
+  const finalName = name || path.basename(filePath);
+  return callCanvaBinary('upload_asset', {
+    path: '/asset-uploads',
+    metadataHeader: 'Asset-Upload-Metadata',
+    metadata: { name_base64: b64(finalName) },
+    body: buffer,
+    cost: 2,
+  });
+}
+
+export async function importDesign(filePath: string, title?: string, mimeType?: string): Promise<ToolResult> {
+  if (!fs.existsSync(filePath)) {
+    return err(`Archivo no existe: ${filePath}`);
+  }
+  const buffer = fs.readFileSync(filePath);
+  const finalTitle = (title || path.basename(filePath, path.extname(filePath))).slice(0, 50);
+  const ext = path.extname(filePath).toLowerCase();
+  const finalMime = mimeType || MIME_BY_EXT[ext];
+  if (!finalMime) {
+    return err(`No pude inferir mime_type de "${ext}". Pásalo explícito en mime_type.`);
+  }
+  return callCanvaBinary('import_design', {
+    path: '/imports',
+    metadataHeader: 'Import-Metadata',
+    metadata: { title_base64: b64(finalTitle), mime_type: finalMime },
+    body: buffer,
+    cost: 5,
+  });
 }

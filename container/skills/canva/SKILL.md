@@ -15,7 +15,14 @@ Tienes 7 tools MCP para hablar con Canva en nombre del user actual. La conexión
 | `canva_get_user_profile` | Confirmar qué cuenta está vinculada | 1 |
 | `canva_list_designs` | Listar diseños del user (paginado, filtrable) | 1 |
 | `canva_get_design` | Detalles de un diseño (URL de edición, thumbnail) | 1 |
-| `canva_create_design` | Crear diseño nuevo en blanco con un design_type | 2 |
+| `canva_create_design` | Crear diseño **EN BLANCO** (sin contenido) | 2 |
+| `canva_list_brand_templates` | Listar Brand Templates del user (rellenables vía autofill) | 1 |
+| `canva_get_brand_template_dataset` | Ver qué fields acepta una template (text/image/chart) | 1 |
+| `canva_create_design_autofill` | **Crear diseño CON CONTENIDO** rellenando una Brand Template | 5 |
+| `canva_get_autofill_status` | Status del autofill, devuelve design final | 1 |
+| `canva_upload_asset` | Subir imagen/video → asset_id para usar en autofill | 2 |
+| `canva_import_design` | Importar PPTX/DOCX/PDF → diseño Canva editable | 5 |
+| `canva_get_import_status` | Status del import, devuelve designs creados | 1 |
 | `canva_export_design` | Exportar a PDF/PNG/JPG (async — devuelve job_id) | **10** |
 | `canva_get_export_status` | Ver status de un export job, obtener URL de descarga | 1 |
 
@@ -48,7 +55,27 @@ canva_list_designs({ ownership: 'owned' })
 ```
 Si hay muchos, usa `query` para filtrar por título: `canva_list_designs({ query: 'webinar' })`.
 
-### "Crea una presentación / un post de Instagram / un doc"
+### "Hazme una propuesta / presentación con CONTENIDO X"
+
+⚠️ **Nunca uses `canva_create_design` para esto** — solo crea un canvas vacío y el PDF saldrá en blanco.
+
+Flujo correcto con **autofill** (requiere Canva Enterprise en la cuenta del user):
+
+1. `canva_list_brand_templates({ query: 'propuesta' })` — encontrar la template
+2. `canva_get_brand_template_dataset({ brand_template_id })` — descubrir qué fields acepta (ej. `cliente`, `monto`, `fecha`)
+3. (Si hay fields tipo image) `canva_upload_asset({ file_path: '/workspace/...png' })` → guarda el `asset_id`
+4. `canva_create_design_autofill({ brand_template_id, title, data: { cliente: { type:'text', text:'Brenda Go' }, logo: { type:'image', asset_id:'...' } } })` → job_id
+5. Loop `canva_get_autofill_status({ job_id })` cada 5-10s hasta `status === 'success'` (máx 6 intentos)
+6. `result.design` trae `id`, `urls.edit_url`, `thumbnail.url` — manda thumbnail al user (ver patrón abajo)
+7. Si user pide PDF, `canva_export_design({ design_id, format: 'pdf' })` y sigue export flow
+
+**Si el user NO tiene Brand Templates** (autofill falla con `not_supported` o similar) usa el flujo de import:
+1. Genera el contenido como PPTX (Bash con pptxgenjs) o como PDF
+2. `canva_import_design({ file_path, title })` → job_id
+3. `canva_get_import_status({ job_id })` hasta success
+4. `result.designs[0]` es el diseño Canva editable resultante
+
+### "Crea una presentación EN BLANCO / un post de Instagram VACÍO para editar a mano"
 Mapeo design_type → user request:
 - `presentation`, `presentation_4_3`, `presentation_16_9`
 - `instagram_post`, `instagram_story`
