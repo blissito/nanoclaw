@@ -61,7 +61,16 @@ Mapeo design_type → user request:
 ```
 canva_create_design({ design_type: 'instagram_post', title: 'Promo lunes' })
 ```
-Después dale al user la `urls.edit_url` de la respuesta para que lo edite en Canva.
+
+**MANDA EL THUMBNAIL, NO SOLO EL LINK.** La respuesta incluye `design.thumbnail.url` (PNG ~600px, gratis, no consume quota). UX > URL feo. Patrón a seguir:
+
+1. Llama `canva_create_design`
+2. De la respuesta, toma `design.thumbnail.url` → mándala como **imagen** por WhatsApp (Bash con `wget` + `send-message --image`, o el helper de envío de imágenes de NanoClaw)
+3. En el caption pones: `✅ Listo — edítalo aquí: <design.urls.edit_url>` (sin pegar el URL gigante crudo, usa formato `*Editar diseño*` con link embebido si el canal lo soporta)
+
+Mismo patrón aplica a `canva_get_design` y `canva_list_designs` (cuando muestres un diseño específico). Para listas de diseños, manda solo nombres + edit_url; el thumbnail solo cuando el user enfoca uno en particular.
+
+⚠️ El `thumbnail.url` de Canva expira en ~horas. Para URLs estables, sube el PNG a EasyBits primero. Para mensajes one-shot por WhatsApp no hace falta — el cliente ya lo cacheó.
 
 ### "Exporta el diseño X a PDF"
 1. `canva_export_design({ design_id, format: 'pdf' })` → job_id

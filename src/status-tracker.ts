@@ -199,7 +199,7 @@ export class StatusTracker {
     if (sendErrorMessage) {
       for (const [chatJid] of orphanedByChat) {
         this.deps
-          .sendMessage(chatJid, '\u{1F7E2} system clean')
+          .sendMessage(chatJid, '\u{1F7E2} system: ok')
           .catch((err) =>
             logger.error({ chatJid, err }, 'Failed to send recovery message'),
           );

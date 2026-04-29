@@ -233,7 +233,7 @@ describe('StatusTracker', () => {
       // Should send one recovery message per chatJid
       expect(deps.sendMessage).toHaveBeenCalledWith(
         'main@s.whatsapp.net',
-        '🟢 system clean',
+        '🟢 system: ok',
       );
       expect(deps.sendMessage).toHaveBeenCalledTimes(1);
     });
