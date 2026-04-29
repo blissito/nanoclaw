@@ -403,7 +403,15 @@ export class WhatsAppChannel implements Channel {
                   mime === 'application/vnd.ms-excel' ||
                   mime === 'application/msword';
                 const isArchive =
-                  ['.zip', '.tar', '.gz', '.tgz', '.7z', '.rar', '.bz2'].includes(ext) ||
+                  [
+                    '.zip',
+                    '.tar',
+                    '.gz',
+                    '.tgz',
+                    '.7z',
+                    '.rar',
+                    '.bz2',
+                  ].includes(ext) ||
                   mime === 'application/zip' ||
                   mime === 'application/x-zip-compressed' ||
                   mime === 'application/x-tar' ||
@@ -416,10 +424,7 @@ export class WhatsAppChannel implements Channel {
                 // Always save the document; emit a content hint so the agent
                 // sees the message even for unknown types (no silent drops).
                 const buffer = await downloadMediaMessage(msg, 'buffer', {});
-                const groupDir = path.join(
-                  GROUPS_DIR,
-                  groups[chatJid].folder,
-                );
+                const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
                 const attachDir = path.join(groupDir, 'attachments');
                 fs.mkdirSync(attachDir, { recursive: true });
                 const filename = path.basename(
@@ -436,9 +441,7 @@ export class WhatsAppChannel implements Channel {
                   content = caption ? `${caption}\n\n${pdfRef}` : pdfRef;
                 } else if (isOffice) {
                   const officeRef = `[Office: attachments/${filename} (${sizeKB}KB)]\nUse: office-reader extract attachments/${filename}`;
-                  content = caption
-                    ? `${caption}\n\n${officeRef}`
-                    : officeRef;
+                  content = caption ? `${caption}\n\n${officeRef}` : officeRef;
                 } else if (isMedia) {
                   const mediaType = mime.startsWith('video/')
                     ? 'Video'
@@ -446,7 +449,10 @@ export class WhatsAppChannel implements Channel {
                   const mediaRef = `[${mediaType}: attachments/${filename} (${sizeKB}KB)]`;
                   content = caption ? `${caption}\n\n${mediaRef}` : mediaRef;
                 } else if (isArchive) {
-                  const stem = filename.replace(/\.(zip|tar\.gz|tgz|tar|gz|7z|rar|bz2)$/i, '');
+                  const stem = filename.replace(
+                    /\.(zip|tar\.gz|tgz|tar|gz|7z|rar|bz2)$/i,
+                    '',
+                  );
                   const isTar = /\.(tar|tar\.gz|tgz)$/i.test(filename);
                   const is7z = /\.7z$/i.test(filename);
                   const isRar = /\.rar$/i.test(filename);
@@ -458,7 +464,9 @@ export class WhatsAppChannel implements Channel {
                         ? `mkdir -p attachments/${stem} && unrar x attachments/${filename} attachments/${stem}/`
                         : `unzip -o attachments/${filename} -d attachments/${stem}`;
                   const archiveRef = `[Archive: attachments/${filename} (${sizeKB}KB)]\nUse: ${cmd}`;
-                  content = caption ? `${caption}\n\n${archiveRef}` : archiveRef;
+                  content = caption
+                    ? `${caption}\n\n${archiveRef}`
+                    : archiveRef;
                 } else if (isText) {
                   const INLINE_MAX_KB = 500;
                   if (sizeKB > INLINE_MAX_KB) {
