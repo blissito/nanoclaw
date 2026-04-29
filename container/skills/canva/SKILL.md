@@ -26,6 +26,31 @@ Tienes 7 tools MCP para hablar con Canva en nombre del user actual. La conexión
 | `canva_export_design` | Exportar a PDF/PNG/JPG (async — devuelve job_id) | **10** |
 | `canva_get_export_status` | Ver status de un export job, obtener URL de descarga | 1 |
 
+## ⚠️ Antes de prometer "te lo hago en Canva con contenido"
+
+Crear un diseño con contenido (texto/imágenes inyectados) **NO funciona para todos los users**. Antes de anunciarle nada al user, valida capability — si no la tiene, **no intentes** y ofrécele alternativas en vez. Quemar quota probando es feo y no soluciona nada.
+
+### Matriz de decisión (haz esto primero, no lo skipees)
+
+1. **¿El user pidió contenido específico** ("hazme una propuesta para Brenda con estos puntos", "post con este texto") **o solo un canvas vacío** ("ábreme una presentación para llenarla yo")?
+   - **Vacío** → directo a `canva_create_design`, fin.
+   - **Con contenido** → seguir paso 2.
+
+2. **Llama `canva_list_brand_templates({})`** una vez. Tres escenarios:
+   - **Devuelve templates** → el user tiene Enterprise + templates listas. Sigue el flujo de autofill (workflow más abajo).
+   - **Devuelve `[]` vacío** → el user puede tener Enterprise pero sin templates configuradas, O no tiene Enterprise. **No intentes autofill.** Ofrece dos rutas:
+     - "Puedo armarte el contenido como PPTX o PDF directamente y lo subimos a Canva como diseño editable" → flujo `canva_import_design`.
+     - "O lo entrego como PDF profesional sin pasar por Canva" → usa `structured_doc` (EasyBits) o `pptx-gen`.
+   - **Error 403 / `not_supported` / scope error** → el user **no tiene Canva Enterprise** (o falta scope). Mismo plan B: ofrece import o entrega directa fuera de Canva. **No re-llames** `canva_list_brand_templates` ni autofill — la respuesta no va a cambiar en esta sesión.
+
+3. **Si autofill falla con `not_supported` / 403 después de pasar el list** (raro, pero posible si el plan se downgradeó) → mismo plan B y deja de intentar autofill esa sesión.
+
+### Nunca hagas
+
+- Llamar `canva_create_design` cuando el user pidió contenido. Solo crea canvas vacío → PDF blanco → frustración.
+- Anunciar "te armé la propuesta en Canva" cuando solo creaste un blank. Si solo tienes el blank, dile literal: "te abrí un canvas vacío en Canva, ábrelo y agrégale contenido tú mismo aquí: <edit_url>".
+- Reintentar autofill después de un 403 esperando que cambie. Cambia de estrategia.
+
 ## El flujo OAuth (lee esto antes de la primera llamada)
 
 Si una tool devuelve `needs_oauth`:
@@ -57,23 +82,32 @@ Si hay muchos, usa `query` para filtrar por título: `canva_list_designs({ query
 
 ### "Hazme una propuesta / presentación con CONTENIDO X"
 
-⚠️ **Nunca uses `canva_create_design` para esto** — solo crea un canvas vacío y el PDF saldrá en blanco.
+⚠️ **Pasa primero por la matriz de decisión arriba.** Si no tienes confirmación de que el user tiene Brand Templates, no avances. La meta es no prometerle nada que no puedas entregar.
 
-Flujo correcto con **autofill** (requiere Canva Enterprise en la cuenta del user):
+#### Camino A — autofill (cuando `canva_list_brand_templates` devolvió templates)
 
-1. `canva_list_brand_templates({ query: 'propuesta' })` — encontrar la template
-2. `canva_get_brand_template_dataset({ brand_template_id })` — descubrir qué fields acepta (ej. `cliente`, `monto`, `fecha`)
+1. Elige la template apropiada de la lista (matchea por título / pídele al user que confirme cuál si hay varias)
+2. `canva_get_brand_template_dataset({ brand_template_id })` — descubrir fields (ej. `cliente`, `monto`, `fecha`, `logo`)
 3. (Si hay fields tipo image) `canva_upload_asset({ file_path: '/workspace/...png' })` → guarda el `asset_id`
 4. `canva_create_design_autofill({ brand_template_id, title, data: { cliente: { type:'text', text:'Brenda Go' }, logo: { type:'image', asset_id:'...' } } })` → job_id
 5. Loop `canva_get_autofill_status({ job_id })` cada 5-10s hasta `status === 'success'` (máx 6 intentos)
 6. `result.design` trae `id`, `urls.edit_url`, `thumbnail.url` — manda thumbnail al user (ver patrón abajo)
 7. Si user pide PDF, `canva_export_design({ design_id, format: 'pdf' })` y sigue export flow
 
-**Si el user NO tiene Brand Templates** (autofill falla con `not_supported` o similar) usa el flujo de import:
-1. Genera el contenido como PPTX (Bash con pptxgenjs) o como PDF
+#### Camino B — import (cuando no hay Brand Templates O autofill no es viable)
+
+Útil cuando ya tienes contenido como PPTX/PDF/DOCX y solo quieres que viva en Canva editable:
+
+1. Genera/ten el contenido como archivo (Bash con pptxgenjs para PPTX, o un PDF generado por structured_doc, etc.)
 2. `canva_import_design({ file_path, title })` → job_id
-3. `canva_get_import_status({ job_id })` hasta success
-4. `result.designs[0]` es el diseño Canva editable resultante
+3. `canva_get_import_status({ job_id })` cada 5-10s hasta `success` (máx 6 intentos)
+4. `result.designs[0]` es el diseño Canva editable — manda `urls.edit_url` + thumbnail al user
+
+#### Camino C — entrega fuera de Canva (cuando ni A ni B aplican o el user no necesita Canva)
+
+A veces el user solo quiere "una propuesta bonita". Canva es un medio, no el fin. Si autofill no es opción y el user no necesita editar después en Canva, entrega directo:
+- `structured_doc` (EasyBits) → PDF profesional sin Canva, entrega inmediata
+- `pptx-gen` → PowerPoint con slides estructurados
 
 ### "Crea una presentación EN BLANCO / un post de Instagram VACÍO para editar a mano"
 Mapeo design_type → user request:
@@ -117,8 +151,10 @@ La Canva Connect API **no edita contenido directamente** desde acá — solo cre
 - **`needs_oauth`** → flujo OAuth (ver arriba)
 - **`hourly_limit_exceeded` / `daily_limit_exceeded`** → reportar `retry_after_seconds` al user
 - **`Canva 401`** → el access_token de Canva expiró y el refresh falló. Llama a `canva_connect` para re-vincular.
-- **`Canva 403`** → falta scope. Indica al user que reautorice (re-llama `canva_connect`); el portal pedirá los nuevos scopes.
+- **`Canva 403`** en autofill / brand_templates → el user **no tiene Canva Enterprise** o falta scope. **No reintentes ni anuncies fallo técnico** — explícale en lenguaje natural: "tu plan de Canva no incluye Brand Templates con autofill (eso requiere Enterprise). Te lo armo como PDF/PPTX directo." Y procede con structured_doc o pptx-gen.
+- **`Canva 403`** en otras tools (export/list_designs) → falta scope nuevo. Indica al user que reautorice (re-llama `canva_connect`).
 - **`Canva 404` en get_design** → el diseño no existe o el user no tiene acceso.
+- **`canva_list_brand_templates` devuelve `[]`** → no es error, es señal: el user no tiene templates configuradas. Mismo plan B (import o entrega directa).
 
 ## Lo que NO puedes hacer
 
