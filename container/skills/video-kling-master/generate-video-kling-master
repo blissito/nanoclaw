@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# generate-video-kling-master: text-to-video via fal.ai (Kling 2.1 Master)
+# Usage: generate-video-kling-master "prompt"
+set -euo pipefail
+
+PROMPT="${1:?Usage: generate-video-kling-master \"prompt\"}"
+OUTPUT_DIR="/workspace/group"
+OUTPUT_FILE="${OUTPUT_DIR}/video-kling-master-$(date +%s%3N).mp4"
+MODEL="fal-ai/kling-video/v2.1/master/text-to-video"
+
+if [[ -z "${FAL_KEY:-}" ]]; then
+  echo "ERROR: FAL_KEY not set" >&2
+  exit 1
+fi
+
+PAYLOAD=$(python3 -c "
+import json, sys
+print(json.dumps({
+    'prompt': sys.argv[1],
+    'duration': 5,
+    'aspect_ratio': '16:9'
+}))
+" "$PROMPT")
+
+RESPONSE=$(curl -sS -X POST "https://queue.fal.run/${MODEL}" \
+  -H "Authorization: Key $FAL_KEY" \
+  -H "Content-Type: application/json" \
+  -d "$PAYLOAD")
+
+ERROR=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+if 'detail' in d:
+    print(d['detail'] if isinstance(d['detail'], str) else json.dumps(d['detail']))
+elif 'error' in d:
+    print(d['error'])
+" <<< "$RESPONSE" 2>/dev/null || true)
+
+if [[ -n "$ERROR" ]]; then
+  echo "ERROR: fal.ai: $ERROR" >&2
+  exit 1
+fi
+
+eval $(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print(f'REQUEST_ID={d.get(\"request_id\", \"\")}')
+print(f'STATUS_URL={d.get(\"status_url\", \"\")}')
+print(f'RESPONSE_URL={d.get(\"response_url\", \"\")}')
+" <<< "$RESPONSE")
+
+if [[ -z "$REQUEST_ID" ]]; then
+  echo "ERROR: No request_id in response: $RESPONSE" >&2
+  exit 1
+fi
+
+STATUS_URL="${STATUS_URL:-https://queue.fal.run/${MODEL}/requests/${REQUEST_ID}/status}"
+RESPONSE_URL="${RESPONSE_URL:-https://queue.fal.run/${MODEL}/requests/${REQUEST_ID}}"
+
+echo "Job started: $REQUEST_ID" >&2
+
+for i in $(seq 1 72); do
+  sleep 5
+  STATUS_RESPONSE=$(curl -sS "$STATUS_URL" -H "Authorization: Key $FAL_KEY")
+
+  STATUS=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print(d.get('status', ''))
+" <<< "$STATUS_RESPONSE")
+
+  if [[ "$STATUS" == "COMPLETED" ]]; then
+    RESPONSE=$(curl -sS "$RESPONSE_URL" -H "Authorization: Key $FAL_KEY")
+    break
+  elif [[ "$STATUS" == "FAILED" ]]; then
+    echo "ERROR: Kling Master generation failed" >&2
+    echo "$STATUS_RESPONSE" >&2
+    exit 1
+  fi
+
+  echo "Polling ($i/72)... status: $STATUS" >&2
+done
+
+if [[ "$STATUS" != "COMPLETED" ]]; then
+  echo "ERROR: Timed out waiting for video generation (6 min)" >&2
+  exit 1
+fi
+
+VIDEO_URL=$(python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+v = d.get('video', d.get('output', {}))
+if isinstance(v, dict):
+    print(v.get('url', ''))
+elif isinstance(v, str):
+    print(v)
+else:
+    print('')
+" <<< "$RESPONSE")
+
+if [[ -z "$VIDEO_URL" ]]; then
+  echo "ERROR: No video URL in response" >&2
+  echo "Response: $RESPONSE" >&2
+  exit 1
+fi
+
+curl -sS -o "$OUTPUT_FILE" "$VIDEO_URL"
+
+# Track via IPC (non-fatal)
+{
+  IPC_DIR="/workspace/ipc/messages"
+  mkdir -p "$IPC_DIR"
+  TRACK_FILE="${IPC_DIR}/vidtrack-$(date +%s%3N).json"
+  python3 -c "
+import json, sys
+json.dump({
+    'type': 'track_video_gen',
+    'gen_type': 'text2video',
+    'prompt': sys.argv[1],
+    'model': '${MODEL}',
+    'cost_usd': 1.40
+}, open(sys.argv[2], 'w'))
+" "$PROMPT" "$TRACK_FILE"
+} || true
+
+echo "$OUTPUT_FILE"

@@ -83,3 +83,16 @@ Read the HTML file content and use `mcp__easybits__upload_file` or `mcp__easybit
 - Always preview the HTML before publishing to EasyBits
 - For email type: the output uses a hybrid table+Tailwind approach for email client compatibility
 - Cost: ~$0.00 per generation (Gemini API free tier is generous)
+
+## Default style — Vibe Island
+
+Pages are generated with a default "Vibe Island" look: warm god-rays wallpaper
+(fixed full-page bg), grain noise overlay, JetBrains Mono typography, glass
+surfaces. The wallpaper is served from this repo via jsDelivr.
+
+This default is **soft** — it applies only when the user does not specify a
+different aesthetic. If the user says "minimal", "corporate blue", a brand,
+or shares a reference image, the model follows that instead.
+
+To explicitly bypass the default, just include the visual direction in your
+prompt: `generate-html "minimal white landing for X, no background imagery"`.

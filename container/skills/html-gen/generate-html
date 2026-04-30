@@ -59,7 +59,30 @@ PAGE TYPE GUIDELINES:
 - landing: Hero + features + social proof + CTA + footer. Conversion-focused.
 - doc: Clean reading layout, sidebar TOC, code blocks with syntax highlighting, breadcrumbs.
 - email: Max-width 600px, table-based fallback, inline styles + Tailwind hybrid.
-- dashboard: Stats cards, charts (placeholder), data tables, sidebar nav.'
+- dashboard: Stats cards, charts (placeholder), data tables, sidebar nav.
+
+DEFAULT VISUAL STYLE — "Vibe Island"
+Apply this look unless the user prompt explicitly asks for a different aesthetic
+(e.g. "minimal white", "brutalist", "corporate blue", a specific brand color).
+
+- Body background: warm god-rays wallpaper, fixed full-page, tinted blue→indigo deep at edges with a peach/orange center-top:
+    background:
+      radial-gradient(ellipse at 50% -10%, rgba(254,215,170,0.55), transparent 55%),
+      url("https://cdn.jsdelivr.net/gh/blissito/nanoclaw@main/container/skills/html-gen/assets/hero-wallpaper.webp") center top / cover no-repeat fixed,
+      linear-gradient(180deg, #1e3a8a 0%, #312e81 100%);
+- Grain noise overlay on body::after, fractal SVG, mix-blend-mode: overlay, opacity ~0.35:
+    body::after { content:""; position:fixed; inset:0; pointer-events:none; z-index:1; mix-blend-mode:overlay; opacity:0.35;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox=%270 0 200 200%27 xmlns=%27http://www.w3.org/2000/svg%27%3E%3Cfilter id=%27n%27%3E%3CfeTurbulence type=%27fractalNoise%27 baseFrequency=%270.9%27 numOctaves=%274%27 stitchTiles=%27stitch%27/%3E%3C/filter%3E%3Crect width=%27100%25%27 height=%27100%25%27 filter=%27url(%23n)%27/%3E%3C/svg%3E"); }
+    main, section, header, footer { position: relative; z-index: 2; }
+- Typography: JetBrains Mono for display + body (Google Fonts). Tight tracking on headings, slightly oversized.
+- Surfaces: glass cards `bg-white/8 backdrop-blur-md border border-white/15 rounded-2xl`. Avoid pure-white blocks.
+- Text: `text-orange-50` / `text-amber-100` body, `text-white` headings. Soft drop-shadow on headings.
+- Accents: peach/orange (#fed7aa, #fb923c) on hover/CTA, indigo/blue (#6366f1, #3b82f6) for secondary.
+- Contrast: ensure body content is legible on top of god-rays — use semi-transparent surfaces, not raw text on bg.
+
+Override rules: if the user requests a specific style, brand, or color, IGNORE this default entirely.
+For email type, skip the fixed wallpaper (email clients break it) — use a flat warm gradient instead.
+For dashboard type, dim the wallpaper (extra opacity layer) so charts/stats stay readable.'
 
 # Build the Gemini API request
 GEMINI_MODEL="gemini-2.5-pro-preview-06-05"
