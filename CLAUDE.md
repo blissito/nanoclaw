@@ -208,6 +208,7 @@ Common patterns:
 | `smatch` | `smatch-mcp` | `SMATCH_MONGODB_URI`, `SMATCH_CLUB_ID` (optional → admin/multi-club mode) | Club admin (full CRUD). Empty `SMATCH_CLUB_ID` enables `list_clubs` and per-call `clubId` parameter. |
 | `smatch-public` | `smatch-mcp-public` | `SMATCH_MONGODB_URI`, `SMATCH_CLUB_ID` | Public read-only + reservation requests. Same admin/club-mode behavior as `smatch`. |
 | `brightdata` | `@brightdata/mcp` | `BRIGHTDATA_API_TOKEN` | Web scraping/search |
+| `skydropx` | bundled (`container/mcp-servers/skydropx`) | `SKYDROPX_CLIENT_ID`, `SKYDROPX_CLIENT_SECRET`, `SKYDROPX_BASE_URL` (opt, default prod) | Envíos México: cotizar/crear/rastrear/cancelar guías. OAuth2 client_credentials, token cache 2h. Quote endpoint async — el tool poll-ea internamente hasta `is_completed`. |
 
 ## Client Snapshot (Deploy to New Droplet)
 
