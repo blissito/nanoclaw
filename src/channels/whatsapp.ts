@@ -1224,10 +1224,7 @@ export class WhatsAppChannel implements Channel {
               selectableCount: item.selectableCount,
             },
           });
-          logger.info(
-            { jid: item.jid, name: item.name },
-            'Queued poll sent',
-          );
+          logger.info({ jid: item.jid, name: item.name }, 'Queued poll sent');
         } else {
           await this.sock.sendMessage(item.jid, { text: item.text });
           logger.info(
