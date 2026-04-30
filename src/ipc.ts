@@ -28,6 +28,12 @@ export interface IpcDeps {
   sendAudio: (jid: string, filePath: string) => Promise<void>;
   sendVideo: (jid: string, filePath: string, caption: string) => Promise<void>;
   sendSticker: (jid: string, filePath: string) => Promise<void>;
+  sendPoll: (
+    jid: string,
+    name: string,
+    options: string[],
+    selectableCount: number,
+  ) => Promise<void>;
   sendDocument: (
     jid: string,
     filePath: string,
@@ -281,6 +287,58 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   logger.warn(
                     { chatJid: data.chatJid, sourceGroup },
                     'Unauthorized IPC sticker attempt blocked',
+                  );
+                }
+              } else if (
+                data.type === 'poll' &&
+                data.chatJid &&
+                typeof data.name === 'string' &&
+                Array.isArray(data.options) &&
+                data.options.length >= 2
+              ) {
+                const targetGroup = registeredGroups[data.chatJid];
+                if (
+                  isMain ||
+                  (targetGroup && targetGroup.folder === sourceGroup)
+                ) {
+                  const options = (data.options as unknown[])
+                    .map((o) => (typeof o === 'string' ? o : ''))
+                    .filter((o) => o.length > 0)
+                    .slice(0, 12);
+                  if (options.length < 2) {
+                    logger.warn(
+                      { sourceGroup, chatJid: data.chatJid },
+                      'Rejected poll with fewer than 2 valid options',
+                    );
+                  } else {
+                    const rawCount =
+                      typeof data.selectableCount === 'number'
+                        ? data.selectableCount
+                        : 1;
+                    const selectableCount = Math.max(
+                      1,
+                      Math.min(rawCount, options.length),
+                    );
+                    await deps.sendPoll(
+                      data.chatJid,
+                      data.name,
+                      options,
+                      selectableCount,
+                    );
+                    logger.info(
+                      {
+                        chatJid: data.chatJid,
+                        sourceGroup,
+                        options: options.length,
+                        selectableCount,
+                      },
+                      'IPC poll sent',
+                    );
+                  }
+                } else {
+                  logger.warn(
+                    { chatJid: data.chatJid, sourceGroup },
+                    'Unauthorized IPC poll attempt blocked',
                   );
                 }
               } else if (

@@ -1549,6 +1549,16 @@ async function main(): Promise<void> {
       }
       return Promise.resolve();
     },
+    sendPoll: (jid, name, options, selectableCount) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      if (channel.sendPoll) {
+        return channel.sendPoll(jid, name, options, selectableCount);
+      }
+      // Fallback: send poll as numbered text list
+      const list = options.map((o, i) => `${i + 1}. ${o}`).join('\n');
+      return channel.sendMessage(jid, `📊 ${name}\n${list}`);
+    },
     sendAudio: (jid, filePath) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);

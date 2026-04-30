@@ -113,6 +113,13 @@ export interface Channel {
   ): Promise<void>;
   // Optional: send a sticker (WebP image).
   sendSticker?(jid: string, filePath: string): Promise<void>;
+  // Optional: send a native poll (WhatsApp/Telegram). selectableCount=1 → single choice.
+  sendPoll?(
+    jid: string,
+    name: string,
+    options: string[],
+    selectableCount: number,
+  ): Promise<void>;
   // Optional: react to a message with an emoji.
   sendReaction?(
     jid: string,

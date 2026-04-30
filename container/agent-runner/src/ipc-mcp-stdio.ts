@@ -159,6 +159,49 @@ server.tool(
 );
 
 server.tool(
+  'send_poll',
+  'Send a native WhatsApp poll to the chat. Members tap to vote. Use for quick decisions, scheduling (e.g. "¿Qué día nos vemos?"), preferences, or fun. Up to 12 options. selectable_count=1 → single choice (default), >1 → multi-select.',
+  {
+    name: z.string().min(1).max(255).describe('Poll question / title (e.g. "¿A qué hora cenamos?")'),
+    options: z
+      .array(z.string().min(1).max(100))
+      .min(2)
+      .max(12)
+      .describe('List of answers. Min 2, max 12.'),
+    selectable_count: z
+      .number()
+      .int()
+      .min(1)
+      .default(1)
+      .describe('How many options each voter can pick. 1 = single choice (default), >1 = multi-select.'),
+  },
+  async (args) => {
+    const selectableCount = Math.max(
+      1,
+      Math.min(args.selectable_count ?? 1, args.options.length),
+    );
+    const data = {
+      type: 'poll',
+      chatJid,
+      name: args.name,
+      options: args.options,
+      selectableCount,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+    writeIpcFile(MESSAGES_DIR, data);
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Poll queued: "${args.name}" (${args.options.length} options, pick ${selectableCount}).`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
   'send_reaction',
   'React to a message with an emoji. Use message IDs from the conversation context. Great for acknowledging messages (👍), confirming actions (✅), or showing appreciation (❤️🔥). Omit message_id to react to the most recent message in the chat.',
   {

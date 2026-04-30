@@ -67,6 +67,13 @@ export class WhatsAppChannel implements Channel {
     | { kind: 'image'; jid: string; filePath: string; caption: string }
     | { kind: 'video'; jid: string; filePath: string; caption: string }
     | { kind: 'sticker'; jid: string; filePath: string }
+    | {
+        kind: 'poll';
+        jid: string;
+        name: string;
+        options: string[];
+        selectableCount: number;
+      }
   > = [];
   private flushing = false;
   private groupSyncTimerStarted = false;
@@ -750,6 +757,46 @@ export class WhatsAppChannel implements Channel {
     }
   }
 
+  async sendPoll(
+    jid: string,
+    name: string,
+    options: string[],
+    selectableCount: number,
+  ): Promise<void> {
+    if (!this.connected) {
+      this.outgoingQueue.push({
+        kind: 'poll',
+        jid,
+        name,
+        options,
+        selectableCount,
+      });
+      logger.info(
+        { jid, options: options.length },
+        'WA disconnected, poll queued',
+      );
+      return;
+    }
+    try {
+      await this.sock.sendMessage(jid, {
+        poll: { name, values: options, selectableCount },
+      });
+      logger.info(
+        { jid, name, options: options.length, selectableCount },
+        'Poll sent',
+      );
+    } catch (err) {
+      this.outgoingQueue.push({
+        kind: 'poll',
+        jid,
+        name,
+        options,
+        selectableCount,
+      });
+      logger.warn({ jid, err }, 'Failed to send poll, queued');
+    }
+  }
+
   async sendSticker(jid: string, filePath: string): Promise<void> {
     if (!this.connected) {
       this.outgoingQueue.push({ kind: 'sticker', jid, filePath });
@@ -1168,6 +1215,18 @@ export class WhatsAppChannel implements Channel {
           logger.info(
             { jid: item.jid, filePath: item.filePath },
             'Queued sticker sent',
+          );
+        } else if (item.kind === 'poll') {
+          await this.sock.sendMessage(item.jid, {
+            poll: {
+              name: item.name,
+              values: item.options,
+              selectableCount: item.selectableCount,
+            },
+          });
+          logger.info(
+            { jid: item.jid, name: item.name },
+            'Queued poll sent',
           );
         } else {
           await this.sock.sendMessage(item.jid, { text: item.text });
