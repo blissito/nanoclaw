@@ -106,6 +106,63 @@ function pickReceivedEmoji(content: string): string {
   return '\u{1F440}';
 }
 
+const STANDBY_IMAGE_PATH = path.join(
+  process.cwd(),
+  'assets',
+  'technical-difficulties.jpg',
+);
+const STANDBY_COOLDOWN_MS = 5 * 60_000;
+const lastStandbyAt: Record<string, number> = {};
+
+function isApiOutageError(text: string): boolean {
+  return (
+    /^\s*API Error:\s*\d{3}/i.test(text) ||
+    /\b(invalid_request_error|authentication_error|rate_limit_error|overloaded_error|api_error)\b/.test(
+      text,
+    ) ||
+    /adaptive thinking is not supported/i.test(text) ||
+    /^\s*Connection error\.?\s*$/i.test(text) ||
+    /^\s*Bad Gateway\s*$/i.test(text)
+  );
+}
+
+async function sendStandByImage(
+  channel: Channel,
+  chatJid: string,
+  groupName: string,
+  originalErrorText: string,
+): Promise<void> {
+  logger.warn(
+    {
+      group: groupName,
+      errorPreview: originalErrorText.slice(0, 200),
+    },
+    'API outage detected — replacing error text with stand-by image',
+  );
+  const now = Date.now();
+  if (
+    lastStandbyAt[chatJid] &&
+    now - lastStandbyAt[chatJid] < STANDBY_COOLDOWN_MS
+  ) {
+    logger.info({ chatJid }, 'Stand-by image suppressed (cooldown)');
+    return;
+  }
+  lastStandbyAt[chatJid] = now;
+
+  if (channel.sendImage && fs.existsSync(STANDBY_IMAGE_PATH)) {
+    try {
+      await channel.sendImage(chatJid, STANDBY_IMAGE_PATH, '');
+      return;
+    } catch (err) {
+      logger.warn({ err, chatJid }, 'sendImage failed, falling back to text');
+    }
+  }
+  await channel.sendMessage(
+    chatJid,
+    '_Dificultades técnicas. Vuelve a intentar en unos minutos._',
+  );
+}
+
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
   const agentTs = getRouterState('last_agent_timestamp');
@@ -521,7 +578,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           `Agent output: ${raw.length} chars${isMetaNoResponse ? ' (filtered: no-response-needed)' : ''}`,
         );
         if (text && !isMetaNoResponse) {
-          await channel.sendMessage(chatJid, text);
+          if (isApiOutageError(text)) {
+            await sendStandByImage(channel, chatJid, group.name, text);
+          } else {
+            await channel.sendMessage(chatJid, text);
+          }
           outputSentToUser = true;
           sentTextThisResult = true;
         }

@@ -27,7 +27,9 @@ export interface ProxyConfig {
   authMode: AuthMode;
 }
 
-const FALLBACK_MODEL = 'claude-sonnet-4-20250514';
+// claude-sonnet-4-6 is the only Sonnet that accepts the SDK's `thinking: { type: "adaptive" }`.
+// Verified via api.anthropic.com 2026-04-29: sonnet-4-20250514 and sonnet-4-5 both reject adaptive.
+const FALLBACK_MODEL = 'claude-sonnet-4-6';
 
 // ---------------------------------------------------------------------------
 // Vault: Per-group policies
