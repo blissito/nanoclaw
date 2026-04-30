@@ -36,6 +36,12 @@ function ensureInGroupDir(filePath: string): string {
   return dest;
 }
 
+/** Return the file's parent dir relative to GROUP_DIR (e.g. "attachments"), or undefined for root. */
+function subdirRelativeToGroup(safePath: string): string | undefined {
+  const rel = path.relative(GROUP_DIR, path.dirname(safePath));
+  return rel === '' ? undefined : rel;
+}
+
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
 
@@ -85,11 +91,13 @@ server.tool(
 
     if (args.video_path) {
       const safePath = ensureInGroupDir(args.video_path);
+      const subdir = subdirRelativeToGroup(safePath);
       const filename = path.basename(safePath);
       const data = {
         type: 'video',
         chatJid,
         filename,
+        subdir,
         caption: args.text || '',
         groupFolder,
         timestamp: new Date().toISOString(),
@@ -100,11 +108,13 @@ server.tool(
 
     if (args.document_path) {
       const safePath = ensureInGroupDir(args.document_path);
+      const subdir = subdirRelativeToGroup(safePath);
       const filename = path.basename(safePath);
       const data = {
         type: 'document',
         chatJid,
         filename,
+        subdir,
         originalName: filename,
         caption: args.text || '',
         groupFolder,
@@ -116,11 +126,13 @@ server.tool(
 
     if (args.audio_path) {
       const safePath = ensureInGroupDir(args.audio_path);
+      const subdir = subdirRelativeToGroup(safePath);
       const filename = path.basename(safePath);
       const data = {
         type: 'audio',
         chatJid,
         filename,
+        subdir,
         groupFolder,
         timestamp: new Date().toISOString(),
       };
@@ -130,11 +142,13 @@ server.tool(
 
     if (args.image_path) {
       const safePath = ensureInGroupDir(args.image_path);
+      const subdir = subdirRelativeToGroup(safePath);
       const filename = path.basename(safePath);
       const data = {
         type: 'image',
         chatJid,
         filename,
+        subdir,
         caption: args.text,
         groupFolder,
         timestamp: new Date().toISOString(),

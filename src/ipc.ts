@@ -189,11 +189,15 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     );
                   } else {
                     const folder = targetGroup?.folder || sourceGroup;
-                    const absPath = path.join(
-                      GROUPS_DIR,
-                      folder,
-                      data.filename,
-                    );
+                    const subdir =
+                      data.subdir &&
+                      !data.subdir.startsWith('/') &&
+                      !data.subdir.includes('..')
+                        ? data.subdir
+                        : '';
+                    const absPath = subdir
+                      ? path.join(GROUPS_DIR, folder, subdir, data.filename)
+                      : path.join(GROUPS_DIR, folder, data.filename);
                     await deps.sendAudio(data.chatJid, absPath);
                     logger.info(
                       { chatJid: data.chatJid, sourceGroup },
@@ -226,11 +230,15 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     );
                   } else {
                     const folder = targetGroup?.folder || sourceGroup;
-                    const absPath = path.join(
-                      GROUPS_DIR,
-                      folder,
-                      data.filename,
-                    );
+                    const subdir =
+                      data.subdir &&
+                      !data.subdir.startsWith('/') &&
+                      !data.subdir.includes('..')
+                        ? data.subdir
+                        : '';
+                    const absPath = subdir
+                      ? path.join(GROUPS_DIR, folder, subdir, data.filename)
+                      : path.join(GROUPS_DIR, folder, data.filename);
                     await deps.sendVideo(
                       data.chatJid,
                       absPath,
@@ -361,11 +369,15 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     );
                   } else {
                     const folder = targetGroup?.folder || sourceGroup;
-                    const absPath = path.join(
-                      GROUPS_DIR,
-                      folder,
-                      data.filename,
-                    );
+                    const subdir =
+                      data.subdir &&
+                      !data.subdir.startsWith('/') &&
+                      !data.subdir.includes('..')
+                        ? data.subdir
+                        : '';
+                    const absPath = subdir
+                      ? path.join(GROUPS_DIR, folder, subdir, data.filename)
+                      : path.join(GROUPS_DIR, folder, data.filename);
                     await deps.sendDocument(
                       data.chatJid,
                       absPath,
@@ -467,11 +479,15 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     (targetGroup && targetGroup.folder === sourceGroup)
                   ) {
                     const folder = targetGroup?.folder || sourceGroup;
-                    const absPath = path.join(
-                      GROUPS_DIR,
-                      folder,
-                      data.filename,
-                    );
+                    const subdir =
+                      data.subdir &&
+                      !data.subdir.startsWith('/') &&
+                      !data.subdir.includes('..')
+                        ? data.subdir
+                        : '';
+                    const absPath = subdir
+                      ? path.join(GROUPS_DIR, folder, subdir, data.filename)
+                      : path.join(GROUPS_DIR, folder, data.filename);
                     await deps.sendImage(
                       data.chatJid,
                       absPath,
