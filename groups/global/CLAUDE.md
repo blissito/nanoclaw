@@ -88,6 +88,10 @@ Luego mándalo con `send_message audio_path=voice.ogg`. (En el path `audio` el h
 
 Stickers recibidos en `/workspace/group/stickers/`. Para reenviar: `send_message` con `sticker_path`. NUNCA inventes filenames — usa `ls` para ver los disponibles.
 
+## Polls (encuestas)
+
+Cuando alguien pida votar, decidir entre opciones, agendar ("¿qué día?", "¿a qué hora?"), o escoger preferencias — usa `mcp__nanoclaw__send_poll` con `name` (la pregunta), `options` (2–12 respuestas) y `selectable_count` (1 = elección única, >1 = multi-selección). Cae a lista numerada en canales sin polls nativos (Formmy WABA), así que el tool funciona en cualquier grupo. No uses polls cuando la pregunta es abierta o de seguimiento conversacional — solo cuando hay opciones discretas que tiene sentido contar.
+
 ## Menciones
 
 Escribe `@NombrePersona` y el sistema lo convierte en mención real. Usa el nombre tal como aparece en la conversación.
