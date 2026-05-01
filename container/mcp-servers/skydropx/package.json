@@ -1,12 +1,46 @@
 {
-  "name": "nanoclaw-skydropx-mcp",
-  "version": "1.0.0",
+  "name": "skydropx-mcp",
+  "version": "0.1.0",
   "type": "module",
-  "description": "Skydropx PRO shipping MCP server for NanoClaw agents",
+  "description": "MCP server para la API de Skydropx PRO — cotizar, crear, rastrear y cancelar envíos en México (FedEx, DHL, Estafeta, J&T, Sendex y más).",
   "main": "dist/index.js",
+  "bin": {
+    "skydropx-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js"
+    "build": "tsc && chmod +x dist/index.js",
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "skydropx",
+    "shipping",
+    "envios",
+    "mexico",
+    "claude",
+    "anthropic",
+    "ai-agent"
+  ],
+  "author": "hectorbliss",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blissito/nanoclaw.git",
+    "directory": "container/mcp-servers/skydropx"
+  },
+  "homepage": "https://github.com/blissito/nanoclaw/tree/main/container/mcp-servers/skydropx",
+  "bugs": {
+    "url": "https://github.com/blissito/nanoclaw/issues"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

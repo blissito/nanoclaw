@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * Skydropx PRO MCP Server — stdio transport.
  * Tools for shipping in Mexico: quote rates, create shipments, track, cancel.
