@@ -13,6 +13,7 @@ import http from 'http';
 import https from 'https';
 import crypto from 'crypto';
 import { CronExpressionParser } from 'cron-parser';
+import { runSiiqtecQuotePdf, type QuoteInput } from './siiqtec-quote.js';
 
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
@@ -1265,6 +1266,73 @@ server.tool(
     } catch (err) {
       return {
         content: [{ type: 'text' as const, text: `Failed to send email: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'siiqtec_quote_pdf',
+  'Genera una cotización SIIQTEC en PDF (template oficial: header SIIQTEC, RECEPTOR, productos con imagen, totales con envío Ruta SIIQTEC o paquetería, ficha de depósito, card MercadoPago con QR + botón "Clic para pagar"). La tool valida cantidades, recalcula montos, genera link de pago MercadoPago fresco, valida que las imágenes existan (cae a placeholder S/I si fallan), y particiona automáticamente en páginas si hay >6 productos. NUNCA inventes amounts; pasa qty + unit_price por item y la tool calcula. Devuelve el path local del PDF para mandarlo con send_message.',
+  {
+    folio: z.string().regex(/^\d{6}-\d{3}$/, 'folio debe ser YYMMDD-NNN').describe('Folio de cotización formato YYMMDD-NNN (ej: 260430-001).'),
+    fecha: z.string().optional().describe('Fecha en formato DD/MM/YYYY. Si se omite, usa la fecha de hoy.'),
+    cliente: z.object({
+      nombre: z.string().min(1).describe('Nombre del cliente. Requerido.'),
+      rfc: z.string().nullable().optional(),
+      email: z.string().nullable().optional(),
+      tel: z.string().nullable().optional(),
+      domicilio: z.string().min(1).describe('Domicilio completo. Requerido para cálculo de envío.'),
+      colonia: z.string().nullable().optional(),
+      ciudad: z.string().nullable().optional(),
+      negocio: z.string().nullable().optional(),
+      vendedor: z.string().nullable().optional().describe('Nombre del vendedor. Default: "SIIQTEC".'),
+    }),
+    items: z
+      .array(
+        z.object({
+          sku: z.string().min(1),
+          qty: z.number().positive(),
+          unit: z.enum(['PZA', 'GARRAFA', 'KG', 'LT', 'CAJA', 'BOLSA', 'PAR', 'JGO']),
+          nombre: z.string().min(1),
+          unit_price: z.number().min(0).describe('Precio unitario. La tool calcula el importe (qty × unit_price).'),
+          imagen_url: z.string().url().nullable().optional().describe('URL de la imagen del producto. Si falla la verificación, se sustituye por placeholder S/I.'),
+        }),
+      )
+      .min(1)
+      .max(99),
+    envio: z
+      .union([
+        z.object({
+          modo: z.literal('ruta_siiqtec'),
+          dia: z.string().min(1).describe('Día de entrega (ej: "Miércoles").'),
+          destino: z.string().min(1).describe('Destino visible en la cotización (ej: "Tulancingo, Hgo").'),
+        }),
+        z.object({
+          modo: z.literal('paqueteria'),
+          carrier: z.string().min(1),
+          cp: z.string().min(1),
+          dias: z.string().min(1),
+          costo: z.number().min(0),
+        }),
+      ])
+      .describe('Modo de envío. ruta_siiqtec = gratis. paqueteria = costo cotizado.'),
+  },
+  async (args) => {
+    try {
+      const result = await runSiiqtecQuotePdf(args as QuoteInput);
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(result),
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: err instanceof Error ? err.message : String(err) }],
         isError: true,
       };
     }
