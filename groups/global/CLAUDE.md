@@ -127,6 +127,8 @@ Matriz binaria. Para detalles seguí la skill **structured-doc**.
 
 **structured_doc**: templates curados + `create_template` para casos custom. Reglas duras: `list_templates` + `get_template_schema` antes de `create_doc`; match de idioma schema↔data; descripciones ≤40 chars; leer `warnings` del response.
 
+**Presentaciones / decks**: entrega siempre el PDF directo como buffer adjunto. Para tamaños no-carta (1920×1080, 16:9, custom), NO uses el previsualizador carta — aplasta el contenido. Manda link en vivo si aplica, pero el PDF es el entregable.
+
 Logo Formmy: `https://viento-latente.easybits.cloud/formmy-logo.jpg` · Acento `#6366F1`.
 
 ## Web Browsing
