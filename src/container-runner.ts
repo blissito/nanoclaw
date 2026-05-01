@@ -401,6 +401,19 @@ function buildEnvFile(
     );
   }
 
+  const skydropxEnv = readEnvFile([
+    'SKYDROPX_CLIENT_ID',
+    'SKYDROPX_CLIENT_SECRET',
+    'SKYDROPX_BASE_URL',
+  ]);
+  if (skydropxEnv.SKYDROPX_CLIENT_ID && skydropxEnv.SKYDROPX_CLIENT_SECRET) {
+    envLines.push(`SKYDROPX_CLIENT_ID=${skydropxEnv.SKYDROPX_CLIENT_ID}`);
+    envLines.push(`SKYDROPX_CLIENT_SECRET=${skydropxEnv.SKYDROPX_CLIENT_SECRET}`);
+    if (skydropxEnv.SKYDROPX_BASE_URL) {
+      envLines.push(`SKYDROPX_BASE_URL=${skydropxEnv.SKYDROPX_BASE_URL}`);
+    }
+  }
+
   // Per-group env overrides (from container_config.env)
   if (containerConfig?.env) {
     for (const [key, value] of Object.entries(containerConfig.env)) {

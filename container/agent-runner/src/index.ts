@@ -421,6 +421,15 @@ function getAllMcpServers(containerInput: ContainerInput, mcpServerPath: string)
         NANOCLAW_CHAT_JID: containerInput.chatJid,
       },
     },
+    skydropx: {
+      command: 'node',
+      args: ['/app/mcp-servers/skydropx/dist/index.js'],
+      env: {
+        SKYDROPX_CLIENT_ID: process.env.SKYDROPX_CLIENT_ID || '',
+        SKYDROPX_CLIENT_SECRET: process.env.SKYDROPX_CLIENT_SECRET || '',
+        SKYDROPX_BASE_URL: process.env.SKYDROPX_BASE_URL || 'https://pro.skydropx.com',
+      },
+    },
   };
 }
 
