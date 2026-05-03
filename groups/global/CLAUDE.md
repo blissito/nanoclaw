@@ -169,7 +169,17 @@ Para código/logs/configs >20 líneas, usa `create-gist "file.ext" "contenido"`.
 
 ## HTML docs (extra — cuando no hay template y no querés DSL)
 
-`create_document` → `set_page_html` → `get_page_screenshot` → `deploy_document`. Cada página 816×1056px, `overflow: hidden`. Para arreglar un doc existente: `list_documents` → `get_page_html`/`get_page_screenshot` → `set_page_html`/`replace_html`.
+Cada página 816×1056px, `overflow: hidden`. Para arreglar un doc existente: `list_documents` → `get_page_html`/`get_page_screenshot` → `set_page_html`/`replace_html`.
+
+### Pipeline óptimo para crear docs vía MCP de EasyBits (V2 paralelo)
+
+1. `create_document` (1 llamada, ~9s) — define formato, tema, brandKit y outline base.
+2. `add_page` × N **en paralelo** — emite las N llamadas en un solo turno; no esperes entre páginas. Wall clock ≈ la más lenta (~7s para 4), no la suma.
+3. `set_page_html` × N **en paralelo** — mismo patrón: todas las llamadas en un solo turno. Wall clock ≈ la más lenta (~11s para 4).
+4. `deploy_document` (~8s).
+5. `export_document` con `as: "images"` solo si el usuario pide PNGs/carrusel social. **UNA sola llamada para todas las páginas** (~11s para 4 páginas en estado caliente). NO fragmentes con `sectionIds` × N en paralelo: medido empíricamente, paralelizar empeora el wall clock ~1.6× porque cada llamada paga setup completo de Playwright (browser launch + doc fetch + brand kit), que es amortizable por llamada, no por página. Usá `sectionIds` solo si necesitás un subset real (ej: re-exportar 1 página editada).
+
+**Regla clave:** cualquier conjunto de llamadas MCP que no dependa entre sí (varios `add_page`, varios `set_page_html`, varios `get_page_html`) debe ir en un único turno con múltiples tool_uses. Secuencializarlas multiplica el wall clock por N sin razón. Pero `export_document` es la excepción — el bulk gana.
 
 Colores dark themes (inline styles): fondos `#0B1120`/`#0F172A`, cards `#1E293B`, texto `#F1F5F9`/`#CBD5E1`/`#94A3B8`, borders `rgba(148,163,184,0.15)`. Barra acento: `class="h-1.5 bg-gradient-to-r from-[#06B6D4] via-[#8B5CF6] to-[#F59E0B]"`.
 
