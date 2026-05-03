@@ -338,8 +338,7 @@ const server = http.createServer(async (req, res) => {
       parts.length === 2
     ) {
       const body = await readBody(req);
-      const name =
-        typeof body.name === 'string' ? body.name.trim() : '';
+      const name = typeof body.name === 'string' ? body.name.trim() : '';
       if (!name) return send(res, 400, { error: 'name_required' });
 
       let proxyResp: Response;
@@ -366,10 +365,16 @@ const server = http.createServer(async (req, res) => {
       try {
         result = JSON.parse(proxyText);
       } catch {
-        return send(res, 502, { error: 'invalid_proxy_response', detail: proxyText });
+        return send(res, 502, {
+          error: 'invalid_proxy_response',
+          detail: proxyText,
+        });
       }
       if (!result.jid) {
-        return send(res, 502, { error: 'no_jid_in_response', detail: proxyText });
+        return send(res, 502, {
+          error: 'no_jid_in_response',
+          detail: proxyText,
+        });
       }
 
       const g = getAllRegisteredGroups()[result.jid];
@@ -412,7 +417,10 @@ const server = http.createServer(async (req, res) => {
       try {
         result = JSON.parse(proxyText);
       } catch {
-        return send(res, 502, { error: 'invalid_proxy_response', detail: proxyText });
+        return send(res, 502, {
+          error: 'invalid_proxy_response',
+          detail: proxyText,
+        });
       }
       return send(res, 200, { invite_link: result.link ?? null });
     }
