@@ -916,8 +916,9 @@ async function main(): Promise<void> {
   // --- EXPERIMENT: auto-compact bloated sessions before first query ---
   // When a session .jsonl exceeds this size, we force /compact before
   // the real prompt so the model doesn't choke on megabytes of history.
-  // Threshold: 1MB. Remove or adjust after evaluating results.
-  const SESSION_SIZE_COMPACT_THRESHOLD = 20 * 1024 * 1024; // 20MB (jsonl is append-only and never shrinks after compact)
+  // 4MB observed empirically: sessions >6MB cause 30-min hangs on resume
+  // (container init succeeds but no streaming output before SIGKILL).
+  const SESSION_SIZE_COMPACT_THRESHOLD = 4 * 1024 * 1024; // 4MB (jsonl is append-only and never shrinks after compact)
   if (sessionId) {
     const sessionFile = path.join(
       os.homedir(), '.claude', 'projects', '-workspace-group', `${sessionId}.jsonl`,
