@@ -217,6 +217,31 @@ server.tool(
 );
 
 server.tool(
+  'send_location',
+  'Send a WhatsApp location pin to the chat. Tap-to-open in Maps. Use for sharing addresses, meeting points, store locations.',
+  {
+    latitude: z.number().min(-90).max(90).describe('Latitude in decimal degrees, e.g. 19.4326'),
+    longitude: z.number().min(-180).max(180).describe('Longitude in decimal degrees, e.g. -99.1332'),
+    name: z.string().optional().describe('Place name shown above the pin (e.g. "Café Tomás")'),
+    address: z.string().optional().describe('Street address shown below the name (e.g. "Av. Reforma 123, CDMX")'),
+  },
+  async (args) => {
+    const data = {
+      type: 'location',
+      chatJid,
+      latitude: args.latitude,
+      longitude: args.longitude,
+      name: args.name || undefined,
+      address: args.address || undefined,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+    writeIpcFile(MESSAGES_DIR, data);
+    return { content: [{ type: 'text' as const, text: 'Location queued for delivery.' }] };
+  },
+);
+
+server.tool(
   'send_reaction',
   'React to a message with an emoji. Use message IDs from the conversation context. Great for acknowledging messages (👍), confirming actions (✅), or showing appreciation (❤️🔥). Omit message_id to react to the most recent message in the chat.',
   {

@@ -1521,6 +1521,18 @@ async function main(): Promise<void> {
         caption || '[Document not supported on this channel]',
       );
     },
+    sendLocation: (jid, latitude, longitude, name, address) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      if (channel.sendLocation) {
+        return channel.sendLocation(jid, latitude, longitude, name, address);
+      }
+      // Fallback: send a Google Maps link so the user still gets the point.
+      const link = `https://maps.google.com/?q=${latitude},${longitude}`;
+      const label = name ? `${name}\n` : '';
+      const addr = address ? `${address}\n` : '';
+      return channel.sendMessage(jid, `${label}${addr}${link}`);
+    },
     sendVideo: (jid, filePath, caption) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);

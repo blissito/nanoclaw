@@ -59,6 +59,7 @@ beforeEach(() => {
     sendSticker: async () => {},
     sendPoll: async () => {},
     sendDocument: async () => {},
+    sendLocation: async () => {},
     registeredGroups: () => groups,
     registerGroup: (jid, group) => {
       groups[jid] = group;

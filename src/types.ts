@@ -127,6 +127,14 @@ export interface Channel {
     emoji: string,
     participant?: string,
   ): Promise<void>;
+  // Optional: send a native location pin (lat/lng + optional name/address).
+  sendLocation?(
+    jid: string,
+    latitude: number,
+    longitude: number,
+    name?: string,
+    address?: string,
+  ): Promise<void>;
   // Optional: typing indicator. Channels that support it implement it.
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
   // Optional: sync group/chat names from the platform.

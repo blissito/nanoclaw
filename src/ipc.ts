@@ -40,6 +40,13 @@ export interface IpcDeps {
     filename: string,
     caption: string,
   ) => Promise<void>;
+  sendLocation: (
+    jid: string,
+    latitude: number,
+    longitude: number,
+    name: string | undefined,
+    address: string | undefined,
+  ) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -347,6 +354,39 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   logger.warn(
                     { chatJid: data.chatJid, sourceGroup },
                     'Unauthorized IPC poll attempt blocked',
+                  );
+                }
+              } else if (
+                data.type === 'location' &&
+                data.chatJid &&
+                typeof data.latitude === 'number' &&
+                typeof data.longitude === 'number'
+              ) {
+                const targetGroup = registeredGroups[data.chatJid];
+                if (
+                  isMain ||
+                  (targetGroup && targetGroup.folder === sourceGroup)
+                ) {
+                  await deps.sendLocation(
+                    data.chatJid,
+                    data.latitude,
+                    data.longitude,
+                    typeof data.name === 'string' ? data.name : undefined,
+                    typeof data.address === 'string' ? data.address : undefined,
+                  );
+                  logger.info(
+                    {
+                      chatJid: data.chatJid,
+                      sourceGroup,
+                      lat: data.latitude,
+                      lng: data.longitude,
+                    },
+                    'IPC location sent',
+                  );
+                } else {
+                  logger.warn(
+                    { chatJid: data.chatJid, sourceGroup },
+                    'Unauthorized IPC location attempt blocked',
                   );
                 }
               } else if (
