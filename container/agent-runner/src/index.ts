@@ -454,12 +454,11 @@ function buildAllowedTools(containerInput: ContainerInput, mcpServerPath: string
     return [...containerInput.allowedTools, ...mcpTools];
   }
 
+  // Subagent/team tools intentionally excluded — re-experiment later.
   return [
     'Bash',
     'Read', 'Write', 'Edit', 'Glob', 'Grep',
     'WebSearch', 'WebFetch',
-    'Task', 'TaskOutput', 'TaskStop',
-    'TeamCreate', 'TeamDelete', 'SendMessage',
     'TodoWrite', 'ToolSearch', 'Skill',
     'NotebookEdit',
     ...mcpTools,
