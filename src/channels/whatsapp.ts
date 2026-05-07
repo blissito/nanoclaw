@@ -877,7 +877,10 @@ export class WhatsAppChannel implements Channel {
         name,
         address,
       });
-      logger.info({ jid, latitude, longitude }, 'WA disconnected, location queued');
+      logger.info(
+        { jid, latitude, longitude },
+        'WA disconnected, location queued',
+      );
       return;
     }
     try {
@@ -1341,7 +1344,11 @@ export class WhatsAppChannel implements Channel {
             },
           });
           logger.info(
-            { jid: item.jid, latitude: item.latitude, longitude: item.longitude },
+            {
+              jid: item.jid,
+              latitude: item.latitude,
+              longitude: item.longitude,
+            },
             'Queued location sent',
           );
         } else {
