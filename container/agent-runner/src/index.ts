@@ -972,11 +972,15 @@ async function main(): Promise<void> {
             log('Auto-compact completed');
           }
         }
-        // Check new size
+        // Check new size — /compact creates a fresh session, so stat the new
+        // session's .jsonl, not the old append-only one (which never shrinks).
         try {
-          const newStat = fs.statSync(sessionFile);
-          log(`Session file after compact: ${(newStat.size / 1024 / 1024).toFixed(1)}MB`);
-        } catch { /* file may have changed path after compact */ }
+          const newSessionFile = path.join(
+            os.homedir(), '.claude', 'projects', '-workspace-group', `${sessionId}.jsonl`,
+          );
+          const newStat = fs.statSync(newSessionFile);
+          log(`Session file after compact: ${(newStat.size / 1024 / 1024).toFixed(2)}MB`);
+        } catch { /* file may not exist yet for new session */ }
       } else {
         log(`Session file is ${(stat.size / 1024).toFixed(0)}KB — no compact needed`);
       }
