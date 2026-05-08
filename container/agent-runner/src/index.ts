@@ -379,6 +379,13 @@ function getAllMcpServers(containerInput: ContainerInput, mcpServerPath: string)
         EASYBITS_API_KEY: process.env.EASYBITS_API_KEY || '',
       },
     },
+    'easybits-design-core-sandbox': {
+      command: 'npx',
+      args: ['-y', '@easybits.cloud/mcp', '--tools', 'design,core,sandbox'],
+      env: {
+        EASYBITS_API_KEY: process.env.EASYBITS_API_KEY || '',
+      },
+    },
     smatch: {
       command: 'npx',
       args: ['-y', 'smatch-mcp'],
