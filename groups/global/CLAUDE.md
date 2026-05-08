@@ -245,6 +245,44 @@ Cuando Bliss pida cambiar comportamiento de otro grupo: escribe la instrucción 
 
 Como sub-agent o teammate, solo usa `send_message` si el agente principal te lo indica.
 
+## Sandbox Agents (`agent_run` de EasyBits)
+
+Toolset `sandbox` corre un agente Claude dentro de un Firecracker microVM efímero (Debian + Node 22 + chromium pre-instalado, root, internet abierto, 30 min TTL, autodestruye). Úsalo cuando necesites entorno aislado o tools de CLI que no tenemos.
+
+**Cuándo SÍ:**
+- Screenshot de un sitio (chromium ya viene): `chromium --headless=new --no-sandbox --screenshot=/tmp/x.png --window-size=1280,800 https://...`
+- Tareas que requieren instalar binarios temporales (yt-dlp, ffmpeg, herramientas de red)
+- Scrape, ETL o transformación arbitraria sobre datos sensibles que no quieres correr en el container del grupo
+
+**Cuándo NO:**
+- Si ya hay tool MCP directa, úsala (no envuelvas un `create_document` en `agent_run`).
+- Tareas <30s — el cold start del VM + init del SDK son ~10-15s, no compensa.
+
+### Patrón async OBLIGATORIO
+
+`agent_run` devuelve `{ jobId }` inmediato, **no el resultado**. Si solo llamas y respondes, entregas un jobId inútil.
+
+1. `mcp__easybits__agent_run({ prompt: "<pasos numerados>", max_turns: 15 })` → guarda `jobId`.
+2. Avisa al usuario "procesando, ~1 min" con `mcp__nanoclaw__send_message`.
+3. Pollea `mcp__easybits__agent_run_status({ job_id: jobId })` cada ~20s hasta `status` ∈ `{done,error,expired}`.
+4. `done` → entrega `response` con formato WhatsApp.
+   `error` → reporta `stopReason` + 2-3 pasos finales de `steps[]`.
+   `expired` → "se pasó del TTL, intenta con menos pasos".
+5. Si la tarea generó archivos en `/tmp/` (screenshot, PDF, dump), léelos con `mcp__easybits__sandbox_files_read({ sandboxId: jobId, path: "/tmp/...", encoding: "base64" })` **antes** de destruir, y súbelos a EasyBits storage si vas a entregarlos al usuario.
+6. `mcp__easybits__agent_run_destroy({ job_id: jobId })` para liberar (opcional, expira solo a los 30 min).
+
+### Reglas de prompting al sub-agente
+
+El prompt que le pasas debe ser **explícito y paso a paso**, no aspiracional:
+- ❌ "Descarga el video de https://..."
+- ✅ "1. Verifica si yt-dlp existe (`which yt-dlp`). 2. Si no, baja el binario con `curl -L .../yt-dlp_linux -o /usr/local/bin/yt-dlp && chmod a+rx ...`. 3. `yt-dlp -o /tmp/out.%(ext)s URL`. 4. Reporta path y tamaño."
+
+Defaults del harness: solo `Bash/Read/Write/Edit/Glob/Grep/WebFetch`, sin subagentes ni `AskUserQuestion`. No los override-es salvo razón fuerte.
+
+### Costo
+
+Cada job cobra tokens reales (`usage.costCents` viene en el resultado). Tareas simples 10-30¢, complejas pueden cruzar $1. Si el prompt va a generar mucho loop (scrape de N páginas, exploración abierta), AVISA al usuario antes: "esto va a costar ~50¢, ¿procedemos?".
+
 ## Tareas largas (>20 min) — chunk en scheduled_tasks, no inline
 
 El container tiene un wallclock de **30 min** (`CONTAINER_TIMEOUT=1800000ms`). Si excedes ese tiempo en una sola sesión, el status-tracker corta con `[system] Task timed out — retrying.` y pierdes el progreso a medias. Aplica a cualquier I/O bloqueante: subidas masivas, scrapes largos, generación de N PDFs/imágenes, batch de queries DB lentas.
