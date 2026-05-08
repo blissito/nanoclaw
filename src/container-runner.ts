@@ -337,8 +337,19 @@ function buildEnvFile(
   const elevenKey = readEnvFile(['ELEVENLABS_API_KEY']).ELEVENLABS_API_KEY;
   if (elevenKey) envLines.push(`ELEVENLABS_API_KEY=${elevenKey}`);
 
-  const mpToken = readEnvFile(['MP_ACCESS_TOKEN']).MP_ACCESS_TOKEN;
-  if (mpToken) envLines.push(`MP_ACCESS_TOKEN=${mpToken}`);
+  const mpEnv = readEnvFile([
+    'MP_ACCESS_TOKEN',
+    'MP_PUBLIC_KEY',
+    'MP_CLIENT_ID',
+    'MP_CLIENT_SECRET',
+  ]);
+  if (mpEnv.MP_ACCESS_TOKEN)
+    envLines.push(`MP_ACCESS_TOKEN=${mpEnv.MP_ACCESS_TOKEN}`);
+  if (mpEnv.MP_PUBLIC_KEY)
+    envLines.push(`MP_PUBLIC_KEY=${mpEnv.MP_PUBLIC_KEY}`);
+  if (mpEnv.MP_CLIENT_ID) envLines.push(`MP_CLIENT_ID=${mpEnv.MP_CLIENT_ID}`);
+  if (mpEnv.MP_CLIENT_SECRET)
+    envLines.push(`MP_CLIENT_SECRET=${mpEnv.MP_CLIENT_SECRET}`);
 
   const awsEnv = readEnvFile([
     'AWS_BEDROCK_ACCESS_KEY_ID',
