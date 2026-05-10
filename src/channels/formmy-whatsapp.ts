@@ -179,7 +179,9 @@ export class FormmyWhatsAppChannel implements Channel {
             );
           }
 
-          group = Object.values(groups).find((g) => g.folder === resolvedFolder);
+          group = Object.values(groups).find(
+            (g) => g.folder === resolvedFolder,
+          );
           // Cache miss is fine — index.ts:processGroupMessages re-loads from DB
           // when it can't find the JID in the in-memory cache.
         }
