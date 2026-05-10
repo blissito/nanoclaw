@@ -306,13 +306,33 @@ const server = http.createServer(async (req, res) => {
       if (typeof body.requiresTrigger === 'boolean')
         next.requiresTrigger = body.requiresTrigger;
       if (typeof body.name === 'string') next.name = body.name;
+      const ccPatch: ContainerConfig = { ...(g.containerConfig ?? {}) };
+      let ccTouched = false;
       if (Array.isArray(body.mcpServers)) {
-        const cc: ContainerConfig = { ...(g.containerConfig ?? {}) };
-        cc.mcpServers = body.mcpServers.filter(
+        ccPatch.mcpServers = body.mcpServers.filter(
           (x: unknown) => typeof x === 'string',
         );
-        next.containerConfig = cc;
+        ccTouched = true;
       }
+      if (Array.isArray(body.allowedTools)) {
+        ccPatch.allowedTools = body.allowedTools.filter(
+          (x: unknown) => typeof x === 'string',
+        );
+        ccTouched = true;
+      }
+      if (body.env && typeof body.env === 'object') {
+        const merged = { ...(ccPatch.env ?? {}) };
+        for (const [k, v] of Object.entries(body.env)) {
+          if (typeof v === 'string') merged[k] = v;
+        }
+        ccPatch.env = merged;
+        ccTouched = true;
+      }
+      if (body.profile === 'public' || body.profile === 'admin') {
+        ccPatch.profile = body.profile;
+        ccTouched = true;
+      }
+      if (ccTouched) next.containerConfig = ccPatch;
       setRegisteredGroup(jid, next);
 
       if (typeof body.claudeMd === 'string') {
