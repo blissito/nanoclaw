@@ -46,15 +46,18 @@ export type QuoteInput = {
   envio:
     | { modo: 'ruta_siiqtec'; dia: string; destino: string }
     | { modo: 'paqueteria'; carrier: string; cp: string; dias: string; costo: number };
+  include_payment_link?: boolean;
 };
 
 export type QuoteResult = {
   path: string;
   folio: string;
   total: number;
-  paymentUrl: string;
+  paymentUrl: string | null;
   pages: number;
 };
+
+const AI_DISCLAIMER = 'Esta cotización es generada con IA y puede tener errores';
 
 function fmtMoney(n: number): string {
   return '$ ' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -295,6 +298,7 @@ ${tfoot}
 
   <!-- FOOTER -->
   <div class="shrink-0 px-8 pb-3 pt-2 border-t border-gray-300">
+    <p class="text-center text-gray-400 italic mb-1" style="font-size:9px">${AI_DISCLAIMER}</p>
     <div class="flex justify-between items-end text-xs">
       <div>
         <p class="text-gray-500">Vendedor</p>
@@ -314,11 +318,42 @@ ${tfoot}
 export function renderDepositPage(opts: {
   folio: string;
   total: number;
-  paymentUrl: string;
+  paymentUrl: string | null;
 }): string {
   const { folio, total, paymentUrl } = opts;
   const totalStr = fmtMoney(total);
-  const urlEnc = encodeURIComponent(paymentUrl);
+  const urlEnc = paymentUrl ? encodeURIComponent(paymentUrl) : '';
+  const mpCard = !paymentUrl ? '' : `
+
+  <!-- CARD PAGO EN LÍNEA — siempre presente -->
+  <div class="shrink-0 px-10 pb-4">
+    <div class="w-full rounded-xl overflow-hidden" style="border:2px solid #2B3659">
+      <div class="text-center py-1.5 text-white text-xs font-black tracking-widest" style="background:#2B3659">
+        PAGA EN LÍNEA — SEGURO Y RÁPIDO · MERCADOPAGO
+      </div>
+      <div class="flex items-center gap-6 px-6 py-4" style="background:#F0F2F8">
+        <div class="shrink-0 flex flex-col items-center gap-1">
+          <img src="https://api.qrserver.com/v1/create-qr-code/?size=130x130&data=${urlEnc}" class="w-28 h-28" />
+          <p class="text-xs text-center" style="color:#2B3659;font-size:9px">Escanea para pagar</p>
+        </div>
+        <div class="self-stretch w-px" style="background:#2B3659;opacity:0.2"></div>
+        <div class="flex-1">
+          <p class="text-sm font-black" style="color:#2B3659">Pago seguro en línea</p>
+          <p class="text-xs text-gray-500 mt-1">Cotización: <span class="font-semibold">${escapeHtml(folio)}</span></p>
+          <p class="text-xs text-gray-500 mt-0.5">Vigencia: 3 días naturales · Todos los precios incluyen I.V.A.</p>
+          <p class="text-xs mt-2 text-gray-400 break-all">${escapeHtml(paymentUrl)}</p>
+        </div>
+        <div class="shrink-0 flex flex-col items-end gap-3">
+          <div class="text-right">
+            <p class="text-xs text-gray-500">Total a pagar</p>
+            <p class="text-3xl font-black whitespace-nowrap" style="color:#2B3659">${totalStr}</p>
+            <p class="text-xs text-gray-400">MXN</p>
+          </div>
+          <a href="${escapeHtml(paymentUrl)}" style="background:#A73547;color:#ffffff;font-size:12px;font-weight:800;padding:10px 24px;border-radius:8px;text-decoration:none;display:inline-block">💳 Clic para pagar</a>
+        </div>
+      </div>
+    </div>
+  </div>`;
   return `<section class="w-[8.5in] h-[11in] relative overflow-hidden flex flex-col bg-white font-sans">
   <div class="shrink-0 h-2 w-full" style="background:#2B3659"></div>
   <div class="shrink-0 px-10 py-6">
@@ -382,39 +417,14 @@ export function renderDepositPage(opts: {
     </div>
   </div>
 
-  <!-- CARD PAGO EN LÍNEA — siempre presente -->
-  <div class="shrink-0 px-10 pb-4">
-    <div class="w-full rounded-xl overflow-hidden" style="border:2px solid #2B3659">
-      <div class="text-center py-1.5 text-white text-xs font-black tracking-widest" style="background:#2B3659">
-        PAGA EN LÍNEA — SEGURO Y RÁPIDO · MERCADOPAGO
-      </div>
-      <div class="flex items-center gap-6 px-6 py-4" style="background:#F0F2F8">
-        <div class="shrink-0 flex flex-col items-center gap-1">
-          <img src="https://api.qrserver.com/v1/create-qr-code/?size=130x130&data=${urlEnc}" class="w-28 h-28" />
-          <p class="text-xs text-center" style="color:#2B3659;font-size:9px">Escanea para pagar</p>
-        </div>
-        <div class="self-stretch w-px" style="background:#2B3659;opacity:0.2"></div>
-        <div class="flex-1">
-          <p class="text-sm font-black" style="color:#2B3659">Pago seguro en línea</p>
-          <p class="text-xs text-gray-500 mt-1">Cotización: <span class="font-semibold">${escapeHtml(folio)}</span></p>
-          <p class="text-xs text-gray-500 mt-0.5">Vigencia: 3 días naturales · Todos los precios incluyen I.V.A.</p>
-          <p class="text-xs mt-2 text-gray-400 break-all">${escapeHtml(paymentUrl)}</p>
-        </div>
-        <div class="shrink-0 flex flex-col items-end gap-3">
-          <div class="text-right">
-            <p class="text-xs text-gray-500">Total a pagar</p>
-            <p class="text-3xl font-black whitespace-nowrap" style="color:#2B3659">${totalStr}</p>
-            <p class="text-xs text-gray-400">MXN</p>
-          </div>
-          <a href="${escapeHtml(paymentUrl)}" style="background:#A73547;color:#ffffff;font-size:12px;font-weight:800;padding:10px 24px;border-radius:8px;text-decoration:none;display:inline-block">💳 Clic para pagar</a>
-        </div>
-      </div>
-    </div>
-  </div>
+${mpCard}
 
-  <div class="shrink-0 w-full px-10 py-3 border-t border-gray-200 mt-auto text-xs text-gray-400 flex justify-between">
-    <p>SIIQTEC · siiqtec.com.mx</p>
-    <p>ventas@siiqtec.com.mx · Tel: 7712211359</p>
+  <div class="shrink-0 w-full px-10 py-3 border-t border-gray-200 mt-auto text-xs text-gray-400">
+    <p class="text-center italic mb-1" style="font-size:9px">${AI_DISCLAIMER}</p>
+    <div class="flex justify-between">
+      <p>SIIQTEC · siiqtec.com.mx</p>
+      <p>ventas@siiqtec.com.mx · Tel: 7712211359</p>
+    </div>
   </div>
 </section>`;
 }
@@ -543,7 +553,9 @@ export async function runSiiqtecQuotePdf(input: QuoteInput): Promise<QuoteResult
   await pruneBrokenImages(input.items);
   const totals = computeTotals(input);
 
-  const paymentUrl = await createMpLink(totals.total, input.folio);
+  const paymentUrl = input.include_payment_link
+    ? await createMpLink(totals.total, input.folio)
+    : null;
 
   const chunks: QuoteInput['items'][] = [];
   const amountChunks: number[][] = [];

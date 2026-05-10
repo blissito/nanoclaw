@@ -1299,7 +1299,7 @@ server.tool(
 
 server.tool(
   'siiqtec_quote_pdf',
-  'Genera una cotización SIIQTEC en PDF (template oficial: header SIIQTEC, RECEPTOR, productos con imagen, totales con envío Ruta SIIQTEC o paquetería, ficha de depósito, card MercadoPago con QR + botón "Clic para pagar"). La tool valida cantidades, recalcula montos, genera link de pago MercadoPago fresco, valida que las imágenes existan (cae a placeholder S/I si fallan), y particiona automáticamente en páginas si hay >6 productos. NUNCA inventes amounts; pasa qty + unit_price por item y la tool calcula. Devuelve el path local del PDF para mandarlo con send_message.',
+  'Genera una cotización SIIQTEC en PDF (template oficial: header SIIQTEC, RECEPTOR, productos con imagen, totales con envío Ruta SIIQTEC o paquetería, ficha de depósito con datos bancarios). La tool valida cantidades, recalcula montos, valida que las imágenes existan (cae a placeholder S/I si fallan), y particiona automáticamente en páginas si hay >6 productos. NUNCA inventes amounts; pasa qty + unit_price por item y la tool calcula. Por default NO incluye link de pago MercadoPago — pasá include_payment_link=true para añadir el card con QR + botón "Clic para pagar". Cada página lleva la leyenda "Esta cotización es generada con IA y puede tener errores". Devuelve el path local del PDF para mandarlo con send_message.',
   {
     folio: z.string().regex(/^\d{6}-\d{3}$/, 'folio debe ser YYMMDD-NNN').describe('Folio de cotización formato YYMMDD-NNN (ej: 260430-001).'),
     fecha: z.string().optional().describe('Fecha en formato DD/MM/YYYY. Si se omite, usa la fecha de hoy.'),
@@ -1343,6 +1343,10 @@ server.tool(
         }),
       ])
       .describe('Modo de envío. ruta_siiqtec = gratis. paqueteria = costo cotizado.'),
+    include_payment_link: z
+      .boolean()
+      .optional()
+      .describe('Si true, genera link MercadoPago + agrega el card con QR y botón "Clic para pagar" en la página de depósito. Default: false (sólo datos bancarios).'),
   },
   async (args) => {
     try {
