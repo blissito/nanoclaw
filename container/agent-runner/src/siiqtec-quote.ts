@@ -298,14 +298,14 @@ ${tfoot}
 
   <!-- FOOTER -->
   <div class="shrink-0 px-8 pb-3 pt-2 border-t border-gray-300">
-    <p class="text-center text-gray-400 italic mb-1" style="font-size:9px">${AI_DISCLAIMER}</p>
     <div class="flex justify-between items-end text-xs">
       <div>
         <p class="text-gray-500">Vendedor</p>
         <p class="font-semibold text-gray-800 mt-3 border-t border-gray-400 pt-1 w-40">${dash(c.vendedor || 'SIIQTEC')}</p>
       </div>
       <div class="text-right text-gray-500">
-        <p>Todos los precios incluyen I.V.A.</p>
+        <p class="italic text-gray-400">${AI_DISCLAIMER}</p>
+        <p class="mt-0.5">Todos los precios incluyen I.V.A.</p>
         <p class="mt-0.5">Vigencia: 3 días naturales a partir de la fecha de emisión</p>
         <p class="mt-1 font-medium">Página ${pageNum} de ${pageTotal}</p>
       </div>
@@ -420,11 +420,11 @@ export function renderDepositPage(opts: {
 ${mpCard}
 
   <div class="shrink-0 w-full px-10 py-3 border-t border-gray-200 mt-auto text-xs text-gray-400">
-    <p class="text-center italic mb-1" style="font-size:9px">${AI_DISCLAIMER}</p>
     <div class="flex justify-between">
       <p>SIIQTEC · siiqtec.com.mx</p>
       <p>ventas@siiqtec.com.mx · Tel: 7712211359</p>
     </div>
+    <p class="text-right italic mt-0.5">${AI_DISCLAIMER}</p>
   </div>
 </section>`;
 }
