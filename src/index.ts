@@ -1329,6 +1329,12 @@ async function main(): Promise<void> {
   // Create and connect all registered channels.
   // Each channel self-registers via the barrel import above.
   // Factories return null when credentials are missing, so unconfigured channels are skipped.
+  //
+  // Connects fire in parallel with a 10s grace period: a channel whose .connect()
+  // hangs (e.g. WhatsApp waiting on pairing) must not block other channels from
+  // listening. The hung channel keeps trying in the background; if it eventually
+  // succeeds it becomes functional, otherwise it stays unconnected but harmless.
+  const connectPromises: Array<Promise<void>> = [];
   for (const channelName of getRegisteredChannelNames()) {
     const factory = getChannelFactory(channelName)!;
     const channel = factory(channelOpts);
@@ -1340,12 +1346,32 @@ async function main(): Promise<void> {
       continue;
     }
     channels.push(channel);
-    await channel.connect();
+    connectPromises.push(
+      channel.connect().catch((err) => {
+        logger.warn(
+          { err, channel: channelName },
+          'Channel connect failed; service will continue without it',
+        );
+      }),
+    );
   }
   if (channels.length === 0) {
     logger.fatal('No channels connected');
     process.exit(1);
   }
+  const CHANNEL_BOOT_GRACE_MS = 10_000;
+  await Promise.race([
+    Promise.all(connectPromises),
+    new Promise<void>((resolve) =>
+      setTimeout(() => {
+        logger.warn(
+          { graceMs: CHANNEL_BOOT_GRACE_MS },
+          'Channel boot grace expired; proceeding with whatever connected so far',
+        );
+        resolve();
+      }, CHANNEL_BOOT_GRACE_MS),
+    ),
+  ]);
 
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
