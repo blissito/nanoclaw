@@ -114,14 +114,15 @@ export const FORMMY_PUBLIC_TEMPLATE: ContainerConfig = {
     'Write',
     'Glob',
     'Grep',
-    // easybits: granular allowlist (Capa 1 suppresses the server wildcard, which
-    // also blocks discover_tools/run_tool escape hatches)
-    'mcp__easybits__get_file',
+    // easybits: minimal 3-tool surface for B2C. Capa 1 suppresses the server
+    // wildcard, which also blocks discover_tools/run_tool escape hatches.
+    // db_select is the SELECT-only hardened variant (anti-stacking,
+    // anti-CROSS-JOIN, anti-sqlite_master) — see easybits server.ts. To
+    // grant a tenant generate_image/voice_tts_create/get_file, override
+    // allowedTools per-group in container_config — don't expand this default.
     'mcp__easybits__upload_file',
     'mcp__easybits__create_share_link',
-    'mcp__easybits__db_query',
-    'mcp__easybits__generate_image',
-    'mcp__easybits__voice_tts_create',
+    'mcp__easybits__db_select',
     // nanoclaw/kommo: server-side toolsets restrict; wildcards safe here
     'mcp__nanoclaw__*',
     'mcp__kommo__*',
