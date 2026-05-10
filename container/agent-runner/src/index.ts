@@ -454,11 +454,28 @@ function buildMcpServers(containerInput: ContainerInput, mcpServerPath: string):
 
 function buildAllowedTools(containerInput: ContainerInput, mcpServerPath: string): string[] {
   const mcpServers = buildMcpServers(containerInput, mcpServerPath);
-  const mcpTools = Object.keys(mcpServers).map(n => `mcp__${n}__*`);
+  const enabledServers = Object.keys(mcpServers);
 
-  // Per-group override: only allow specified tools + MCP tools for enabled servers
+  // Per-group override: explicit allowedTools list controls exactly what is exposed.
+  // For each MCP server, expand to wildcard `mcp__<server>__*` ONLY if the user did
+  // not list any specific tools from that server. This lets a public template lock
+  // down `easybits` to a granular allowlist while leaving `nanoclaw`/`kommo` wide
+  // open (since those are restricted via their own `<SERVER>_TOOLSETS` env vars).
   if (containerInput.allowedTools?.length) {
-    return [...containerInput.allowedTools, ...mcpTools];
+    const userTools = containerInput.allowedTools;
+    const serversWithExplicitTools = new Set<string>();
+    for (const server of enabledServers) {
+      const wildcardPattern = `mcp__${server}__*`;
+      const prefix = `mcp__${server}__`;
+      const hasSpecific = userTools.some(
+        t => t !== wildcardPattern && t.startsWith(prefix),
+      );
+      if (hasSpecific) serversWithExplicitTools.add(server);
+    }
+    const wildcards = enabledServers
+      .filter(s => !serversWithExplicitTools.has(s))
+      .map(s => `mcp__${s}__*`);
+    return [...userTools, ...wildcards];
   }
 
   // Subagent/team tools intentionally excluded — re-experiment later.
@@ -468,7 +485,7 @@ function buildAllowedTools(containerInput: ContainerInput, mcpServerPath: string
     'WebSearch', 'WebFetch',
     'TodoWrite', 'ToolSearch', 'Skill',
     'NotebookEdit',
-    ...mcpTools,
+    ...enabledServers.map(n => `mcp__${n}__*`),
   ];
 }
 

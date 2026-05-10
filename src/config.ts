@@ -83,3 +83,42 @@ export const TRIGGER_PATTERN = buildTriggerPattern(DEFAULT_TRIGGER);
 // Uses system timezone by default
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+import type { ContainerConfig } from './types.js';
+
+// Default container_config inherited by every auto-registered Formmy WABA user group.
+// Each end-user gets their own folder + this template; admin overrides per-row in DB.
+// Layered defense:
+//   - profile=public: container-runner omits /workspace/global, uses skills-public/agents-public
+//   - mcpServers + env toolsets: nanoclaw/kommo MCPs only register safe tool subsets
+//   - allowedTools (granular): easybits is upstream so we can't filter at registration —
+//     listed by name. Capa 1 in agent-runner suppresses the wildcard `mcp__easybits__*`.
+//   - nanoclaw/kommo use wildcard since their toolsets already filter at registration.
+export const FORMMY_PUBLIC_TEMPLATE: ContainerConfig = {
+  profile: 'public',
+  mcpServers: ['nanoclaw', 'kommo', 'easybits'],
+  env: {
+    NANOCLAW_TOOLSETS: 'messaging-public,scheduling-self,quote',
+    KOMMO_TOOLSETS: 'read,create,scoped-mutate',
+  },
+  allowedTools: [
+    'Read',
+    'Write',
+    'Glob',
+    'Grep',
+    // easybits: granular allowlist (Capa 1 suppresses the server wildcard)
+    'mcp__easybits__list_files',
+    'mcp__easybits__get_file',
+    'mcp__easybits__upload_file',
+    'mcp__easybits__create_share_link',
+    'mcp__easybits__db_list',
+    'mcp__easybits__db_query',
+    'mcp__easybits__generate_image',
+    'mcp__easybits__voice_tts_create',
+    'mcp__easybits__research_search',
+    'mcp__easybits__research_scrape',
+    // nanoclaw/kommo: server-side toolsets restrict; wildcards safe here
+    'mcp__nanoclaw__*',
+    'mcp__kommo__*',
+  ],
+};

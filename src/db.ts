@@ -6,6 +6,7 @@ import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
+  ContainerConfig,
   NewMessage,
   RegisteredGroup,
   ScheduledTask,
@@ -860,6 +861,36 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
 
 export function deleteRegisteredGroup(jid: string): void {
   db.prepare('DELETE FROM registered_groups WHERE jid = ?').run(jid);
+}
+
+// Auto-register a per-user Formmy WABA group with the public template.
+// Idempotent: existing rows are not overwritten (admin may have customized them).
+// Returns true when a new row was inserted.
+export function registerFormmyUserGroup(
+  jid: string,
+  folder: string,
+  name: string,
+  template: ContainerConfig,
+): boolean {
+  if (!isValidGroupFolder(folder)) {
+    throw new Error(`Invalid group folder "${folder}" for JID ${jid}`);
+  }
+  const result = db
+    .prepare(
+      `INSERT OR IGNORE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      jid,
+      name,
+      folder,
+      '.*', // 1-to-1 chat: respond to every message
+      new Date().toISOString(),
+      JSON.stringify(template),
+      0, // requires_trigger=false for solo chats
+      0, // is_main=false
+    );
+  return result.changes > 0;
 }
 
 export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {

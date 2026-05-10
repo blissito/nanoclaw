@@ -7,30 +7,50 @@
  *   KOMMO_ACCESS_TOKEN  — long-lived token from a Kommo private integration
  */
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer, ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { ZodRawShape } from 'zod';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { kommo, toToolResult } from './api.js';
 
 const server = new McpServer({ name: 'kommo', version: '1.0.0' });
 
+// Toolset filtering: KOMMO_TOOLSETS=csv (e.g. "read,create,scoped-mutate")
+// Public-facing groups restrict surface; admin groups omit the env to register all.
+// Toolsets: read, create, scoped-mutate, admin.
+const KOMMO_TOOLSETS_ENV = process.env.KOMMO_TOOLSETS;
+const ENABLED_TOOLSETS = KOMMO_TOOLSETS_ENV
+  ? new Set(KOMMO_TOOLSETS_ENV.split(',').map((s) => s.trim()).filter(Boolean))
+  : null; // null = all enabled (compat default)
+
+function tool<S extends ZodRawShape>(
+  toolset: string,
+  name: string,
+  description: string,
+  paramsSchema: S,
+  cb: ToolCallback<S>,
+): void {
+  if (ENABLED_TOOLSETS && !ENABLED_TOOLSETS.has(toolset)) return;
+  server.tool(name, description, paramsSchema, cb);
+}
+
 // ─── READ ──────────────────────────────────────────────────────────────────
 
-server.tool(
+tool('read',
   'list_pipelines',
   'List all lead pipelines and their statuses. Call this first to discover pipeline_id/status_id values needed by create_lead and update_lead.',
   {},
   async () => toToolResult(await kommo.get('/api/v4/leads/pipelines')),
 );
 
-server.tool(
+tool('read',
   'list_users',
   'List all users in the Kommo account (CRM team members). Use their id as responsible_user_id when creating/updating leads or tasks.',
   {},
   async () => toToolResult(await kommo.get('/api/v4/users?limit=250')),
 );
 
-server.tool(
+tool('read',
   'find_contact',
   'Search contacts by free-text query (matches name, phone, email, custom fields). Use BEFORE create_contact to avoid duplicates.',
   {
@@ -43,14 +63,14 @@ server.tool(
   },
 );
 
-server.tool(
+tool('read',
   'get_contact',
   'Get full contact details including the leads associated with this contact.',
   { contact_id: z.number().int().describe('Kommo contact id') },
   async ({ contact_id }) => toToolResult(await kommo.get(`/api/v4/contacts/${contact_id}?with=leads`)),
 );
 
-server.tool(
+tool('read',
   'list_leads',
   'List leads with optional filters. Returns the most recently updated first.',
   {
@@ -75,14 +95,14 @@ server.tool(
   },
 );
 
-server.tool(
+tool('read',
   'get_lead',
   'Get full lead details including linked contacts and tags.',
   { lead_id: z.number().int().describe('Kommo lead id') },
   async ({ lead_id }) => toToolResult(await kommo.get(`/api/v4/leads/${lead_id}?with=contacts,catalog_elements`)),
 );
 
-server.tool(
+tool('read',
   'list_tasks',
   'List tasks, optionally filtered by entity (lead/contact) or completion state.',
   {
@@ -100,7 +120,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('read',
   'list_tags',
   'List tags defined for a given entity type (leads or contacts).',
   { entity_type: z.enum(['leads', 'contacts']).describe('Entity whose tags to list') },
@@ -109,7 +129,7 @@ server.tool(
 
 // ─── WRITE ─────────────────────────────────────────────────────────────────
 
-server.tool(
+tool('create',
   'create_contact',
   'Create a new contact. Provide name and optionally phone/email. Phone/email are added as Kommo custom fields with enum_code WORK.',
   {
@@ -129,7 +149,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('create',
   'create_lead',
   'Create a new lead. Optionally link an existing contact by id. Call list_pipelines first if you need pipeline_id/status_id.',
   {
@@ -151,7 +171,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('scoped-mutate',
   'update_lead',
   'Update an existing lead — change status (move across pipeline), price, name, or responsible user.',
   {
@@ -169,7 +189,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('admin',
   'create_pipeline',
   'Create a new lead pipeline. Optionally seed it with initial statuses. Only one pipeline can be main at a time — setting is_main=true demotes the previous main pipeline.',
   {
@@ -198,7 +218,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('admin',
   'update_pipeline',
   'Update an existing pipeline — rename, reorder, toggle main/unsorted.',
   {
@@ -215,7 +235,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('admin',
   'create_pipeline_status',
   'Add a new status (stage) to an existing pipeline. Provide color as a Kommo-accepted hex (e.g. #fffeb2, #ffdc7f, #d6eaff, #c1e0ff, #98cbff).',
   {
@@ -232,7 +252,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('create',
   'add_note',
   'Add a text note to a lead or contact.',
   {
@@ -246,7 +266,7 @@ server.tool(
     ),
 );
 
-server.tool(
+tool('create',
   'create_task',
   'Create a follow-up task attached to a lead or contact. complete_till accepts ISO-8601 datetime; it is converted to a unix timestamp.',
   {
@@ -282,7 +302,7 @@ async function fetchContactTagNames(contact_id: number): Promise<string[]> {
   return (res.data?._embedded?.tags || []).map((t) => t.name).filter(Boolean);
 }
 
-server.tool(
+tool('create',
   'add_tags_to_lead',
   "Add tags to a lead. Existing tags are preserved (read-modify-write). Kommo creates new tags on the fly if a given name doesn't exist yet.",
   {
@@ -298,7 +318,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('scoped-mutate',
   'remove_tags_from_lead',
   'Remove specific tags from a lead. Uses read-modify-write: fetches current tags, removes the named ones, PATCHes the rest.',
   {
@@ -315,7 +335,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('create',
   'add_tags_to_contact',
   "Add tags to a contact. Existing tags are preserved (read-modify-write). Kommo creates new tags on the fly if needed.",
   {
@@ -331,7 +351,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('scoped-mutate',
   'remove_tags_from_contact',
   'Remove specific tags from a contact. Uses read-modify-write.',
   {

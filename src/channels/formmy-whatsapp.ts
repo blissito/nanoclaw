@@ -21,10 +21,11 @@ import http from 'http';
 import https from 'https';
 import path from 'path';
 
-import { GROUPS_DIR } from '../config.js';
+import { FORMMY_PUBLIC_TEMPLATE, GROUPS_DIR } from '../config.js';
 import {
   getFormmyGroupFolder,
   getFormmyIntegrationId,
+  registerFormmyUserGroup,
   setFormmyJidMapping,
 } from '../db.js';
 import { logger } from '../logger.js';
@@ -33,7 +34,12 @@ import { registerChannel, ChannelOpts } from './registry.js';
 
 const CHANNEL_NAME = 'formmy-whatsapp';
 const JID_PREFIX = 'formmy_';
-const DEFAULT_GROUP = process.env.FORMMY_DEFAULT_GROUP || '';
+
+// Defensive: JIDs already match the group-folder regex (`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`),
+// but if Formmy ever changes format, replace any unsafe char with underscore.
+function sanitizeFolder(jid: string): string {
+  return jid.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);
+}
 
 interface InboundMedia {
   type: 'image' | 'sticker' | 'document' | 'audio';
@@ -120,37 +126,62 @@ export class FormmyWhatsAppChannel implements Channel {
           ? jid
           : `${JID_PREFIX}${jid}`;
 
-        // Resolve group via mapping table
+        // Resolve group via mapping table.
+        // Three modes (priority order):
+        //   1. Cache hit on JID → use directly.
+        //   2. Explicit `group_folder` from Formmy → respect (shared lobby /
+        //      multi-user agent). Update mapping if it changed.
+        //   3. No mapping yet → auto-provision a per-user folder named after
+        //      the JID itself (already globally unique). Each WABA end-user
+        //      gets isolated CLAUDE.md, attachments, IPC, .claude/ session.
+        //      Inherits FORMMY_PUBLIC_TEMPLATE — sandboxed profile, no global,
+        //      restricted MCP toolsets, granular tool allowlist.
         const groups = this.opts.registeredGroups();
         let group: import('../types.js').RegisteredGroup | undefined =
           groups[fullJid];
-        const targetFolder = group_folder || DEFAULT_GROUP;
 
-        if (!group && targetFolder) {
-          // Check if JID already has a mapping
+        if (!group) {
           const existingFolder = getFormmyGroupFolder(fullJid);
+          let resolvedFolder: string;
 
-          if (!existingFolder) {
-            // New JID — create mapping
-            setFormmyJidMapping(fullJid, targetFolder, integration_id);
-            logger.info(
-              { jid: fullJid, folder: targetFolder },
-              '[formmy-whatsapp] Mapped new JID to group',
+          if (group_folder) {
+            // Explicit override from Formmy (shared/lobby case).
+            resolvedFolder = group_folder;
+            if (existingFolder !== group_folder) {
+              setFormmyJidMapping(fullJid, group_folder, integration_id);
+              logger.info(
+                { jid: fullJid, from: existingFolder, to: group_folder },
+                '[formmy-whatsapp] JID mapped to explicit group_folder',
+              );
+            }
+          } else if (existingFolder) {
+            // Already mapped from a previous webhook.
+            resolvedFolder = existingFolder;
+          } else {
+            // New WABA user — auto-provision isolated folder = JID.
+            // sanitizeFolder is defensive; the JID format already matches the
+            // group-folder regex, so this is a no-op in practice.
+            resolvedFolder = sanitizeFolder(fullJid);
+            const created = registerFormmyUserGroup(
+              fullJid,
+              resolvedFolder,
+              sender_name || 'WhatsApp User',
+              FORMMY_PUBLIC_TEMPLATE,
             );
-          } else if (group_folder && existingFolder !== group_folder) {
-            // JID exists but group_folder changed (e.g. moving from lobby)
-            setFormmyJidMapping(fullJid, group_folder, integration_id);
+            // Materialize the folder on disk so attachments/CLAUDE.md can land here.
+            fs.mkdirSync(path.join(GROUPS_DIR, resolvedFolder), {
+              recursive: true,
+            });
+            setFormmyJidMapping(fullJid, resolvedFolder, integration_id);
             logger.info(
-              { jid: fullJid, from: existingFolder, to: group_folder },
-              '[formmy-whatsapp] Moved JID to new group',
+              { jid: fullJid, folder: resolvedFolder, created },
+              '[formmy-whatsapp] Auto-provisioned per-user public group',
             );
           }
 
-          // Resolve group from registered_groups by folder
-          const resolvedFolder = group_folder || existingFolder || targetFolder;
-          group = Object.values(groups).find(
-            (g) => g.folder === resolvedFolder,
-          );
+          group = Object.values(groups).find((g) => g.folder === resolvedFolder);
+          // Cache miss is fine — index.ts:processGroupMessages re-loads from DB
+          // when it can't find the JID in the in-memory cache.
         }
 
         const groupFolder = group?.folder;

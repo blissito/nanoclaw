@@ -432,9 +432,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Otherwise the bot reacts to human-to-human chatter and looks noisy.
   const explicitTriggerPattern =
     group.trigger !== '.*' ? getTriggerPattern(group.trigger) : null;
-  const hasExplicitTrigger = (
-    m: (typeof missedMessages)[number],
-  ): boolean => {
+  const hasExplicitTrigger = (m: (typeof missedMessages)[number]): boolean => {
     if (!explicitTriggerPattern) return false;
     return (
       (explicitTriggerPattern.test(m.content.trim()) ||
