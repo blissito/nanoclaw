@@ -7,6 +7,8 @@
  *   KOMMO_ACCESS_TOKEN  — long-lived token from a Kommo private integration
  */
 
+import { createHash } from 'node:crypto';
+
 import { McpServer, ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ZodRawShape } from 'zod';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -17,11 +19,62 @@ const server = new McpServer({ name: 'kommo', version: '1.0.0' });
 
 // Toolset filtering: KOMMO_TOOLSETS=csv (e.g. "read,create,scoped-mutate")
 // Public-facing groups restrict surface; admin groups omit the env to register all.
-// Toolsets: read, create, scoped-mutate, admin.
+// Toolsets:
+//   read         — account-level structure (list_pipelines, list_tags) — safe for public
+//   read-leads   — enumeration of leads/contacts/tasks — admin-only by default
+//   create       — create_contact, create_lead, add_note, create_task, add_tags_*
+//   scoped-mutate— update_lead, remove_tags_from_lead, remove_tags_from_contact
+//   admin        — list_users, pipeline structure CRUD (create/update_pipeline...)
 const KOMMO_TOOLSETS_ENV = process.env.KOMMO_TOOLSETS;
 const ENABLED_TOOLSETS = KOMMO_TOOLSETS_ENV
   ? new Set(KOMMO_TOOLSETS_ENV.split(',').map((s) => s.trim()).filter(Boolean))
   : null; // null = all enabled (compat default)
+
+// Per-JID lead tenancy. When KOMMO_SCOPE_BY_JID=1 and NANOCLAW_CHAT_JID is
+// set, every lead this container creates is tagged with an opaque scope tag
+// derived from the JID. Mutating tools (update_lead, add_note, add_tags_to_lead,
+// remove_tags_from_lead) verify the target lead carries the tag before
+// proceeding — preventing one customer's container from touching another
+// customer's lead. Admin groups omit KOMMO_SCOPE_BY_JID and get unrestricted
+// access. Enumeration tools (list_leads, get_lead) are hidden from the public
+// toolset entirely (see read-leads toolset below).
+const CHAT_JID = process.env.NANOCLAW_CHAT_JID;
+const SCOPE_ENABLED = process.env.KOMMO_SCOPE_BY_JID === '1' && Boolean(CHAT_JID);
+const SCOPE_TAG = SCOPE_ENABLED
+  ? `nc_${createHash('sha256').update(CHAT_JID!).digest('hex').slice(0, 12)}`
+  : null;
+
+async function verifyLeadOwnership(id: number): Promise<void> {
+  if (!SCOPE_TAG) return;
+  const res = await kommo.get<{
+    _embedded?: { tags?: Array<{ name: string }> };
+  }>(`/api/v4/leads/${id}?with=tags`);
+  if (!res.ok) {
+    throw new Error(
+      `Lead ${id} not accessible (status ${res.status}). Hint: this agent can only act on leads it created in this conversation.`,
+    );
+  }
+  const tags = res.data?._embedded?.tags || [];
+  if (!tags.some((t) => t.name === SCOPE_TAG)) {
+    throw new Error(
+      `Lead ${id} is not owned by this conversation. This agent can only edit leads it created here.`,
+    );
+  }
+}
+
+function withScopeTag<T extends Record<string, unknown>>(body: T): T {
+  if (!SCOPE_TAG) return body;
+  const embedded = (body as any)._embedded || {};
+  const existing: Array<{ name: string }> = embedded.tags || [];
+  if (existing.some((t) => t.name === SCOPE_TAG)) return body;
+  return {
+    ...body,
+    _embedded: {
+      ...embedded,
+      tags: [...existing, { name: SCOPE_TAG }],
+    },
+  };
+}
 
 function tool<S extends ZodRawShape>(
   toolset: string,
@@ -54,7 +107,11 @@ tool('admin',
   async () => toToolResult(await kommo.get('/api/v4/users?limit=250')),
 );
 
-tool('read',
+// Moved out of 'read' toolset (was leaking cross-tenant lead/contact data to
+// public B2C agents — letting them enumerate every customer in the CRM). Now
+// in 'read-leads', which public groups don't request. Admin groups, which
+// omit KOMMO_TOOLSETS entirely, still get these.
+tool('read-leads',
   'find_contact',
   'Search contacts by free-text query (matches name, phone, email, custom fields). Use BEFORE create_contact to avoid duplicates.',
   {
@@ -67,14 +124,14 @@ tool('read',
   },
 );
 
-tool('read',
+tool('read-leads',
   'get_contact',
   'Get full contact details including the leads associated with this contact.',
   { contact_id: z.number().int().describe('Kommo contact id') },
   async ({ contact_id }) => toToolResult(await kommo.get(`/api/v4/contacts/${contact_id}?with=leads`)),
 );
 
-tool('read',
+tool('read-leads',
   'list_leads',
   'List leads with optional filters. Returns the most recently updated first.',
   {
@@ -99,14 +156,14 @@ tool('read',
   },
 );
 
-tool('read',
+tool('read-leads',
   'get_lead',
   'Get full lead details including linked contacts and tags.',
   { lead_id: z.number().int().describe('Kommo lead id') },
   async ({ lead_id }) => toToolResult(await kommo.get(`/api/v4/leads/${lead_id}?with=contacts,catalog_elements`)),
 );
 
-tool('read',
+tool('read-leads',
   'list_tasks',
   'List tasks, optionally filtered by entity (lead/contact) or completion state.',
   {
@@ -171,13 +228,15 @@ tool('create',
     if (args.status_id !== undefined) payload.status_id = args.status_id;
     if (args.responsible_user_id !== undefined) payload.responsible_user_id = args.responsible_user_id;
     if (args.contact_id !== undefined) payload._embedded = { contacts: [{ id: args.contact_id }] };
-    return toToolResult(await kommo.post('/api/v4/leads', [payload]));
+    // Tenancy: when scoping is on, every newly created lead carries the JID
+    // scope tag so subsequent mutate calls can verify ownership.
+    return toToolResult(await kommo.post('/api/v4/leads', [withScopeTag(payload)]));
   },
 );
 
 tool('scoped-mutate',
   'update_lead',
-  'Update an existing lead — change status (move across pipeline), price, name, or responsible user.',
+  'Update an existing lead — change status (move across pipeline), price, name, or responsible user. Tenancy: when KOMMO_SCOPE_BY_JID is on, only leads created by this conversation are editable.',
   {
     lead_id: z.number().int().describe('Kommo lead id to update'),
     name: z.string().optional(),
@@ -187,6 +246,7 @@ tool('scoped-mutate',
     responsible_user_id: z.number().int().optional().describe('Reassign to this user'),
   },
   async ({ lead_id, ...rest }) => {
+    await verifyLeadOwnership(lead_id);
     const payload: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(rest)) if (v !== undefined) payload[k] = v;
     return toToolResult(await kommo.patch(`/api/v4/leads/${lead_id}`, payload));
@@ -258,16 +318,18 @@ tool('admin',
 
 tool('create',
   'add_note',
-  'Add a text note to a lead or contact.',
+  'Add a text note to a lead or contact. Tenancy: when KOMMO_SCOPE_BY_JID is on and entity_type=leads, the target lead must be owned by this conversation.',
   {
     entity_type: z.enum(['leads', 'contacts']).describe('Entity type to annotate'),
     entity_id: z.number().int().describe('Entity id'),
     text: z.string().describe('Note body'),
   },
-  async ({ entity_type, entity_id, text }) =>
-    toToolResult(
+  async ({ entity_type, entity_id, text }) => {
+    if (entity_type === 'leads') await verifyLeadOwnership(entity_id);
+    return toToolResult(
       await kommo.post(`/api/v4/${entity_type}/${entity_id}/notes`, [{ note_type: 'common', params: { text } }]),
-    ),
+    );
+  },
 );
 
 tool('create',
@@ -308,12 +370,13 @@ async function fetchContactTagNames(contact_id: number): Promise<string[]> {
 
 tool('create',
   'add_tags_to_lead',
-  "Add tags to a lead. Existing tags are preserved (read-modify-write). Kommo creates new tags on the fly if a given name doesn't exist yet.",
+  "Add tags to a lead. Existing tags are preserved (read-modify-write). Kommo creates new tags on the fly if a given name doesn't exist yet. Tenancy: when KOMMO_SCOPE_BY_JID is on, only leads owned by this conversation can be tagged.",
   {
     lead_id: z.number().int(),
     tags: z.array(z.string().min(1)).min(1).describe('Tag names to add'),
   },
   async ({ lead_id, tags }) => {
+    await verifyLeadOwnership(lead_id);
     const current = await fetchLeadTagNames(lead_id);
     const merged = Array.from(new Set([...current, ...tags]));
     return toToolResult(
@@ -324,14 +387,18 @@ tool('create',
 
 tool('scoped-mutate',
   'remove_tags_from_lead',
-  'Remove specific tags from a lead. Uses read-modify-write: fetches current tags, removes the named ones, PATCHes the rest.',
+  'Remove specific tags from a lead. Uses read-modify-write: fetches current tags, removes the named ones, PATCHes the rest. Tenancy: when KOMMO_SCOPE_BY_JID is on, only leads owned by this conversation can be modified, and the JID scope tag cannot be removed.',
   {
     lead_id: z.number().int(),
     tags: z.array(z.string().min(1)).min(1).describe('Tag names to remove'),
   },
   async ({ lead_id, tags }) => {
+    await verifyLeadOwnership(lead_id);
     const current = await fetchLeadTagNames(lead_id);
     const toRemove = new Set(tags);
+    // Defense-in-depth: never let the agent strip its own scope tag and then
+    // claim it doesn't own the lead anymore.
+    if (SCOPE_TAG) toRemove.delete(SCOPE_TAG);
     const kept = current.filter((n) => !toRemove.has(n));
     return toToolResult(
       await kommo.patch(`/api/v4/leads/${lead_id}`, { _embedded: { tags: kept.map((name) => ({ name })) } }),

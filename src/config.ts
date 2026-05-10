@@ -106,7 +106,16 @@ export const FORMMY_PUBLIC_TEMPLATE: ContainerConfig = {
   mcpServers: ['nanoclaw', 'kommo', 'easybits'],
   env: {
     NANOCLAW_TOOLSETS: 'messaging-public,scheduling-self,quote',
+    // Kommo public surface: list_pipelines/list_tags (account-level structure)
+    // + create_lead/contact/note/task/add_tags + update_lead/remove_tags
+    // Excludes 'read-leads' (no enumeration of other customers' leads) and
+    // 'admin' (no list_users, no pipeline CRUD).
     KOMMO_TOOLSETS: 'read,create,scoped-mutate',
+    // Per-JID tenancy: every lead this conversation creates carries an opaque
+    // scope tag derived from NANOCLAW_CHAT_JID. update_lead / add_note /
+    // add_tags_to_lead / remove_tags_from_lead verify ownership before
+    // mutating. See container/mcp-servers/kommo/src/index.ts.
+    KOMMO_SCOPE_BY_JID: '1',
     EASYBITS_TOOLSETS: 'public-safe',
   },
   allowedTools: [
