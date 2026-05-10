@@ -81,6 +81,11 @@ import { startSessionCleanup } from './session-cleanup.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { parseImageReferences } from './image.js';
+import {
+  checkPublicRateLimit,
+  formatRetryMessage,
+  recordPublicInputTokens,
+} from './public-rate-limit.js';
 import { StatusTracker } from './status-tracker.js';
 import { logger } from './logger.js';
 import { initUsageReporter, reportTurnUsage } from './usage-reporter.js';
@@ -464,6 +469,34 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     return true;
   }
 
+  // Public-profile rate limit (Formmy WABA end-users). Burst + daily spawn cap +
+  // daily input-token cap. Admin profile groups bypass this entirely.
+  if (group.containerConfig?.profile === 'public') {
+    const decision = checkPublicRateLimit(chatJid);
+    if (!decision.allowed) {
+      logger.warn(
+        {
+          group: group.name,
+          chatJid,
+          reason: decision.reason,
+          retryAfterMs: decision.retryAfterMs,
+        },
+        'Public group rate-limited',
+      );
+      if (decision.shouldNotify) {
+        try {
+          await channel.sendMessage(chatJid, formatRetryMessage(decision));
+        } catch (err) {
+          logger.warn({ err, chatJid }, 'Failed to send throttle notice');
+        }
+      }
+      lastAgentTimestamp[chatJid] =
+        missedMessages[missedMessages.length - 1].timestamp;
+      saveState();
+      return true;
+    }
+  }
+
   // Ensure all user messages are tracked — recovery messages enter processGroupMessages
   // directly via the queue, bypassing startMessageLoop where markReceived normally fires.
   // markReceived is idempotent (rejects duplicates), so this is safe for normal-path messages too.
@@ -620,6 +653,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           },
           'Usage logged',
         );
+
+        // Feed input tokens (including cache reads) into the public rate
+        // limiter so a single bloated turn counts toward the daily cap.
+        if (group.containerConfig?.profile === 'public') {
+          const inputTokens =
+            result.usage.input_tokens +
+            (result.usage.cache_creation_input_tokens ?? 0) +
+            (result.usage.cache_read_input_tokens ?? 0);
+          recordPublicInputTokens(chatJid, inputTokens);
+        }
 
         // Push to ghosty.studio: only when we actually delivered a reply.
         // Tool-only turns (no text sent) are skipped per the reporter contract.

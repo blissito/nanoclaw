@@ -115,8 +115,6 @@ export const FORMMY_PUBLIC_TEMPLATE: ContainerConfig = {
     'mcp__easybits__db_query',
     'mcp__easybits__generate_image',
     'mcp__easybits__voice_tts_create',
-    'mcp__easybits__research_search',
-    'mcp__easybits__research_scrape',
     // nanoclaw/kommo: server-side toolsets restrict; wildcards safe here
     'mcp__nanoclaw__*',
     'mcp__kommo__*',
