@@ -35,6 +35,33 @@ import { registerChannel, ChannelOpts } from './registry.js';
 const CHANNEL_NAME = 'formmy-whatsapp';
 const JID_PREFIX = 'formmy_';
 
+// Module-level keep-alive agents so outbound POSTs to FORMMY_CALLBACK_URL reuse
+// TCP/TLS connections across calls. Without this, every send to Formmy pays a
+// full handshake (~100-200ms on TLS) and we exhaust local ports under load.
+const httpsKeepAliveAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 10,
+});
+const httpKeepAliveAgent = new http.Agent({
+  keepAlive: true,
+  maxSockets: 10,
+});
+
+// Retry config for postToFormmy. Mirrors the exponential-backoff shape used in
+// src/group-queue.ts (BASE * 2^(n-1)) but tuned shorter since the WA user is
+// already waiting on the response.
+const FORMMY_POST_MAX_ATTEMPTS = 3;
+const FORMMY_POST_BASE_BACKOFF_MS = 1000;
+const FORMMY_POST_TIMEOUT_MS = 15_000;
+
+function isRetryableStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // Defensive: JIDs already match the group-folder regex (`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`),
 // but if Formmy ever changes format, replace any unsafe char with underscore.
 function sanitizeFolder(jid: string): string {
@@ -395,11 +422,57 @@ export class FormmyWhatsAppChannel implements Channel {
   }
 
   private async postToFormmy(payload: Record<string, unknown>): Promise<void> {
-    try {
-      const data = JSON.stringify(payload);
-      const url = new URL(this.callbackUrl);
-      const isHttps = url.protocol === 'https:';
+    const data = JSON.stringify(payload);
+    const url = new URL(this.callbackUrl);
+    const isHttps = url.protocol === 'https:';
+
+    let lastError: Error | null = null;
+    for (let attempt = 1; attempt <= FORMMY_POST_MAX_ATTEMPTS; attempt++) {
+      try {
+        await this.attemptPostToFormmy(url, isHttps, data, payload.type);
+        return;
+      } catch (err) {
+        lastError = err as Error;
+        const retryable =
+          (err as { retryable?: boolean }).retryable !== false;
+        if (!retryable || attempt === FORMMY_POST_MAX_ATTEMPTS) {
+          break;
+        }
+        const delay =
+          FORMMY_POST_BASE_BACKOFF_MS * Math.pow(2, attempt - 1);
+        logger.warn(
+          {
+            err,
+            type: payload.type,
+            attempt,
+            nextDelayMs: delay,
+          },
+          '[formmy-whatsapp] Callback attempt failed, retrying',
+        );
+        await sleep(delay);
+      }
+    }
+
+    logger.error(
+      {
+        err: lastError,
+        type: payload.type,
+        attempts: FORMMY_POST_MAX_ATTEMPTS,
+      },
+      '[formmy-whatsapp] Callback failed after all retries',
+    );
+    throw lastError ?? new Error('postToFormmy failed');
+  }
+
+  private attemptPostToFormmy(
+    url: URL,
+    isHttps: boolean,
+    data: string,
+    payloadType: unknown,
+  ): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
       const transport = isHttps ? https : http;
+      const agent = isHttps ? httpsKeepAliveAgent : httpKeepAliveAgent;
 
       const req = transport.request(
         {
@@ -412,32 +485,53 @@ export class FormmyWhatsAppChannel implements Channel {
             'Content-Length': Buffer.byteLength(data),
             Authorization: `Bearer ${this.secret}`,
           },
+          agent,
         },
         (res) => {
-          if (res.statusCode && res.statusCode >= 400) {
-            logger.warn(
-              { status: res.statusCode, type: payload.type },
-              '[formmy-whatsapp] Callback failed',
+          // Drain the response body so the socket can be returned to the pool.
+          res.resume();
+          res.on('end', () => {
+            const status = res.statusCode ?? 0;
+            if (status >= 200 && status < 300) {
+              resolve();
+              return;
+            }
+            const retryable = isRetryableStatus(status);
+            const err = Object.assign(
+              new Error(
+                `[formmy-whatsapp] Callback ${status} for type=${String(payloadType)}`,
+              ),
+              { status, retryable },
             );
-          }
+            reject(err);
+          });
+          res.on('error', (err) => {
+            reject(Object.assign(err, { retryable: true }));
+          });
         },
       );
 
-      req.on('error', (err) => {
-        logger.error(
-          { err, type: payload.type },
-          '[formmy-whatsapp] Callback request error',
+      req.setTimeout(FORMMY_POST_TIMEOUT_MS, () => {
+        req.destroy(
+          Object.assign(
+            new Error(
+              `[formmy-whatsapp] Callback timeout after ${FORMMY_POST_TIMEOUT_MS}ms`,
+            ),
+            { retryable: true },
+          ),
         );
+      });
+
+      req.on('error', (err) => {
+        if (!(err as { retryable?: boolean }).retryable) {
+          (err as { retryable?: boolean }).retryable = true;
+        }
+        reject(err);
       });
 
       req.write(data);
       req.end();
-    } catch (err) {
-      logger.error(
-        { err, type: payload.type },
-        '[formmy-whatsapp] Failed to send outbound',
-      );
-    }
+    });
   }
 }
 
