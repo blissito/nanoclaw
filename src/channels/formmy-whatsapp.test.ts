@@ -97,7 +97,9 @@ describe('FormmyWhatsAppChannel.postToFormmy', () => {
       res.end();
     });
     const ch = makeChannel(mock.port);
-    await expect(ch.sendMessage('formmy_5215555', 'hola')).resolves.toBeUndefined();
+    await expect(
+      ch.sendMessage('formmy_5215555', 'hola'),
+    ).resolves.toBeUndefined();
     expect(mock.requests).toHaveLength(1);
     const sent = JSON.parse(mock.requests[0].body);
     expect(sent.text).toBe('hola');
@@ -140,7 +142,9 @@ describe('FormmyWhatsAppChannel.postToFormmy', () => {
       }
     });
     const ch = makeChannel(mock.port);
-    await expect(ch.sendMessage('formmy_5215555', 'hola')).resolves.toBeUndefined();
+    await expect(
+      ch.sendMessage('formmy_5215555', 'hola'),
+    ).resolves.toBeUndefined();
     expect(mock.requests).toHaveLength(3);
   }, 15_000);
 
@@ -167,7 +171,9 @@ describe('FormmyWhatsAppChannel.postToFormmy', () => {
       }
     });
     const ch = makeChannel(mock.port);
-    await expect(ch.sendMessage('formmy_5215555', 'hola')).resolves.toBeUndefined();
+    await expect(
+      ch.sendMessage('formmy_5215555', 'hola'),
+    ).resolves.toBeUndefined();
     expect(mock.requests).toHaveLength(2);
   }, 10_000);
 
@@ -181,7 +187,9 @@ describe('FormmyWhatsAppChannel.postToFormmy', () => {
       }
     });
     const ch = makeChannel(mock.port);
-    await expect(ch.sendMessage('formmy_5215555', 'hola')).resolves.toBeUndefined();
+    await expect(
+      ch.sendMessage('formmy_5215555', 'hola'),
+    ).resolves.toBeUndefined();
     expect(mock.requests).toHaveLength(2);
   }, 10_000);
 

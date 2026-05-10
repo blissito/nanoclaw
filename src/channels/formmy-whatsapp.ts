@@ -433,13 +433,11 @@ export class FormmyWhatsAppChannel implements Channel {
         return;
       } catch (err) {
         lastError = err as Error;
-        const retryable =
-          (err as { retryable?: boolean }).retryable !== false;
+        const retryable = (err as { retryable?: boolean }).retryable !== false;
         if (!retryable || attempt === FORMMY_POST_MAX_ATTEMPTS) {
           break;
         }
-        const delay =
-          FORMMY_POST_BASE_BACKOFF_MS * Math.pow(2, attempt - 1);
+        const delay = FORMMY_POST_BASE_BACKOFF_MS * Math.pow(2, attempt - 1);
         logger.warn(
           {
             err,

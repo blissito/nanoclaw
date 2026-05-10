@@ -51,10 +51,7 @@ describe('public-rate-limit', () => {
       checkPublicRateLimit('jid-a', t0 + BURST_MAX_SPAWNS * 1000 + 100);
       checkPublicRateLimit('jid-a', t0 + BURST_MAX_SPAWNS * 1000 + 200);
       // Once the window slides past the first spawn, exactly one slot opens
-      const slid = checkPublicRateLimit(
-        'jid-a',
-        t0 + BURST_WINDOW_MS + 1,
-      );
+      const slid = checkPublicRateLimit('jid-a', t0 + BURST_WINDOW_MS + 1);
       expect(slid.allowed).toBe(true);
     });
 
@@ -63,7 +60,10 @@ describe('public-rate-limit', () => {
       for (let i = 0; i < BURST_MAX_SPAWNS + 1; i++) {
         checkPublicRateLimit('jid-a', t0 + i * 1000);
       }
-      const after = checkPublicRateLimit('jid-a', t0 + BURST_WINDOW_MS + 10_000);
+      const after = checkPublicRateLimit(
+        'jid-a',
+        t0 + BURST_WINDOW_MS + 10_000,
+      );
       expect(after.allowed).toBe(true);
     });
 
@@ -105,10 +105,7 @@ describe('public-rate-limit', () => {
     it('forgets token usage older than DAILY_WINDOW_MS', () => {
       const t0 = 1_000_000_000;
       recordPublicInputTokens('jid-a', DAILY_MAX_INPUT_TOKENS * 2, t0);
-      const after = checkPublicRateLimit(
-        'jid-a',
-        t0 + DAILY_WINDOW_MS + 1000,
-      );
+      const after = checkPublicRateLimit('jid-a', t0 + DAILY_WINDOW_MS + 1000);
       expect(after.allowed).toBe(true);
     });
   });
@@ -119,10 +116,7 @@ describe('public-rate-limit', () => {
       for (let i = 0; i < BURST_MAX_SPAWNS; i++) {
         checkPublicRateLimit('jid-a', t0 + i * 1000);
       }
-      const first = checkPublicRateLimit(
-        'jid-a',
-        t0 + BURST_MAX_SPAWNS * 1000,
-      );
+      const first = checkPublicRateLimit('jid-a', t0 + BURST_MAX_SPAWNS * 1000);
       const second = checkPublicRateLimit(
         'jid-a',
         t0 + BURST_MAX_SPAWNS * 1000 + 100,
