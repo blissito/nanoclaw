@@ -43,7 +43,11 @@ tool('read',
   async () => toToolResult(await kommo.get('/api/v4/leads/pipelines')),
 );
 
-tool('read',
+// Moved out of 'read' toolset (was leaking internal staff list to public B2C
+// agents). Now in 'admin' so it's only available when admins are configured
+// explicitly. Public groups using KOMMO_TOOLSETS=read,create,scoped-mutate
+// don't see this tool.
+tool('admin',
   'list_users',
   'List all users in the Kommo account (CRM team members). Use their id as responsible_user_id when creating/updating leads or tasks.',
   {},

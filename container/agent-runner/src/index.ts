@@ -360,7 +360,17 @@ function getAllMcpServers(containerInput: ContainerInput, mcpServerPath: string)
     },
     easybits: {
       command: 'npx',
-      args: ['-y', '@easybits.cloud/mcp'],
+      args: [
+        '-y',
+        '@easybits.cloud/mcp',
+        // EASYBITS_TOOLSETS scopes which tool groups the MCP server exposes
+        // in tools/list (UX optimization — fewer tokens, less surface for the
+        // LLM to chase). Real enforcement still lives in allowedTools on the
+        // host side. See FORMMY_PUBLIC_TEMPLATE for the canonical public usage.
+        ...(process.env.EASYBITS_TOOLSETS
+          ? ['--tools', process.env.EASYBITS_TOOLSETS]
+          : []),
+      ],
       env: {
         EASYBITS_API_KEY: process.env.EASYBITS_API_KEY || '',
       },

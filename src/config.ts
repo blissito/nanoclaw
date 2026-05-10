@@ -91,27 +91,34 @@ import type { ContainerConfig } from './types.js';
 // Layered defense:
 //   - profile=public: container-runner omits /workspace/global, uses skills-public/agents-public
 //   - mcpServers + env toolsets: nanoclaw/kommo MCPs only register safe tool subsets
-//   - allowedTools (granular): easybits is upstream so we can't filter at registration —
-//     listed by name. Capa 1 in agent-runner suppresses the wildcard `mcp__easybits__*`.
-//   - nanoclaw/kommo use wildcard since their toolsets already filter at registration.
+//     at registration time. easybits is upstream — `EASYBITS_TOOLSETS=public-safe`
+//     scopes its tools/list (UX optimization, fewer tokens), but the server's
+//     `discover_tools`/`run_tool` can still reach disabled tools, so real
+//     enforcement lives in allowedTools below (Capa 1 wildcard suppression).
+//   - allowedTools (granular): list each easybits tool by name. The presence of
+//     specific `mcp__easybits__<name>` entries makes `buildAllowedTools()` drop
+//     the wildcard `mcp__easybits__*`, blocking access to discover_tools/run_tool
+//     and every tool not listed here.
+//   - nanoclaw/kommo use wildcard since their toolsets already filter at registration
+//     and they don't expose discover_tools-style escape hatches.
 export const FORMMY_PUBLIC_TEMPLATE: ContainerConfig = {
   profile: 'public',
   mcpServers: ['nanoclaw', 'kommo', 'easybits'],
   env: {
     NANOCLAW_TOOLSETS: 'messaging-public,scheduling-self,quote',
     KOMMO_TOOLSETS: 'read,create,scoped-mutate',
+    EASYBITS_TOOLSETS: 'public-safe',
   },
   allowedTools: [
     'Read',
     'Write',
     'Glob',
     'Grep',
-    // easybits: granular allowlist (Capa 1 suppresses the server wildcard)
-    'mcp__easybits__list_files',
+    // easybits: granular allowlist (Capa 1 suppresses the server wildcard, which
+    // also blocks discover_tools/run_tool escape hatches)
     'mcp__easybits__get_file',
     'mcp__easybits__upload_file',
     'mcp__easybits__create_share_link',
-    'mcp__easybits__db_list',
     'mcp__easybits__db_query',
     'mcp__easybits__generate_image',
     'mcp__easybits__voice_tts_create',
