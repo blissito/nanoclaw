@@ -74,6 +74,14 @@ export class WhatsAppChannel implements Channel {
         options: string[];
         selectableCount: number;
       }
+    | {
+        kind: 'location';
+        jid: string;
+        latitude: number;
+        longitude: number;
+        name?: string;
+        address?: string;
+      }
   > = [];
   private flushing = false;
   private groupSyncTimerStarted = false;
@@ -254,6 +262,33 @@ export class WhatsAppChannel implements Channel {
               normalized?.imageMessage?.caption ||
               normalized?.videoMessage?.caption ||
               '';
+
+            // Location attachment handling — surface coordinates to the agent
+            // so it sees an actual point instead of fingiéndolo from caption.
+            const locMsg =
+              normalized?.locationMessage || normalized?.liveLocationMessage;
+            if (locMsg) {
+              const lat = locMsg.degreesLatitude;
+              const lng = locMsg.degreesLongitude;
+              if (typeof lat === 'number' && typeof lng === 'number') {
+                const isLive = !!normalized?.liveLocationMessage;
+                const placeName = normalized?.locationMessage?.name || '';
+                const placeAddr = normalized?.locationMessage?.address || '';
+                const caption =
+                  normalized?.locationMessage?.comment ||
+                  normalized?.liveLocationMessage?.caption ||
+                  '';
+                const mapsLink = `https://maps.google.com/?q=${lat},${lng}`;
+                const parts: string[] = [
+                  `[${isLive ? 'LiveLocation' : 'Location'}: ${lat},${lng}]`,
+                ];
+                if (placeName) parts.push(`name="${placeName}"`);
+                if (placeAddr) parts.push(`address="${placeAddr}"`);
+                parts.push(mapsLink);
+                const locLine = parts.join(' ');
+                content = caption ? `${locLine}\n${caption}` : locLine;
+              }
+            }
 
             // Prepend quoted message context when replying to a message
             const contextInfo =
@@ -797,6 +832,51 @@ export class WhatsAppChannel implements Channel {
     }
   }
 
+  async sendLocation(
+    jid: string,
+    latitude: number,
+    longitude: number,
+    name?: string,
+    address?: string,
+  ): Promise<void> {
+    if (!this.connected) {
+      this.outgoingQueue.push({
+        kind: 'location',
+        jid,
+        latitude,
+        longitude,
+        name,
+        address,
+      });
+      logger.info(
+        { jid, latitude, longitude },
+        'WA disconnected, location queued',
+      );
+      return;
+    }
+    try {
+      await this.sock.sendMessage(jid, {
+        location: {
+          degreesLatitude: latitude,
+          degreesLongitude: longitude,
+          name,
+          address,
+        },
+      });
+      logger.info({ jid, latitude, longitude, name }, 'Location sent');
+    } catch (err) {
+      this.outgoingQueue.push({
+        kind: 'location',
+        jid,
+        latitude,
+        longitude,
+        name,
+        address,
+      });
+      logger.warn({ jid, err }, 'Failed to send location, queued');
+    }
+  }
+
   async sendSticker(jid: string, filePath: string): Promise<void> {
     if (!this.connected) {
       this.outgoingQueue.push({ kind: 'sticker', jid, filePath });
@@ -1225,6 +1305,23 @@ export class WhatsAppChannel implements Channel {
             },
           });
           logger.info({ jid: item.jid, name: item.name }, 'Queued poll sent');
+        } else if (item.kind === 'location') {
+          await this.sock.sendMessage(item.jid, {
+            location: {
+              degreesLatitude: item.latitude,
+              degreesLongitude: item.longitude,
+              name: item.name,
+              address: item.address,
+            },
+          });
+          logger.info(
+            {
+              jid: item.jid,
+              latitude: item.latitude,
+              longitude: item.longitude,
+            },
+            'Queued location sent',
+          );
         } else {
           await this.sock.sendMessage(item.jid, { text: item.text });
           logger.info(

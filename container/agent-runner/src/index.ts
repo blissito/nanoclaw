@@ -421,6 +421,15 @@ function getAllMcpServers(containerInput: ContainerInput, mcpServerPath: string)
         NANOCLAW_CHAT_JID: containerInput.chatJid,
       },
     },
+    skydropx: {
+      command: 'node',
+      args: ['/app/mcp-servers/skydropx/dist/index.js'],
+      env: {
+        SKYDROPX_CLIENT_ID: process.env.SKYDROPX_CLIENT_ID || '',
+        SKYDROPX_CLIENT_SECRET: process.env.SKYDROPX_CLIENT_SECRET || '',
+        SKYDROPX_BASE_URL: process.env.SKYDROPX_BASE_URL || 'https://pro.skydropx.com',
+      },
+    },
   };
 }
 
@@ -909,7 +918,7 @@ async function main(): Promise<void> {
   // When a session .jsonl exceeds this size, we force /compact before
   // the real prompt so the model doesn't choke on megabytes of history.
   // Threshold: 1MB. Remove or adjust after evaluating results.
-  const SESSION_SIZE_COMPACT_THRESHOLD = 20 * 1024 * 1024; // 20MB (jsonl is append-only and never shrinks after compact)
+  const SESSION_SIZE_COMPACT_THRESHOLD = 4 * 1024 * 1024; // 4MB (jsonl is append-only and never shrinks after compact)
   if (sessionId) {
     const sessionFile = path.join(
       os.homedir(), '.claude', 'projects', '-workspace-group', `${sessionId}.jsonl`,

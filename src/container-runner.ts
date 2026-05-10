@@ -337,8 +337,19 @@ function buildEnvFile(
   const elevenKey = readEnvFile(['ELEVENLABS_API_KEY']).ELEVENLABS_API_KEY;
   if (elevenKey) envLines.push(`ELEVENLABS_API_KEY=${elevenKey}`);
 
-  const mpToken = readEnvFile(['MP_ACCESS_TOKEN']).MP_ACCESS_TOKEN;
-  if (mpToken) envLines.push(`MP_ACCESS_TOKEN=${mpToken}`);
+  const mpEnv = readEnvFile([
+    'MP_ACCESS_TOKEN',
+    'MP_PUBLIC_KEY',
+    'MP_CLIENT_ID',
+    'MP_CLIENT_SECRET',
+  ]);
+  if (mpEnv.MP_ACCESS_TOKEN)
+    envLines.push(`MP_ACCESS_TOKEN=${mpEnv.MP_ACCESS_TOKEN}`);
+  if (mpEnv.MP_PUBLIC_KEY)
+    envLines.push(`MP_PUBLIC_KEY=${mpEnv.MP_PUBLIC_KEY}`);
+  if (mpEnv.MP_CLIENT_ID) envLines.push(`MP_CLIENT_ID=${mpEnv.MP_CLIENT_ID}`);
+  if (mpEnv.MP_CLIENT_SECRET)
+    envLines.push(`MP_CLIENT_SECRET=${mpEnv.MP_CLIENT_SECRET}`);
 
   const awsEnv = readEnvFile([
     'AWS_BEDROCK_ACCESS_KEY_ID',
@@ -399,6 +410,21 @@ function buildEnvFile(
     envLines.push(
       `GHOSTY_STUDIO_URL=${canvaEnv.GHOSTY_STUDIO_URL || 'https://ghosty.studio'}`,
     );
+  }
+
+  const skydropxEnv = readEnvFile([
+    'SKYDROPX_CLIENT_ID',
+    'SKYDROPX_CLIENT_SECRET',
+    'SKYDROPX_BASE_URL',
+  ]);
+  if (skydropxEnv.SKYDROPX_CLIENT_ID && skydropxEnv.SKYDROPX_CLIENT_SECRET) {
+    envLines.push(`SKYDROPX_CLIENT_ID=${skydropxEnv.SKYDROPX_CLIENT_ID}`);
+    envLines.push(
+      `SKYDROPX_CLIENT_SECRET=${skydropxEnv.SKYDROPX_CLIENT_SECRET}`,
+    );
+    if (skydropxEnv.SKYDROPX_BASE_URL) {
+      envLines.push(`SKYDROPX_BASE_URL=${skydropxEnv.SKYDROPX_BASE_URL}`);
+    }
   }
 
   // Per-group env overrides (from container_config.env)

@@ -13,6 +13,7 @@ import http from 'http';
 import https from 'https';
 import crypto from 'crypto';
 import { CronExpressionParser } from 'cron-parser';
+import { runSiiqtecQuotePdf, type QuoteInput } from './siiqtec-quote.js';
 
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
@@ -34,6 +35,12 @@ function ensureInGroupDir(filePath: string): string {
   const dest = path.join(GROUP_DIR, path.basename(resolved));
   fs.copyFileSync(resolved, dest);
   return dest;
+}
+
+/** Return the file's parent dir relative to GROUP_DIR (e.g. "attachments"), or undefined for root. */
+function subdirRelativeToGroup(safePath: string): string | undefined {
+  const rel = path.relative(GROUP_DIR, path.dirname(safePath));
+  return rel === '' ? undefined : rel;
 }
 
 function writeIpcFile(dir: string, data: object): string {
@@ -85,11 +92,13 @@ server.tool(
 
     if (args.video_path) {
       const safePath = ensureInGroupDir(args.video_path);
+      const subdir = subdirRelativeToGroup(safePath);
       const filename = path.basename(safePath);
       const data = {
         type: 'video',
         chatJid,
         filename,
+        subdir,
         caption: args.text || '',
         groupFolder,
         timestamp: new Date().toISOString(),
@@ -100,11 +109,13 @@ server.tool(
 
     if (args.document_path) {
       const safePath = ensureInGroupDir(args.document_path);
+      const subdir = subdirRelativeToGroup(safePath);
       const filename = path.basename(safePath);
       const data = {
         type: 'document',
         chatJid,
         filename,
+        subdir,
         originalName: filename,
         caption: args.text || '',
         groupFolder,
@@ -116,11 +127,13 @@ server.tool(
 
     if (args.audio_path) {
       const safePath = ensureInGroupDir(args.audio_path);
+      const subdir = subdirRelativeToGroup(safePath);
       const filename = path.basename(safePath);
       const data = {
         type: 'audio',
         chatJid,
         filename,
+        subdir,
         groupFolder,
         timestamp: new Date().toISOString(),
       };
@@ -130,11 +143,13 @@ server.tool(
 
     if (args.image_path) {
       const safePath = ensureInGroupDir(args.image_path);
+      const subdir = subdirRelativeToGroup(safePath);
       const filename = path.basename(safePath);
       const data = {
         type: 'image',
         chatJid,
         filename,
+        subdir,
         caption: args.text,
         groupFolder,
         timestamp: new Date().toISOString(),
@@ -198,6 +213,31 @@ server.tool(
         },
       ],
     };
+  },
+);
+
+server.tool(
+  'send_location',
+  'Send a WhatsApp location pin to the chat. Tap-to-open in Maps. Use for sharing addresses, meeting points, store locations.',
+  {
+    latitude: z.number().min(-90).max(90).describe('Latitude in decimal degrees, e.g. 19.4326'),
+    longitude: z.number().min(-180).max(180).describe('Longitude in decimal degrees, e.g. -99.1332'),
+    name: z.string().optional().describe('Place name shown above the pin (e.g. "Café Tomás")'),
+    address: z.string().optional().describe('Street address shown below the name (e.g. "Av. Reforma 123, CDMX")'),
+  },
+  async (args) => {
+    const data = {
+      type: 'location',
+      chatJid,
+      latitude: args.latitude,
+      longitude: args.longitude,
+      name: args.name || undefined,
+      address: args.address || undefined,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+    writeIpcFile(MESSAGES_DIR, data);
+    return { content: [{ type: 'text' as const, text: 'Location queued for delivery.' }] };
   },
 );
 
@@ -1251,6 +1291,77 @@ server.tool(
     } catch (err) {
       return {
         content: [{ type: 'text' as const, text: `Failed to send email: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'siiqtec_quote_pdf',
+  'Genera una cotización SIIQTEC en PDF (template oficial: header SIIQTEC, RECEPTOR, productos con imagen, totales con envío Ruta SIIQTEC o paquetería, ficha de depósito con datos bancarios). La tool valida cantidades, recalcula montos, valida que las imágenes existan (cae a placeholder S/I si fallan), y particiona automáticamente en páginas si hay >6 productos. NUNCA inventes amounts; pasa qty + unit_price por item y la tool calcula. Por default NO incluye link de pago MercadoPago — pasá include_payment_link=true para añadir el card con QR + botón "Clic para pagar". Cada página lleva la leyenda "Esta cotización es generada con IA y puede tener errores". Devuelve el path local del PDF para mandarlo con send_message.',
+  {
+    folio: z.string().regex(/^\d{6}-\d{3}$/, 'folio debe ser YYMMDD-NNN').describe('Folio de cotización formato YYMMDD-NNN (ej: 260430-001).'),
+    fecha: z.string().optional().describe('Fecha en formato DD/MM/YYYY. Si se omite, usa la fecha de hoy.'),
+    cliente: z.object({
+      nombre: z.string().min(1).describe('Nombre del cliente. Requerido.'),
+      rfc: z.string().nullable().optional(),
+      email: z.string().nullable().optional(),
+      tel: z.string().nullable().optional(),
+      domicilio: z.string().min(1).describe('Domicilio completo. Requerido para cálculo de envío.'),
+      colonia: z.string().nullable().optional(),
+      ciudad: z.string().nullable().optional(),
+      negocio: z.string().nullable().optional(),
+      vendedor: z.string().nullable().optional().describe('Nombre del vendedor. Default: "SIIQTEC".'),
+    }),
+    items: z
+      .array(
+        z.object({
+          sku: z.string().min(1),
+          qty: z.number().positive(),
+          unit: z.enum(['PZA', 'GARRAFA', 'KG', 'LT', 'CAJA', 'BOLSA', 'PAR', 'JGO']),
+          nombre: z.string().min(1),
+          unit_price: z.number().min(0).describe('Precio unitario. La tool calcula el importe (qty × unit_price).'),
+          imagen_url: z.string().url().nullable().optional().describe('URL de la imagen del producto. Si falla la verificación, se sustituye por placeholder S/I.'),
+        }),
+      )
+      .min(1)
+      .max(99),
+    envio: z
+      .union([
+        z.object({
+          modo: z.literal('ruta_siiqtec'),
+          dia: z.string().min(1).describe('Día de entrega (ej: "Miércoles").'),
+          destino: z.string().min(1).describe('Destino visible en la cotización (ej: "Tulancingo, Hgo").'),
+        }),
+        z.object({
+          modo: z.literal('paqueteria'),
+          carrier: z.string().min(1),
+          cp: z.string().min(1),
+          dias: z.string().min(1),
+          costo: z.number().min(0),
+        }),
+      ])
+      .describe('Modo de envío. ruta_siiqtec = gratis. paqueteria = costo cotizado.'),
+    include_payment_link: z
+      .boolean()
+      .optional()
+      .describe('Si true, genera link MercadoPago + agrega el card con QR y botón "Clic para pagar" en la página de depósito. Default: false (sólo datos bancarios).'),
+  },
+  async (args) => {
+    try {
+      const result = await runSiiqtecQuotePdf(args as QuoteInput);
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(result),
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: err instanceof Error ? err.message : String(err) }],
         isError: true,
       };
     }

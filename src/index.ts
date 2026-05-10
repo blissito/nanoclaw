@@ -427,6 +427,20 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         isTriggerAllowed(chatJid, m.sender, allowlistCfg))
     );
   };
+  // Reactions (👀/✅) only fire when the message explicitly addresses the bot,
+  // even in groups with requiresTrigger=false where every message processes.
+  // Otherwise the bot reacts to human-to-human chatter and looks noisy.
+  const explicitTriggerPattern =
+    group.trigger !== '.*' ? getTriggerPattern(group.trigger) : null;
+  const hasExplicitTrigger = (m: (typeof missedMessages)[number]): boolean => {
+    if (!explicitTriggerPattern) return false;
+    return (
+      (explicitTriggerPattern.test(m.content.trim()) ||
+        (stickerTrigger && m.content.includes('[Sticker:'))) &&
+      ((ASSISTANT_HAS_OWN_NUMBER && m.is_from_me) ||
+        isTriggerAllowed(chatJid, m.sender, allowlistCfg))
+    );
+  };
   if (needsTrigger) {
     const hasTrigger = missedMessages.some(isInvokingMessage);
     if (!hasTrigger) {
@@ -453,9 +467,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Ensure all user messages are tracked — recovery messages enter processGroupMessages
   // directly via the queue, bypassing startMessageLoop where markReceived normally fires.
   // markReceived is idempotent (rejects duplicates), so this is safe for normal-path messages too.
-  // Only react to invoking messages — context messages in the same batch stay silent.
+  // React only when the bot is explicitly addressed (trigger pattern present), so
+  // groups with requiresTrigger=false don't get 👀/✅ on chatter between humans.
   for (const msg of actionableMessages) {
-    if (!isInvokingMessage(msg)) continue;
+    if (msg.is_from_me || msg.is_bot_message) continue;
+    if (!hasExplicitTrigger(msg)) continue;
     statusTracker.markReceived(
       msg.id,
       chatJid,
@@ -988,6 +1004,19 @@ async function startMessageLoop(): Promise<void> {
                 isTriggerAllowed(chatJid, m.sender, allowlistCfg))
             );
           };
+          const explicitTriggerPattern =
+            group.trigger !== '.*' ? getTriggerPattern(group.trigger) : null;
+          const hasExplicitTrigger = (
+            m: (typeof groupMessages)[number],
+          ): boolean => {
+            if (!explicitTriggerPattern) return false;
+            return (
+              (explicitTriggerPattern.test(m.content.trim()) ||
+                (stickerTrigger && m.content.includes('[Sticker:'))) &&
+              ((ASSISTANT_HAS_OWN_NUMBER && m.is_from_me) ||
+                isTriggerAllowed(chatJid, m.sender, allowlistCfg))
+            );
+          };
 
           // Only act on trigger messages when trigger is required.
           // Non-trigger messages accumulate in DB and get pulled as
@@ -997,11 +1026,13 @@ async function startMessageLoop(): Promise<void> {
             if (!hasTrigger) continue;
           }
 
-          // React only to invoking messages — context messages in the same
-          // batch stay silent so the bot doesn't spam 👀 on every comment.
+          // React only when the bot is explicitly addressed (trigger pattern
+          // present). Groups with requiresTrigger=false still process every
+          // message internally, but reactions stay silent unless the user
+          // says @bot/bot:.
           for (const msg of groupMessages) {
             if (msg.is_from_me || msg.is_bot_message) continue;
-            if (!isInvokingMessage(msg)) continue;
+            if (!hasExplicitTrigger(msg)) continue;
             statusTracker.markReceived(
               msg.id,
               chatJid,
@@ -1520,6 +1551,18 @@ async function main(): Promise<void> {
         jid,
         caption || '[Document not supported on this channel]',
       );
+    },
+    sendLocation: (jid, latitude, longitude, name, address) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      if (channel.sendLocation) {
+        return channel.sendLocation(jid, latitude, longitude, name, address);
+      }
+      // Fallback: send a Google Maps link so the user still gets the point.
+      const link = `https://maps.google.com/?q=${latitude},${longitude}`;
+      const label = name ? `${name}\n` : '';
+      const addr = address ? `${address}\n` : '';
+      return channel.sendMessage(jid, `${label}${addr}${link}`);
     },
     sendVideo: (jid, filePath, caption) => {
       const channel = findChannel(channels, jid);
