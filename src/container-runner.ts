@@ -142,15 +142,18 @@ function buildVolumeMounts(
       }
     }
 
-    // Global memory directory (read-only for non-main)
-    // Only directory mounts are supported, not file mounts
-    const globalDir = path.join(GROUPS_DIR, 'global');
-    if (fs.existsSync(globalDir)) {
-      mounts.push({
-        hostPath: globalDir,
-        containerPath: '/workspace/global',
-        readonly: true,
-      });
+    // Global memory directory (read-only for non-main).
+    // Public-profile groups do NOT see /workspace/global — operator notes and
+    // cross-group context belong only to admin agents, never end-user-facing ones.
+    if (group.containerConfig?.profile !== 'public') {
+      const globalDir = path.join(GROUPS_DIR, 'global');
+      if (fs.existsSync(globalDir)) {
+        mounts.push({
+          hostPath: globalDir,
+          containerPath: '/workspace/global',
+          readonly: true,
+        });
+      }
     }
   }
 
@@ -187,8 +190,14 @@ function buildVolumeMounts(
     );
   }
 
-  // Sync skills from container/skills/ into each group's .claude/skills/
-  const skillsSrc = path.join(process.cwd(), 'container', 'skills');
+  // Sync skills into each group's .claude/skills/.
+  // Public-profile groups pull from container/skills-public/ (curated subset
+  // without admin tooling). If the public dir doesn't exist, no skills sync —
+  // safer than leaking admin skills.
+  const isPublic = group.containerConfig?.profile === 'public';
+  const skillsSrc = isPublic
+    ? path.join(process.cwd(), 'container', 'skills-public')
+    : path.join(process.cwd(), 'container', 'skills');
   const skillsDst = path.join(groupSessionsDir, 'skills');
   if (fs.existsSync(skillsSrc)) {
     for (const skillDir of fs.readdirSync(skillsSrc)) {
@@ -207,8 +216,11 @@ function buildVolumeMounts(
       }
     }
   }
-  // Sync agents from container/agents/ into each group's .claude/agents/
-  const agentsSrc = path.join(process.cwd(), 'container', 'agents');
+  // Sync agents into each group's .claude/agents/.
+  // Public-profile groups pull from container/agents-public/ (curated subset).
+  const agentsSrc = isPublic
+    ? path.join(process.cwd(), 'container', 'agents-public')
+    : path.join(process.cwd(), 'container', 'agents');
   const agentsDst = path.join(groupSessionsDir, 'agents');
   if (fs.existsSync(agentsSrc)) {
     fs.mkdirSync(agentsDst, { recursive: true });

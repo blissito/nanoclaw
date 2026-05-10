@@ -204,10 +204,12 @@ Common patterns:
 |------|---------|----------|---------|
 | `nanoclaw` | built-in | (auto) | Core tools: group mgmt, IPC, email |
 | `easybits` | `@easybits.cloud/mcp` | `EASYBITS_API_KEY` | File/image/document storage |
+| `easybits-design-core-sandbox` | `@easybits.cloud/mcp --tools design,core,sandbox` | `EASYBITS_API_KEY` | Design + Core + Firecracker microVM sandbox toolset (KS-5): `sandbox_create/list/status/destroy/exec/run_code/files_*` + `agent_run` (Claude managed). Para harness de agentes y código aislado. |
 | `kommo` | bundled (`container/mcp-servers/kommo`) | `KOMMO_BASE_URL`, `KOMMO_ACCESS_TOKEN` | Kommo CRM (leads, contacts, pipelines read/write) |
 | `smatch` | `smatch-mcp` | `SMATCH_MONGODB_URI`, `SMATCH_CLUB_ID` (optional → admin/multi-club mode) | Club admin (full CRUD). Empty `SMATCH_CLUB_ID` enables `list_clubs` and per-call `clubId` parameter. |
 | `smatch-public` | `smatch-mcp-public` | `SMATCH_MONGODB_URI`, `SMATCH_CLUB_ID` | Public read-only + reservation requests. Same admin/club-mode behavior as `smatch`. |
 | `brightdata` | `@brightdata/mcp` | `BRIGHTDATA_API_TOKEN` | Web scraping/search |
+| `skydropx` | bundled (`container/mcp-servers/skydropx`) | `SKYDROPX_CLIENT_ID`, `SKYDROPX_CLIENT_SECRET`, `SKYDROPX_BASE_URL` (opt, default prod) | Envíos México: cotizar/crear/rastrear/cancelar guías. OAuth2 client_credentials, token cache 2h. Quote endpoint async — el tool poll-ea internamente hasta `is_completed`. |
 
 ## Client Snapshot (Deploy to New Droplet)
 

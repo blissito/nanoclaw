@@ -360,7 +360,17 @@ function getAllMcpServers(containerInput: ContainerInput, mcpServerPath: string)
     },
     easybits: {
       command: 'npx',
-      args: ['-y', '@easybits.cloud/mcp'],
+      args: [
+        '-y',
+        '@easybits.cloud/mcp',
+        // EASYBITS_TOOLSETS scopes which tool groups the MCP server exposes
+        // in tools/list (UX optimization — fewer tokens, less surface for the
+        // LLM to chase). Real enforcement still lives in allowedTools on the
+        // host side. See FORMMY_PUBLIC_TEMPLATE for the canonical public usage.
+        ...(process.env.EASYBITS_TOOLSETS
+          ? ['--tools', process.env.EASYBITS_TOOLSETS]
+          : []),
+      ],
       env: {
         EASYBITS_API_KEY: process.env.EASYBITS_API_KEY || '',
       },
@@ -375,6 +385,13 @@ function getAllMcpServers(containerInput: ContainerInput, mcpServerPath: string)
     'easybits-design-core': {
       command: 'npx',
       args: ['-y', '@easybits.cloud/mcp', '--tools', 'design,core'],
+      env: {
+        EASYBITS_API_KEY: process.env.EASYBITS_API_KEY || '',
+      },
+    },
+    'easybits-design-core-sandbox': {
+      command: 'npx',
+      args: ['-y', '@easybits.cloud/mcp', '--tools', 'design,core,sandbox'],
       env: {
         EASYBITS_API_KEY: process.env.EASYBITS_API_KEY || '',
       },
@@ -447,22 +464,38 @@ function buildMcpServers(containerInput: ContainerInput, mcpServerPath: string):
 
 function buildAllowedTools(containerInput: ContainerInput, mcpServerPath: string): string[] {
   const mcpServers = buildMcpServers(containerInput, mcpServerPath);
-  const mcpTools = Object.keys(mcpServers).map(n => `mcp__${n}__*`);
+  const enabledServers = Object.keys(mcpServers);
 
-  // Per-group override: only allow specified tools + MCP tools for enabled servers
+  // Per-group override: explicit allowedTools list controls exactly what is exposed.
+  // For each MCP server, expand to wildcard `mcp__<server>__*` ONLY if the user did
+  // not list any specific tools from that server. This lets a public template lock
+  // down `easybits` to a granular allowlist while leaving `nanoclaw`/`kommo` wide
+  // open (since those are restricted via their own `<SERVER>_TOOLSETS` env vars).
   if (containerInput.allowedTools?.length) {
-    return [...containerInput.allowedTools, ...mcpTools];
+    const userTools = containerInput.allowedTools;
+    const serversWithExplicitTools = new Set<string>();
+    for (const server of enabledServers) {
+      const wildcardPattern = `mcp__${server}__*`;
+      const prefix = `mcp__${server}__`;
+      const hasSpecific = userTools.some(
+        t => t !== wildcardPattern && t.startsWith(prefix),
+      );
+      if (hasSpecific) serversWithExplicitTools.add(server);
+    }
+    const wildcards = enabledServers
+      .filter(s => !serversWithExplicitTools.has(s))
+      .map(s => `mcp__${s}__*`);
+    return [...userTools, ...wildcards];
   }
 
+  // Subagent/team tools intentionally excluded — re-experiment later.
   return [
     'Bash',
     'Read', 'Write', 'Edit', 'Glob', 'Grep',
     'WebSearch', 'WebFetch',
-    'Task', 'TaskOutput', 'TaskStop',
-    'TeamCreate', 'TeamDelete', 'SendMessage',
     'TodoWrite', 'ToolSearch', 'Skill',
     'NotebookEdit',
-    ...mcpTools,
+    ...enabledServers.map(n => `mcp__${n}__*`),
   ];
 }
 
@@ -917,7 +950,8 @@ async function main(): Promise<void> {
   // --- EXPERIMENT: auto-compact bloated sessions before first query ---
   // When a session .jsonl exceeds this size, we force /compact before
   // the real prompt so the model doesn't choke on megabytes of history.
-  // Threshold: 1MB. Remove or adjust after evaluating results.
+  // 4MB observed empirically: sessions >6MB cause 30-min hangs on resume
+  // (container init succeeds but no streaming output before SIGKILL).
   const SESSION_SIZE_COMPACT_THRESHOLD = 4 * 1024 * 1024; // 4MB (jsonl is append-only and never shrinks after compact)
   if (sessionId) {
     const sessionFile = path.join(
@@ -965,11 +999,15 @@ async function main(): Promise<void> {
             log('Auto-compact completed');
           }
         }
-        // Check new size
+        // Check new size — /compact creates a fresh session, so stat the new
+        // session's .jsonl, not the old append-only one (which never shrinks).
         try {
-          const newStat = fs.statSync(sessionFile);
-          log(`Session file after compact: ${(newStat.size / 1024 / 1024).toFixed(1)}MB`);
-        } catch { /* file may have changed path after compact */ }
+          const newSessionFile = path.join(
+            os.homedir(), '.claude', 'projects', '-workspace-group', `${sessionId}.jsonl`,
+          );
+          const newStat = fs.statSync(newSessionFile);
+          log(`Session file after compact: ${(newStat.size / 1024 / 1024).toFixed(2)}MB`);
+        } catch { /* file may not exist yet for new session */ }
       } else {
         log(`Session file is ${(stat.size / 1024).toFixed(0)}KB — no compact needed`);
       }

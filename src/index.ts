@@ -81,6 +81,11 @@ import { startSessionCleanup } from './session-cleanup.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { parseImageReferences } from './image.js';
+import {
+  checkPublicRateLimit,
+  formatRetryMessage,
+  recordPublicInputTokens,
+} from './public-rate-limit.js';
 import { StatusTracker } from './status-tracker.js';
 import { logger } from './logger.js';
 import { initUsageReporter, reportTurnUsage } from './usage-reporter.js';
@@ -464,6 +469,34 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     return true;
   }
 
+  // Public-profile rate limit (Formmy WABA end-users). Burst + daily spawn cap +
+  // daily input-token cap. Admin profile groups bypass this entirely.
+  if (group.containerConfig?.profile === 'public') {
+    const decision = checkPublicRateLimit(chatJid);
+    if (!decision.allowed) {
+      logger.warn(
+        {
+          group: group.name,
+          chatJid,
+          reason: decision.reason,
+          retryAfterMs: decision.retryAfterMs,
+        },
+        'Public group rate-limited',
+      );
+      if (decision.shouldNotify) {
+        try {
+          await channel.sendMessage(chatJid, formatRetryMessage(decision));
+        } catch (err) {
+          logger.warn({ err, chatJid }, 'Failed to send throttle notice');
+        }
+      }
+      lastAgentTimestamp[chatJid] =
+        missedMessages[missedMessages.length - 1].timestamp;
+      saveState();
+      return true;
+    }
+  }
+
   // Ensure all user messages are tracked — recovery messages enter processGroupMessages
   // directly via the queue, bypassing startMessageLoop where markReceived normally fires.
   // markReceived is idempotent (rejects duplicates), so this is safe for normal-path messages too.
@@ -620,6 +653,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           },
           'Usage logged',
         );
+
+        // Feed input tokens (including cache reads) into the public rate
+        // limiter so a single bloated turn counts toward the daily cap.
+        if (group.containerConfig?.profile === 'public') {
+          const inputTokens =
+            result.usage.input_tokens +
+            (result.usage.cache_creation_input_tokens ?? 0) +
+            (result.usage.cache_read_input_tokens ?? 0);
+          recordPublicInputTokens(chatJid, inputTokens);
+        }
 
         // Push to ghosty.studio: only when we actually delivered a reply.
         // Tool-only turns (no text sent) are skipped per the reporter contract.
@@ -1286,6 +1329,12 @@ async function main(): Promise<void> {
   // Create and connect all registered channels.
   // Each channel self-registers via the barrel import above.
   // Factories return null when credentials are missing, so unconfigured channels are skipped.
+  //
+  // Connects fire in parallel with a 10s grace period: a channel whose .connect()
+  // hangs (e.g. WhatsApp waiting on pairing) must not block other channels from
+  // listening. The hung channel keeps trying in the background; if it eventually
+  // succeeds it becomes functional, otherwise it stays unconnected but harmless.
+  const connectPromises: Array<Promise<void>> = [];
   for (const channelName of getRegisteredChannelNames()) {
     const factory = getChannelFactory(channelName)!;
     const channel = factory(channelOpts);
@@ -1297,12 +1346,32 @@ async function main(): Promise<void> {
       continue;
     }
     channels.push(channel);
-    await channel.connect();
+    connectPromises.push(
+      channel.connect().catch((err) => {
+        logger.warn(
+          { err, channel: channelName },
+          'Channel connect failed; service will continue without it',
+        );
+      }),
+    );
   }
   if (channels.length === 0) {
     logger.fatal('No channels connected');
     process.exit(1);
   }
+  const CHANNEL_BOOT_GRACE_MS = 10_000;
+  await Promise.race([
+    Promise.all(connectPromises),
+    new Promise<void>((resolve) =>
+      setTimeout(() => {
+        logger.warn(
+          { graceMs: CHANNEL_BOOT_GRACE_MS },
+          'Channel boot grace expired; proceeding with whatever connected so far',
+        );
+        resolve();
+      }, CHANNEL_BOOT_GRACE_MS),
+    ),
+  ]);
 
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({

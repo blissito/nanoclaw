@@ -21,10 +21,11 @@ import http from 'http';
 import https from 'https';
 import path from 'path';
 
-import { GROUPS_DIR } from '../config.js';
+import { FORMMY_PUBLIC_TEMPLATE, GROUPS_DIR } from '../config.js';
 import {
   getFormmyGroupFolder,
   getFormmyIntegrationId,
+  registerFormmyUserGroup,
   setFormmyJidMapping,
 } from '../db.js';
 import { logger } from '../logger.js';
@@ -33,7 +34,39 @@ import { registerChannel, ChannelOpts } from './registry.js';
 
 const CHANNEL_NAME = 'formmy-whatsapp';
 const JID_PREFIX = 'formmy_';
-const DEFAULT_GROUP = process.env.FORMMY_DEFAULT_GROUP || '';
+
+// Module-level keep-alive agents so outbound POSTs to FORMMY_CALLBACK_URL reuse
+// TCP/TLS connections across calls. Without this, every send to Formmy pays a
+// full handshake (~100-200ms on TLS) and we exhaust local ports under load.
+const httpsKeepAliveAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 10,
+});
+const httpKeepAliveAgent = new http.Agent({
+  keepAlive: true,
+  maxSockets: 10,
+});
+
+// Retry config for postToFormmy. Mirrors the exponential-backoff shape used in
+// src/group-queue.ts (BASE * 2^(n-1)) but tuned shorter since the WA user is
+// already waiting on the response.
+const FORMMY_POST_MAX_ATTEMPTS = 3;
+const FORMMY_POST_BASE_BACKOFF_MS = 1000;
+const FORMMY_POST_TIMEOUT_MS = 15_000;
+
+function isRetryableStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Defensive: JIDs already match the group-folder regex (`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`),
+// but if Formmy ever changes format, replace any unsafe char with underscore.
+function sanitizeFolder(jid: string): string {
+  return jid.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);
+}
 
 interface InboundMedia {
   type: 'image' | 'sticker' | 'document' | 'audio';
@@ -120,37 +153,64 @@ export class FormmyWhatsAppChannel implements Channel {
           ? jid
           : `${JID_PREFIX}${jid}`;
 
-        // Resolve group via mapping table
+        // Resolve group via mapping table.
+        // Three modes (priority order):
+        //   1. Cache hit on JID → use directly.
+        //   2. Explicit `group_folder` from Formmy → respect (shared lobby /
+        //      multi-user agent). Update mapping if it changed.
+        //   3. No mapping yet → auto-provision a per-user folder named after
+        //      the JID itself (already globally unique). Each WABA end-user
+        //      gets isolated CLAUDE.md, attachments, IPC, .claude/ session.
+        //      Inherits FORMMY_PUBLIC_TEMPLATE — sandboxed profile, no global,
+        //      restricted MCP toolsets, granular tool allowlist.
         const groups = this.opts.registeredGroups();
         let group: import('../types.js').RegisteredGroup | undefined =
           groups[fullJid];
-        const targetFolder = group_folder || DEFAULT_GROUP;
 
-        if (!group && targetFolder) {
-          // Check if JID already has a mapping
+        if (!group) {
           const existingFolder = getFormmyGroupFolder(fullJid);
+          let resolvedFolder: string;
 
-          if (!existingFolder) {
-            // New JID — create mapping
-            setFormmyJidMapping(fullJid, targetFolder, integration_id);
-            logger.info(
-              { jid: fullJid, folder: targetFolder },
-              '[formmy-whatsapp] Mapped new JID to group',
+          if (group_folder) {
+            // Explicit override from Formmy (shared/lobby case).
+            resolvedFolder = group_folder;
+            if (existingFolder !== group_folder) {
+              setFormmyJidMapping(fullJid, group_folder, integration_id);
+              logger.info(
+                { jid: fullJid, from: existingFolder, to: group_folder },
+                '[formmy-whatsapp] JID mapped to explicit group_folder',
+              );
+            }
+          } else if (existingFolder) {
+            // Already mapped from a previous webhook.
+            resolvedFolder = existingFolder;
+          } else {
+            // New WABA user — auto-provision isolated folder = JID.
+            // sanitizeFolder is defensive; the JID format already matches the
+            // group-folder regex, so this is a no-op in practice.
+            resolvedFolder = sanitizeFolder(fullJid);
+            const created = registerFormmyUserGroup(
+              fullJid,
+              resolvedFolder,
+              sender_name || 'WhatsApp User',
+              FORMMY_PUBLIC_TEMPLATE,
             );
-          } else if (group_folder && existingFolder !== group_folder) {
-            // JID exists but group_folder changed (e.g. moving from lobby)
-            setFormmyJidMapping(fullJid, group_folder, integration_id);
+            // Materialize the folder on disk so attachments/CLAUDE.md can land here.
+            fs.mkdirSync(path.join(GROUPS_DIR, resolvedFolder), {
+              recursive: true,
+            });
+            setFormmyJidMapping(fullJid, resolvedFolder, integration_id);
             logger.info(
-              { jid: fullJid, from: existingFolder, to: group_folder },
-              '[formmy-whatsapp] Moved JID to new group',
+              { jid: fullJid, folder: resolvedFolder, created },
+              '[formmy-whatsapp] Auto-provisioned per-user public group',
             );
           }
 
-          // Resolve group from registered_groups by folder
-          const resolvedFolder = group_folder || existingFolder || targetFolder;
           group = Object.values(groups).find(
             (g) => g.folder === resolvedFolder,
           );
+          // Cache miss is fine — index.ts:processGroupMessages re-loads from DB
+          // when it can't find the JID in the in-memory cache.
         }
 
         const groupFolder = group?.folder;
@@ -362,11 +422,55 @@ export class FormmyWhatsAppChannel implements Channel {
   }
 
   private async postToFormmy(payload: Record<string, unknown>): Promise<void> {
-    try {
-      const data = JSON.stringify(payload);
-      const url = new URL(this.callbackUrl);
-      const isHttps = url.protocol === 'https:';
+    const data = JSON.stringify(payload);
+    const url = new URL(this.callbackUrl);
+    const isHttps = url.protocol === 'https:';
+
+    let lastError: Error | null = null;
+    for (let attempt = 1; attempt <= FORMMY_POST_MAX_ATTEMPTS; attempt++) {
+      try {
+        await this.attemptPostToFormmy(url, isHttps, data, payload.type);
+        return;
+      } catch (err) {
+        lastError = err as Error;
+        const retryable = (err as { retryable?: boolean }).retryable !== false;
+        if (!retryable || attempt === FORMMY_POST_MAX_ATTEMPTS) {
+          break;
+        }
+        const delay = FORMMY_POST_BASE_BACKOFF_MS * Math.pow(2, attempt - 1);
+        logger.warn(
+          {
+            err,
+            type: payload.type,
+            attempt,
+            nextDelayMs: delay,
+          },
+          '[formmy-whatsapp] Callback attempt failed, retrying',
+        );
+        await sleep(delay);
+      }
+    }
+
+    logger.error(
+      {
+        err: lastError,
+        type: payload.type,
+        attempts: FORMMY_POST_MAX_ATTEMPTS,
+      },
+      '[formmy-whatsapp] Callback failed after all retries',
+    );
+    throw lastError ?? new Error('postToFormmy failed');
+  }
+
+  private attemptPostToFormmy(
+    url: URL,
+    isHttps: boolean,
+    data: string,
+    payloadType: unknown,
+  ): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
       const transport = isHttps ? https : http;
+      const agent = isHttps ? httpsKeepAliveAgent : httpKeepAliveAgent;
 
       const req = transport.request(
         {
@@ -379,32 +483,53 @@ export class FormmyWhatsAppChannel implements Channel {
             'Content-Length': Buffer.byteLength(data),
             Authorization: `Bearer ${this.secret}`,
           },
+          agent,
         },
         (res) => {
-          if (res.statusCode && res.statusCode >= 400) {
-            logger.warn(
-              { status: res.statusCode, type: payload.type },
-              '[formmy-whatsapp] Callback failed',
+          // Drain the response body so the socket can be returned to the pool.
+          res.resume();
+          res.on('end', () => {
+            const status = res.statusCode ?? 0;
+            if (status >= 200 && status < 300) {
+              resolve();
+              return;
+            }
+            const retryable = isRetryableStatus(status);
+            const err = Object.assign(
+              new Error(
+                `[formmy-whatsapp] Callback ${status} for type=${String(payloadType)}`,
+              ),
+              { status, retryable },
             );
-          }
+            reject(err);
+          });
+          res.on('error', (err) => {
+            reject(Object.assign(err, { retryable: true }));
+          });
         },
       );
 
-      req.on('error', (err) => {
-        logger.error(
-          { err, type: payload.type },
-          '[formmy-whatsapp] Callback request error',
+      req.setTimeout(FORMMY_POST_TIMEOUT_MS, () => {
+        req.destroy(
+          Object.assign(
+            new Error(
+              `[formmy-whatsapp] Callback timeout after ${FORMMY_POST_TIMEOUT_MS}ms`,
+            ),
+            { retryable: true },
+          ),
         );
+      });
+
+      req.on('error', (err) => {
+        if (!(err as { retryable?: boolean }).retryable) {
+          (err as { retryable?: boolean }).retryable = true;
+        }
+        reject(err);
       });
 
       req.write(data);
       req.end();
-    } catch (err) {
-      logger.error(
-        { err, type: payload.type },
-        '[formmy-whatsapp] Failed to send outbound',
-      );
-    }
+    });
   }
 }
 

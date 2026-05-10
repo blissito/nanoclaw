@@ -169,7 +169,17 @@ Para código/logs/configs >20 líneas, usa `create-gist "file.ext" "contenido"`.
 
 ## HTML docs (extra — cuando no hay template y no querés DSL)
 
-`create_document` → `set_page_html` → `get_page_screenshot` → `deploy_document`. Cada página 816×1056px, `overflow: hidden`. Para arreglar un doc existente: `list_documents` → `get_page_html`/`get_page_screenshot` → `set_page_html`/`replace_html`.
+Cada página 816×1056px, `overflow: hidden`. Para arreglar un doc existente: `list_documents` → `get_page_html`/`get_page_screenshot` → `set_page_html`/`replace_html`.
+
+### Pipeline óptimo para crear docs vía MCP de EasyBits (V2 paralelo)
+
+1. `create_document` (1 llamada, ~9s) — define formato, tema, brandKit y outline base.
+2. `add_page` × N **en paralelo** — emite las N llamadas en un solo turno; no esperes entre páginas. Wall clock ≈ la más lenta (~7s para 4), no la suma.
+3. `set_page_html` × N **en paralelo** — mismo patrón: todas las llamadas en un solo turno. Wall clock ≈ la más lenta (~11s para 4).
+4. `deploy_document` (~8s).
+5. `export_document` con `as: "images"` solo si el usuario pide PNGs/carrusel social. **UNA sola llamada para todas las páginas** (~11s para 4 páginas en estado caliente). NO fragmentes con `sectionIds` × N en paralelo: medido empíricamente, paralelizar empeora el wall clock ~1.6× porque cada llamada paga setup completo de Playwright (browser launch + doc fetch + brand kit), que es amortizable por llamada, no por página. Usá `sectionIds` solo si necesitás un subset real (ej: re-exportar 1 página editada).
+
+**Regla clave:** cualquier conjunto de llamadas MCP que no dependa entre sí (varios `add_page`, varios `set_page_html`, varios `get_page_html`) debe ir en un único turno con múltiples tool_uses. Secuencializarlas multiplica el wall clock por N sin razón. Pero `export_document` es la excepción — el bulk gana.
 
 Colores dark themes (inline styles): fondos `#0B1120`/`#0F172A`, cards `#1E293B`, texto `#F1F5F9`/`#CBD5E1`/`#94A3B8`, borders `rgba(148,163,184,0.15)`. Barra acento: `class="h-1.5 bg-gradient-to-r from-[#06B6D4] via-[#8B5CF6] to-[#F59E0B]"`.
 
@@ -234,6 +244,44 @@ Cuando Bliss pida cambiar comportamiento de otro grupo: escribe la instrucción 
 ## Sub-agents
 
 Como sub-agent o teammate, solo usa `send_message` si el agente principal te lo indica.
+
+## Sandbox Agents (`agent_run` de EasyBits)
+
+Toolset `sandbox` corre un agente Claude dentro de un Firecracker microVM efímero (Debian + Node 22 + chromium pre-instalado, root, internet abierto, 30 min TTL, autodestruye). Úsalo cuando necesites entorno aislado o tools de CLI que no tenemos.
+
+**Cuándo SÍ:**
+- Screenshot de un sitio (chromium ya viene): `chromium --headless=new --no-sandbox --screenshot=/tmp/x.png --window-size=1280,800 https://...`
+- Tareas que requieren instalar binarios temporales (yt-dlp, ffmpeg, herramientas de red)
+- Scrape, ETL o transformación arbitraria sobre datos sensibles que no quieres correr en el container del grupo
+
+**Cuándo NO:**
+- Si ya hay tool MCP directa, úsala (no envuelvas un `create_document` en `agent_run`).
+- Tareas <30s — el cold start del VM + init del SDK son ~10-15s, no compensa.
+
+### Patrón async OBLIGATORIO
+
+`agent_run` devuelve `{ jobId }` inmediato, **no el resultado**. Si solo llamas y respondes, entregas un jobId inútil.
+
+1. `mcp__easybits__agent_run({ prompt: "<pasos numerados>", max_turns: 15 })` → guarda `jobId`.
+2. Avisa al usuario "procesando, ~1 min" con `mcp__nanoclaw__send_message`.
+3. Pollea `mcp__easybits__agent_run_status({ job_id: jobId })` cada ~20s hasta `status` ∈ `{done,error,expired}`.
+4. `done` → entrega `response` con formato WhatsApp.
+   `error` → reporta `stopReason` + 2-3 pasos finales de `steps[]`.
+   `expired` → "se pasó del TTL, intenta con menos pasos".
+5. Si la tarea generó archivos en `/tmp/` (screenshot, PDF, dump), léelos con `mcp__easybits__sandbox_files_read({ sandboxId: jobId, path: "/tmp/...", encoding: "base64" })` **antes** de destruir, y súbelos a EasyBits storage si vas a entregarlos al usuario.
+6. `mcp__easybits__agent_run_destroy({ job_id: jobId })` para liberar (opcional, expira solo a los 30 min).
+
+### Reglas de prompting al sub-agente
+
+El prompt que le pasas debe ser **explícito y paso a paso**, no aspiracional:
+- ❌ "Descarga el video de https://..."
+- ✅ "1. Verifica si yt-dlp existe (`which yt-dlp`). 2. Si no, baja el binario con `curl -L .../yt-dlp_linux -o /usr/local/bin/yt-dlp && chmod a+rx ...`. 3. `yt-dlp -o /tmp/out.%(ext)s URL`. 4. Reporta path y tamaño."
+
+Defaults del harness: solo `Bash/Read/Write/Edit/Glob/Grep/WebFetch`, sin subagentes ni `AskUserQuestion`. No los override-es salvo razón fuerte.
+
+### Costo
+
+Cada job cobra tokens reales (`usage.costCents` viene en el resultado). Tareas simples 10-30¢, complejas pueden cruzar $1. Si el prompt va a generar mucho loop (scrape de N páginas, exploración abierta), AVISA al usuario antes: "esto va a costar ~50¢, ¿procedemos?".
 
 ## Tareas largas (>20 min) — chunk en scheduled_tasks, no inline
 

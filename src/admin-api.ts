@@ -22,11 +22,18 @@ import {
   initDatabase,
 } from './db.js';
 import type { RegisteredGroup, ContainerConfig } from './types.js';
+import { CREDENTIAL_PROXY_PORT } from './config.js';
 
 const TOKEN = process.env.NANOCLAW_ADMIN_TOKEN;
 const PORT = Number(process.env.NANOCLAW_ADMIN_PORT ?? 8787);
 const HOST = process.env.NANOCLAW_ADMIN_HOST ?? '127.0.0.1';
 const GROUPS_DIR = process.env.NANOCLAW_GROUPS_DIR ?? path.resolve('groups');
+// The credential-proxy (running inside the main nanoclaw daemon) exposes
+// /nanoclaw/create-group + /nanoclaw/invite-link on this port. On Linux it
+// binds to docker0; on macOS dev to 127.0.0.1. Override via env if needed.
+const CREDENTIAL_PROXY_HOST =
+  process.env.NANOCLAW_PROXY_INTERNAL_HOST ?? '127.0.0.1';
+const PROXY_BASE = `http://${CREDENTIAL_PROXY_HOST}:${CREDENTIAL_PROXY_PORT}`;
 
 if (!TOKEN) {
   console.error('[admin-api] NANOCLAW_ADMIN_TOKEN is required');
@@ -299,13 +306,33 @@ const server = http.createServer(async (req, res) => {
       if (typeof body.requiresTrigger === 'boolean')
         next.requiresTrigger = body.requiresTrigger;
       if (typeof body.name === 'string') next.name = body.name;
+      const ccPatch: ContainerConfig = { ...(g.containerConfig ?? {}) };
+      let ccTouched = false;
       if (Array.isArray(body.mcpServers)) {
-        const cc: ContainerConfig = { ...(g.containerConfig ?? {}) };
-        cc.mcpServers = body.mcpServers.filter(
+        ccPatch.mcpServers = body.mcpServers.filter(
           (x: unknown) => typeof x === 'string',
         );
-        next.containerConfig = cc;
+        ccTouched = true;
       }
+      if (Array.isArray(body.allowedTools)) {
+        ccPatch.allowedTools = body.allowedTools.filter(
+          (x: unknown) => typeof x === 'string',
+        );
+        ccTouched = true;
+      }
+      if (body.env && typeof body.env === 'object') {
+        const merged = { ...(ccPatch.env ?? {}) };
+        for (const [k, v] of Object.entries(body.env)) {
+          if (typeof v === 'string') merged[k] = v;
+        }
+        ccPatch.env = merged;
+        ccTouched = true;
+      }
+      if (body.profile === 'public' || body.profile === 'admin') {
+        ccPatch.profile = body.profile;
+        ccTouched = true;
+      }
+      if (ccTouched) next.containerConfig = ccPatch;
       setRegisteredGroup(jid, next);
 
       if (typeof body.claudeMd === 'string') {
@@ -318,6 +345,104 @@ const server = http.createServer(async (req, res) => {
         containerConfig: fresh.containerConfig ?? null,
         claudeMd: readClaudeMd(fresh.folder),
       });
+    }
+
+    // POST /admin/agents
+    // Creates a new WhatsApp group and registers the bot as admin.
+    // Body: { name: string }
+    // Response: { jid, name, invite_link, ...publicGroup }
+    if (
+      method === 'POST' &&
+      parts[0] === 'admin' &&
+      parts[1] === 'agents' &&
+      parts.length === 2
+    ) {
+      const body = await readBody(req);
+      const name = typeof body.name === 'string' ? body.name.trim() : '';
+      if (!name) return send(res, 400, { error: 'name_required' });
+
+      let proxyResp: Response;
+      try {
+        proxyResp = await fetch(`${PROXY_BASE}/nanoclaw/create-group`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+      } catch (err) {
+        return send(res, 503, {
+          error: 'credential_proxy_unreachable',
+          detail: String(err),
+        });
+      }
+      const proxyText = await proxyResp.text();
+      if (!proxyResp.ok) {
+        return send(res, 502, {
+          error: 'create_group_failed',
+          detail: proxyText,
+        });
+      }
+      let result: { jid?: string; inviteLink?: string | null };
+      try {
+        result = JSON.parse(proxyText);
+      } catch {
+        return send(res, 502, {
+          error: 'invalid_proxy_response',
+          detail: proxyText,
+        });
+      }
+      if (!result.jid) {
+        return send(res, 502, {
+          error: 'no_jid_in_response',
+          detail: proxyText,
+        });
+      }
+
+      const g = getAllRegisteredGroups()[result.jid];
+      return send(res, 200, {
+        ...(g ? publicGroup(result.jid, g) : { jid: result.jid, name }),
+        invite_link: result.inviteLink ?? null,
+      });
+    }
+
+    // GET /admin/agents/:jid/invite-link
+    if (
+      method === 'GET' &&
+      parts[0] === 'admin' &&
+      parts[1] === 'agents' &&
+      parts[3] === 'invite-link' &&
+      parts.length === 4
+    ) {
+      const jid = decodeURIComponent(parts[2]);
+      const g = getAllRegisteredGroups()[jid];
+      if (!g) return send(res, 404, { error: 'not_found' });
+      let proxyResp: Response;
+      try {
+        proxyResp = await fetch(
+          `${PROXY_BASE}/nanoclaw/invite-link?jid=${encodeURIComponent(jid)}`,
+        );
+      } catch (err) {
+        return send(res, 503, {
+          error: 'credential_proxy_unreachable',
+          detail: String(err),
+        });
+      }
+      const proxyText = await proxyResp.text();
+      if (!proxyResp.ok) {
+        return send(res, 502, {
+          error: 'invite_link_failed',
+          detail: proxyText,
+        });
+      }
+      let result: { link?: string | null };
+      try {
+        result = JSON.parse(proxyText);
+      } catch {
+        return send(res, 502, {
+          error: 'invalid_proxy_response',
+          detail: proxyText,
+        });
+      }
+      return send(res, 200, { invite_link: result.link ?? null });
     }
 
     return send(res, 404, { error: 'route_not_found' });

@@ -4,7 +4,8 @@
  * Reads context from environment variables, writes IPC files for the host.
  */
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer, ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { ZodRawShape } from 'zod';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import fs from 'fs';
@@ -62,7 +63,26 @@ const server = new McpServer({
   version: '1.0.0',
 });
 
-server.tool(
+// Toolset filtering: NANOCLAW_TOOLSETS=csv (e.g. "messaging-public,scheduling-self,quote")
+// Public-facing groups restrict surface; admin groups omit the env to register all tools.
+// Toolsets: messaging-public, messaging-admin, scheduling-self, groups, email, quote.
+const NANOCLAW_TOOLSETS_ENV = process.env.NANOCLAW_TOOLSETS;
+const ENABLED_TOOLSETS = NANOCLAW_TOOLSETS_ENV
+  ? new Set(NANOCLAW_TOOLSETS_ENV.split(',').map(s => s.trim()).filter(Boolean))
+  : null; // null = all enabled (compat default)
+
+function tool<S extends ZodRawShape>(
+  toolset: string,
+  name: string,
+  description: string,
+  paramsSchema: S,
+  cb: ToolCallback<S>,
+): void {
+  if (ENABLED_TOOLSETS && !ENABLED_TOOLSETS.has(toolset)) return;
+  server.tool(name, description, paramsSchema, cb);
+}
+
+tool('messaging-public',
   'send_message',
   "Send a message, image, document, or audio to the user or group immediately while you're still running. Use this for progress updates, to send multiple messages, to deliver generated images, or to send document files (PDF, etc.). You can call this multiple times. Note: when running as a scheduled task, your final output is NOT sent to the user — use this tool if you need to communicate with the user or group.",
   {
@@ -173,7 +193,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('messaging-public',
   'send_poll',
   'Send a native WhatsApp poll to the chat. Members tap to vote. Use for quick decisions, scheduling (e.g. "¿Qué día nos vemos?"), preferences, or fun. Up to 12 options. selectable_count=1 → single choice (default), >1 → multi-select.',
   {
@@ -216,7 +236,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('messaging-public',
   'send_location',
   'Send a WhatsApp location pin to the chat. Tap-to-open in Maps. Use for sharing addresses, meeting points, store locations.',
   {
@@ -241,7 +261,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('messaging-public',
   'send_reaction',
   'React to a message with an emoji. Use message IDs from the conversation context. Great for acknowledging messages (👍), confirming actions (✅), or showing appreciation (❤️🔥). Omit message_id to react to the most recent message in the chat.',
   {
@@ -266,7 +286,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('messaging-admin',
   'update_profile_picture',
   'Change the group profile picture. Image should be square (640x640+ recommended).',
   {
@@ -292,7 +312,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('messaging-admin',
   'update_group_name',
   'Rename the WhatsApp group. Changes the group subject/title visible to all members.',
   {
@@ -311,7 +331,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('scheduling-self',
   'schedule_task',
   `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools.
 
@@ -449,7 +469,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
   },
 );
 
-server.tool(
+tool('scheduling-self',
   'list_tasks',
   "List all scheduled tasks. From main: shows all tasks. From other groups: shows only that group's tasks.",
   {},
@@ -513,7 +533,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('scheduling-self',
   'pause_task',
   'Pause a scheduled task. It will not run until resumed.',
   { task_id: z.string().describe('The task ID to pause') },
@@ -539,7 +559,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('scheduling-self',
   'resume_task',
   'Resume a paused task.',
   { task_id: z.string().describe('The task ID to resume') },
@@ -565,7 +585,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('scheduling-self',
   'cancel_task',
   'Cancel and delete a scheduled task.',
   { task_id: z.string().describe('The task ID to cancel') },
@@ -591,7 +611,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('groups',
   'register_group',
   `Register a new chat/group or update an existing one. Main group only.
 
@@ -663,7 +683,7 @@ Use available_groups.json to find the JID for a group. The folder name must be c
   },
 );
 
-server.tool(
+tool('groups',
   'refresh_groups',
   `Force an immediate resync of group metadata (names/subjects) from the underlying channel. Main group only.
 
@@ -753,7 +773,7 @@ Returns the count of groups whose name got resolved by this refresh. Safe to cal
   },
 );
 
-server.tool(
+tool('groups',
   'create_group',
   'Create a new empty WhatsApp group with the bot as admin. The group is auto-registered so the bot will respond to messages there immediately. Returns the invite link to share so people can join.',
   {
@@ -868,7 +888,7 @@ async function nanoclawRequest(
   });
 }
 
-server.tool(
+tool('groups',
   'leave_group',
   `Leave a WhatsApp group and clean up all local state (unregister from DB, cancel scheduled tasks, clear session, archive the group's folder to groups/_archived/).
 
@@ -919,7 +939,7 @@ Cannot leave the main group (will return an error).`,
   },
 );
 
-server.tool(
+tool('groups',
   'list_archived_groups',
   'List groups that were previously left via leave_group. Returns archived folder names (suitable for restore_group), their original folder names, and archive timestamps.',
   {},
@@ -967,7 +987,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('groups',
   'restore_group',
   `Restore a previously-archived group: moves groups/_archived/<archivedFolder>/ back to groups/<originalFolder>/ and registers it with the new JID. Use this when a group the bot used to be in is re-added and you want to recover its memory (CLAUDE.md, conversations, attachments).
 
@@ -1022,7 +1042,7 @@ First call list_archived_groups to find the archivedFolder name. The user needs 
   },
 );
 
-server.tool(
+tool('groups',
   'get_invite_link',
   'Get the WhatsApp group invite link for this chat. Returns a https://chat.whatsapp.com/... URL that can be shared with others to join the group. Only works for WhatsApp groups.',
   {},
@@ -1220,7 +1240,7 @@ function cwGetMetricSum(metricName: string, configSet: string, startIso: string,
   });
 }
 
-server.tool(
+tool('email',
   'get_email_stats',
   'Get email delivery stats (sends, opens, clicks, bounces, complaints) for emails sent via send_email in the last N hours. Stats come from AWS CloudWatch and may lag 5-15 min behind real events. Aggregate only — cannot identify which recipient opened.',
   {
@@ -1269,7 +1289,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('email',
   'send_email',
   'Send an email via AWS SES. Use for sending reports, notifications, or any content the user requests via email. Supports HTML body for rich formatting.',
   {
@@ -1297,7 +1317,7 @@ server.tool(
   },
 );
 
-server.tool(
+tool('quote',
   'siiqtec_quote_pdf',
   'Genera una cotización SIIQTEC en PDF (template oficial: header SIIQTEC, RECEPTOR, productos con imagen, totales con envío Ruta SIIQTEC o paquetería, ficha de depósito con datos bancarios). La tool valida cantidades, recalcula montos, valida que las imágenes existan (cae a placeholder S/I si fallan), y particiona automáticamente en páginas si hay >6 productos. NUNCA inventes amounts; pasa qty + unit_price por item y la tool calcula. Por default NO incluye link de pago MercadoPago — pasá include_payment_link=true para añadir el card con QR + botón "Clic para pagar". Cada página lleva la leyenda "Esta cotización es generada con IA y puede tener errores". Devuelve el path local del PDF para mandarlo con send_message.',
   {

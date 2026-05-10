@@ -334,16 +334,20 @@ export class WhatsAppChannel implements Channel {
               }
             }
 
-            // Video/GIF handling — extract first frame for vision
+            // Video/GIF handling — extract first frame for vision + save file
             if (isVideoMessage(msg)) {
               try {
-                const buffer = await downloadMediaMessage(msg, 'buffer', {});
+                const buffer = (await downloadMediaMessage(
+                  msg,
+                  'buffer',
+                  {},
+                )) as Buffer;
                 const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
                 const caption = normalized?.videoMessage?.caption ?? '';
-                const framePath = await extractVideoFrame(
-                  buffer as Buffer,
-                  groupDir,
-                );
+                const isGif = normalized?.videoMessage?.gifPlayback === true;
+                const label = isGif ? 'GIF' : 'Video';
+
+                const framePath = await extractVideoFrame(buffer, groupDir);
                 const frameBuffer = fs.readFileSync(framePath);
                 fs.unlinkSync(framePath);
                 const result = await processImage(
@@ -351,16 +355,41 @@ export class WhatsAppChannel implements Channel {
                   groupDir,
                   caption,
                 );
+
+                const VIDEO_SIZE_CAP = 50 * 1024 * 1024; // 50MB
+                let videoHint = '';
+                if (buffer.length <= VIDEO_SIZE_CAP) {
+                  const attachDir = path.join(groupDir, 'attachments');
+                  fs.mkdirSync(attachDir, { recursive: true });
+                  const ext = isGif ? 'mp4' : 'mp4';
+                  const videoFilename = `video-${Date.now()}.${ext}`;
+                  const videoPath = path.join(attachDir, videoFilename);
+                  fs.writeFileSync(videoPath, buffer);
+                  const sizeMB = (buffer.length / (1024 * 1024)).toFixed(1);
+                  videoHint = `\n[Video file: attachments/${videoFilename} (${sizeMB}MB)]`;
+                  logger.info(
+                    { jid: chatJid, videoFilename, sizeMB },
+                    'Saved video file',
+                  );
+                } else {
+                  const sizeMB = (buffer.length / (1024 * 1024)).toFixed(1);
+                  videoHint = `\n[Video too large to save (${sizeMB}MB > 50MB cap)]`;
+                  logger.warn(
+                    { jid: chatJid, sizeMB },
+                    'Video over size cap, frame only',
+                  );
+                }
+
                 if (result) {
-                  const isGif = normalized?.videoMessage?.gifPlayback === true;
-                  const label = isGif ? 'GIF' : 'Video';
                   content =
-                    `[${label} frame: ${result.relativePath}] ${caption}`.trim();
+                    `[${label} frame: ${result.relativePath}] ${caption}${videoHint}`.trim();
+                } else {
+                  content = `[${label}] ${caption}${videoHint}`.trim();
                 }
               } catch (err) {
                 logger.warn(
                   { err, jid: chatJid },
-                  'Video/GIF - frame extraction failed',
+                  'Video/GIF - processing failed',
                 );
               }
             }
