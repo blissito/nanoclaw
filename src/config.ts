@@ -6,13 +6,29 @@ import { readEnvFile } from './env.js';
 // Read config values from .env (falls back to process.env).
 // Secrets (API keys, tokens) are NOT read here — they are loaded only
 // by the credential proxy (credential-proxy.ts), never exposed to containers.
-const envConfig = readEnvFile(['ASSISTANT_NAME', 'ASSISTANT_HAS_OWN_NUMBER']);
+const envConfig = readEnvFile([
+  'ASSISTANT_NAME',
+  'ASSISTANT_HAS_OWN_NUMBER',
+  'FORMMY_TRAINING_GROUP_FOLDER',
+]);
 
 export const ASSISTANT_NAME =
   process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Andy';
 export const ASSISTANT_HAS_OWN_NUMBER =
   (process.env.ASSISTANT_HAS_OWN_NUMBER ||
     envConfig.ASSISTANT_HAS_OWN_NUMBER) === 'true';
+// Folder (under GROUPS_DIR) whose contents — CLAUDE.md, catalog, product
+// images — are mounted read-only into every Formmy WABA per-user container
+// as /workspace/extra/training. Use it so an internal "training" group's
+// prompt and assets become the live production source-of-truth for the
+// public agent. Empty → no training mount (default for droplets that
+// don't use this pattern). Anything sensitive in the folder should live
+// under a `.private/` subfolder; the agent's Read/Glob/Grep tools can
+// reach anything else in the mount.
+const FORMMY_TRAINING_GROUP_FOLDER =
+  process.env.FORMMY_TRAINING_GROUP_FOLDER?.trim() ||
+  envConfig.FORMMY_TRAINING_GROUP_FOLDER?.trim() ||
+  '';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
@@ -142,4 +158,13 @@ export const FORMMY_PUBLIC_TEMPLATE: ContainerConfig = {
     'mcp__nanoclaw__*',
     'mcp__kommo__*',
   ],
+  ...(FORMMY_TRAINING_GROUP_FOLDER && {
+    additionalMounts: [
+      {
+        hostPath: path.join(GROUPS_DIR, FORMMY_TRAINING_GROUP_FOLDER),
+        containerPath: 'training',
+        readonly: true,
+      },
+    ],
+  }),
 };
