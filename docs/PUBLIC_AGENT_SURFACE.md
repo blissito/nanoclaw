@@ -193,20 +193,22 @@ Server-side toolset filtering is not implemented in the skydropx MCP (no `SKYDRO
 
 ### Training group as live source-of-truth (optional)
 
-Set `FORMMY_TRAINING_GROUP_FOLDER=<folder-name>` in `.env` to mount an internal "training" group folder (under `groups/`) into every Formmy WABA per-user container as `/workspace/extra/training`, read-only. The training group's `CLAUDE.md` becomes the live production prompt — edits in the training group reflect instantly in every public agent on the droplet without a restart or deploy.
+Set `FORMMY_TRAINING_GROUP_FOLDER=<folder-name>` in `.env` to overlay every curated root file of an internal "training" group (under `groups/`) onto each Formmy WABA per-user container's `/workspace/group/` directory, read-only. The training group's `CLAUDE.md` becomes the live production prompt — edits in the training group reflect instantly in every public agent on the droplet without a restart or deploy.
 
-**Surface implications.** The mount is read-only and lands under `/workspace/extra/`, so the SDK's `additionalDirectories` auto-loads the training `CLAUDE.md`. The public agent's `Read`/`Glob`/`Grep` tools can also reach every other file in the folder — useful for catalog CSVs, product images, and reference quotes, but it means anything the public agent should not see (real customer conversations, generated quotes, session state, logs) must live under a `.private/` subfolder inside the training folder. Empty env var → no training mount (default for droplets that don't use this pattern).
+**How the overlay works.** Implemented in `container-runner.ts`. For containers where `profile === 'public'` and the env var is set, each non-hidden file in the training folder's root (CLAUDE.md, catalog CSVs, product images, reference docs, etc.) is bind-mounted individually as `/workspace/group/<filename>` read-only. The per-customer Formmy folder stays writable underneath, so the agent can still generate `cot-{folio}.pdf`, receive inbound attachments, and write conversation artifacts. The overlay only surfaces training files at the paths the training group's CLAUDE.md already references (no path remapping needed in the prompt).
 
-Existing per-row `container_config` rows do NOT get the mount retroactively — `FORMMY_PUBLIC_TEMPLATE` only applies at provision time. After enabling the env var on a droplet that already has Formmy users, either let the rows re-provision or update them in SQL:
+**Skipped from the overlay.** Dotfiles (`.private/`, `.claude/`, etc.) and subdirectories. Anything sensitive in the training folder (real customer conversations from training sessions, generated quotes, session state, logs) must live under `.private/` or in a subfolder so the overlay leaves it on the host. Empty env var → no overlay (default for droplets that don't use this pattern).
+
+**Cleanup if migrating from the legacy `additionalMounts` approach.** Earlier iterations mounted the training folder at `/workspace/extra/training`. To migrate:
 
 ```sql
+-- drop the old additionalMounts entry; per-file overlay replaces it
 UPDATE registered_groups
-SET container_config = json_set(container_config, '$.additionalMounts',
-  json('[{"hostPath":"/home/nanoclaw/app/groups/<training-folder>","containerPath":"training","readonly":true}]'))
+SET container_config = json_remove(container_config, '$.additionalMounts')
 WHERE folder LIKE 'formmy_%';
 ```
 
-Then restart (the in-memory cache only refreshes on boot).
+Then restart (in-memory cache refreshes only on boot) and remove any snapshot `CLAUDE.md` files inside `groups/formmy_*` folders — the read-only mount supersedes them.
 
 ### Rate limits (per JID)
 

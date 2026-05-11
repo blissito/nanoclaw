@@ -12,6 +12,7 @@ import {
   CONTAINER_TIMEOUT,
   CREDENTIAL_PROXY_PORT,
   DATA_DIR,
+  FORMMY_TRAINING_GROUP_FOLDER,
   GROUPS_DIR,
   IDLE_TIMEOUT,
   TIMEZONE,
@@ -139,6 +140,34 @@ function buildVolumeMounts(
           containerPath: '/workspace/group/CLAUDE.md',
           readonly: true,
         });
+      }
+    }
+
+    // Training overlay: for public-profile groups, overlay each curated
+    // file from the training group's root onto /workspace/group/ read-only.
+    // The per-customer folder stays writable underneath for cot-*.pdf
+    // generation, inbound attachments, etc. — only the training assets
+    // (CLAUDE.md, catalog, product images, reference docs) are surfaced
+    // ro at the same paths the training group's CLAUDE.md references.
+    // Skipped: dotfiles, .private/, subdirectories — those are for the
+    // training group only and must not leak to public agents.
+    if (
+      group.containerConfig?.profile === 'public' &&
+      FORMMY_TRAINING_GROUP_FOLDER
+    ) {
+      const trainingDir = path.join(GROUPS_DIR, FORMMY_TRAINING_GROUP_FOLDER);
+      if (fs.existsSync(trainingDir)) {
+        for (const entry of fs.readdirSync(trainingDir, {
+          withFileTypes: true,
+        })) {
+          if (entry.name.startsWith('.')) continue;
+          if (!entry.isFile()) continue;
+          mounts.push({
+            hostPath: path.join(trainingDir, entry.name),
+            containerPath: `/workspace/group/${entry.name}`,
+            readonly: true,
+          });
+        }
       }
     }
 
