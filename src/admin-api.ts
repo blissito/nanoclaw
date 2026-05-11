@@ -481,8 +481,7 @@ const server = http.createServer(async (req, res) => {
         folder: string;
         errors: string[];
       }> = [];
-      const DATA_DIR =
-        process.env.NANOCLAW_DATA_DIR ?? path.resolve('data');
+      const DATA_DIR = process.env.NANOCLAW_DATA_DIR ?? path.resolve('data');
       for (const { jid, group_folder } of mappings) {
         const errs: string[] = [];
         // Best-effort: kill any running container for this folder.
@@ -513,9 +512,7 @@ const server = http.createServer(async (req, res) => {
         try {
           deleteFormmyJidMapping(jid);
         } catch (err) {
-          errs.push(
-            `delete_formmy_jid_mapping: ${String(err).slice(0, 100)}`,
-          );
+          errs.push(`delete_formmy_jid_mapping: ${String(err).slice(0, 100)}`);
         }
         // On-disk cleanup. rm -rf is intentional — these dirs are scoped to
         // a single tenant's folder and disappearing them is the whole point.
