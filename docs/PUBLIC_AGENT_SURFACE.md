@@ -2,7 +2,7 @@
 
 Definition of the **safe surface** available to NanoClaw agents serving end users via the Formmy WABA channel (`formmy-whatsapp`). This document is the contract for any change touching `FORMMY_PUBLIC_TEMPLATE`, `KOMMO_TOOLSETS`, `EASYBITS_TOOLSETS`, or the corresponding MCP server toolset definitions.
 
-**Last reviewed:** 2026-05-10
+**Last reviewed:** 2026-05-11
 
 ## What the public agent CAN do (happy paths)
 
@@ -162,6 +162,19 @@ Admin groups (no `KOMMO_SCOPE_BY_JID` env) bypass these checks entirely.
 Excluded (and why):
 
 - `db_query` — accepts arbitrary SQL including mutations and schema changes. Agent could `DELETE FROM products` via prompt injection.
+
+### `mcp__skydropx__*` (Skydropx shipping — México)
+
+Single tool exposed: `skydropx_quote`. The allowlist lists only this tool, suppressing the implicit `mcp__skydropx__*` wildcard and blocking the other three tools the MCP registers.
+
+| Tool | Status | Why |
+|---|---|---|
+| `skydropx_quote` | ✅ Allowed | Read-only rate lookup. No state mutation, no charges to the customer's Skydropx wallet. Used to inline shipping cost into the `siiqtec_quote_pdf` flow. |
+| `skydropx_create_shipment` | ❌ Excluded | **COSTOS REALES**: creates a real label and deducts saldo from the customer's Skydropx wallet. End-user abuse vector — prompt injection could generate dozens of labels. Enable per-tenant only if the business explicitly wants public users to commit shipments. |
+| `skydropx_track` | ❌ Excluded | Not needed for the quote-into-cotización path. Could leak tracking numbers from other JIDs since the MCP has no tenancy. Add later when there's a clear UX path. |
+| `skydropx_cancel` | ❌ Excluded | Destructive; only useful if `create_shipment` was used (which isn't). |
+
+Server-side toolset filtering is not implemented in the skydropx MCP (no `SKYDROPX_TOOLSETS` env var), so enforcement lives entirely in `allowedTools`. Requires `SKYDROPX_CLIENT_ID` / `SKYDROPX_CLIENT_SECRET` in the droplet `.env`.
 - `list_files` — workspace enumeration.
 - `db_list` — workspace enumeration of databases.
 - `get_file` — requires explicit file ID injection per tenant; enable per-tenant when needed.

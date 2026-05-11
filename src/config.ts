@@ -103,7 +103,7 @@ import type { ContainerConfig } from './types.js';
 //     and they don't expose discover_tools-style escape hatches.
 export const FORMMY_PUBLIC_TEMPLATE: ContainerConfig = {
   profile: 'public',
-  mcpServers: ['nanoclaw', 'kommo', 'easybits'],
+  mcpServers: ['nanoclaw', 'kommo', 'easybits', 'skydropx'],
   env: {
     NANOCLAW_TOOLSETS: 'messaging-public,scheduling-self,quote',
     // Kommo public surface: list_pipelines/list_tags (account-level structure)
@@ -132,6 +132,12 @@ export const FORMMY_PUBLIC_TEMPLATE: ContainerConfig = {
     'mcp__easybits__upload_file',
     'mcp__easybits__create_share_link',
     'mcp__easybits__db_select',
+    // skydropx: quote-only. Listing the specific tool suppresses the wildcard,
+    // which blocks skydropx_create_shipment (gasta saldo de la cuenta Skydropx
+    // del cliente — abuse vector), skydropx_cancel, and skydropx_track. Quote
+    // is read-only (no state, no charges) — only returns rates. Used to inline
+    // shipping cost into siiqtec_quote_pdf flow.
+    'mcp__skydropx__skydropx_quote',
     // nanoclaw/kommo: server-side toolsets restrict; wildcards safe here
     'mcp__nanoclaw__*',
     'mcp__kommo__*',
