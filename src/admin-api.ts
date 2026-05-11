@@ -300,13 +300,9 @@ const server = http.createServer(async (req, res) => {
       if (!candidate || !expected) {
         return send(res, 200, { match: false });
       }
-      const a = crypto
-        .createHash('sha256')
-        .update(candidate, 'utf8')
-        .digest();
+      const a = crypto.createHash('sha256').update(candidate, 'utf8').digest();
       const b = crypto.createHash('sha256').update(expected, 'utf8').digest();
-      const match =
-        a.length === b.length && crypto.timingSafeEqual(a, b);
+      const match = a.length === b.length && crypto.timingSafeEqual(a, b);
       return send(res, 200, { match });
     }
 
