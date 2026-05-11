@@ -193,6 +193,28 @@ describe('WhatsAppChannel', () => {
     return p;
   }
 
+  // --- JID ownership ---
+
+  describe('ownsJid', () => {
+    it('claims standard WhatsApp suffixes', () => {
+      const channel = new WhatsAppChannel(createTestOpts());
+      expect(channel.ownsJid('5215555@s.whatsapp.net')).toBe(true);
+      expect(channel.ownsJid('12345@g.us')).toBe(true);
+    });
+
+    it('declines synthetic Formmy WABA JIDs even when suffix matches', () => {
+      const channel = new WhatsAppChannel(createTestOpts());
+      expect(
+        channel.ownsJid('formmy_5217712412825@s.whatsapp.net'),
+      ).toBe(false);
+      expect(
+        channel.ownsJid(
+          'formmy_6a022c27c5f337665dbf3151_5217712412825@s.whatsapp.net',
+        ),
+      ).toBe(false);
+    });
+  });
+
   // --- Version fetch ---
 
   describe('version fetch', () => {

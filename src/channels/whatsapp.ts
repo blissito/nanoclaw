@@ -1014,6 +1014,10 @@ export class WhatsAppChannel implements Channel {
   }
 
   ownsJid(jid: string): boolean {
+    // Synthetic Formmy WABA JIDs share the `@s.whatsapp.net` suffix but belong
+    // to the formmy-whatsapp channel — Baileys would silently no-op against
+    // them and starve the WABA path. Hand them back to the right owner.
+    if (jid.startsWith('formmy_')) return false;
     return jid.endsWith('@g.us') || jid.endsWith('@s.whatsapp.net');
   }
 
