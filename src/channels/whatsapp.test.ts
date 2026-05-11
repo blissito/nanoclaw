@@ -204,9 +204,9 @@ describe('WhatsAppChannel', () => {
 
     it('declines synthetic Formmy WABA JIDs even when suffix matches', () => {
       const channel = new WhatsAppChannel(createTestOpts());
-      expect(
-        channel.ownsJid('formmy_5217712412825@s.whatsapp.net'),
-      ).toBe(false);
+      expect(channel.ownsJid('formmy_5217712412825@s.whatsapp.net')).toBe(
+        false,
+      );
       expect(
         channel.ownsJid(
           'formmy_6a022c27c5f337665dbf3151_5217712412825@s.whatsapp.net',
