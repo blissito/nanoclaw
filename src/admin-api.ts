@@ -16,11 +16,20 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import {
   getAllRegisteredGroups,
   setRegisteredGroup,
   initDatabase,
+  getFormmyJidsByIntegrationId,
+  deleteFormmyJidMapping,
+  deleteRegisteredGroup,
+  deleteSession,
+  deleteMessagesByChatJid,
 } from './db.js';
+
+const execFileAsync = promisify(execFile);
 import type { RegisteredGroup, ContainerConfig } from './types.js';
 import { CREDENTIAL_PROXY_PORT } from './config.js';
 
@@ -443,6 +452,93 @@ const server = http.createServer(async (req, res) => {
         });
       }
       return send(res, 200, { invite_link: result.link ?? null });
+    }
+
+    // POST /admin/integration/:id/cleanup
+    // Tear down every formmy_<jid> group registered against this integration_id:
+    // kill containers, drop SQLite rows (registered_groups, sessions, messages,
+    // formmy_jid_mapping), and remove on-disk folders (groups/, data/sessions/).
+    // Called by formmy.app's disconnect flow so a re-pair starts clean.
+    if (
+      method === 'POST' &&
+      parts[0] === 'admin' &&
+      parts[1] === 'integration' &&
+      parts[3] === 'cleanup' &&
+      parts.length === 4
+    ) {
+      const integrationId = decodeURIComponent(parts[2]);
+      const mappings = getFormmyJidsByIntegrationId(integrationId);
+      if (mappings.length === 0) {
+        return send(res, 200, {
+          ok: true,
+          cleaned: 0,
+          message:
+            'No groups found for this integration_id (nothing to clean).',
+        });
+      }
+      const cleaned: Array<{
+        jid: string;
+        folder: string;
+        errors: string[];
+      }> = [];
+      const DATA_DIR = process.env.NANOCLAW_DATA_DIR ?? path.resolve('data');
+      for (const { jid, group_folder } of mappings) {
+        const errs: string[] = [];
+        // Best-effort: kill any running container for this folder.
+        try {
+          await execFileAsync('sh', [
+            '-c',
+            `docker ps --format '{{.Names}}' | grep '^nanoclaw-${group_folder}-' | xargs -r docker kill`,
+          ]);
+        } catch (err) {
+          errs.push(`docker_kill: ${String(err).slice(0, 100)}`);
+        }
+        // SQLite cleanup.
+        try {
+          deleteMessagesByChatJid(jid);
+        } catch (err) {
+          errs.push(`delete_messages: ${String(err).slice(0, 100)}`);
+        }
+        try {
+          deleteSession(group_folder);
+        } catch (err) {
+          errs.push(`delete_session: ${String(err).slice(0, 100)}`);
+        }
+        try {
+          deleteRegisteredGroup(jid);
+        } catch (err) {
+          errs.push(`delete_registered_group: ${String(err).slice(0, 100)}`);
+        }
+        try {
+          deleteFormmyJidMapping(jid);
+        } catch (err) {
+          errs.push(`delete_formmy_jid_mapping: ${String(err).slice(0, 100)}`);
+        }
+        // On-disk cleanup. rm -rf is intentional — these dirs are scoped to
+        // a single tenant's folder and disappearing them is the whole point.
+        try {
+          fs.rmSync(path.join(GROUPS_DIR, group_folder), {
+            recursive: true,
+            force: true,
+          });
+        } catch (err) {
+          errs.push(`rm_groups_dir: ${String(err).slice(0, 100)}`);
+        }
+        try {
+          fs.rmSync(path.join(DATA_DIR, 'sessions', group_folder), {
+            recursive: true,
+            force: true,
+          });
+        } catch (err) {
+          errs.push(`rm_sessions_dir: ${String(err).slice(0, 100)}`);
+        }
+        cleaned.push({ jid, folder: group_folder, errors: errs });
+      }
+      return send(res, 200, {
+        ok: true,
+        cleaned: cleaned.length,
+        details: cleaned,
+      });
     }
 
     return send(res, 404, { error: 'route_not_found' });
