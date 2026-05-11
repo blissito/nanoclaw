@@ -141,6 +141,7 @@ export class FormmyWhatsAppChannel implements Channel {
           group_folder,
           integration_id,
           manual_mode,
+          container_config,
         } = JSON.parse(body);
 
         if (!jid || (!content && !media)) {
@@ -188,12 +189,27 @@ export class FormmyWhatsAppChannel implements Channel {
             // New WABA user — auto-provision isolated folder = JID.
             // sanitizeFolder is defensive; the JID format already matches the
             // group-folder regex, so this is a no-op in practice.
+            //
+            // Template selection: per-tenant container_config from Formmy
+            // (Agent.containerConfig, forwarded by handleChannelMessage) wins
+            // when present and well-shaped. Else fall back to the hardcoded
+            // FORMMY_PUBLIC_TEMPLATE — every Formmy customer gets the safe
+            // default for their first integration, even without explicit
+            // per-Agent config. The shape check is best-effort; if Formmy
+            // sends garbage, NanoClaw still has a working default.
             resolvedFolder = sanitizeFolder(fullJid);
+            const isValidConfig =
+              container_config &&
+              typeof container_config === 'object' &&
+              !Array.isArray(container_config);
+            const template = isValidConfig
+              ? (container_config as typeof FORMMY_PUBLIC_TEMPLATE)
+              : FORMMY_PUBLIC_TEMPLATE;
             const created = registerFormmyUserGroup(
               fullJid,
               resolvedFolder,
               sender_name || 'WhatsApp User',
-              FORMMY_PUBLIC_TEMPLATE,
+              template,
             );
             // Materialize the folder on disk so attachments/CLAUDE.md can land here.
             fs.mkdirSync(path.join(GROUPS_DIR, resolvedFolder), {
