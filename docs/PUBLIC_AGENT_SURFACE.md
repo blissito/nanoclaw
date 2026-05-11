@@ -4,6 +4,67 @@ Definition of the **safe surface** available to NanoClaw agents serving end user
 
 **Last reviewed:** 2026-05-10
 
+## What the public agent CAN do (happy paths)
+
+This is the productive surface — what we expect customer-facing agents (cotizadores, lead capture, support) to actually use.
+
+### 1. Generate and deliver a quote
+
+```
+db_select (catálogo lookup) → siiqtec_quote_pdf → send_message (PDF)
+```
+
+Optional: `upload_file` + `create_share_link` for a shareable URL alongside the WhatsApp doc.
+
+### 2. Create a lead and place it on the "urgente" status
+
+```
+list_pipelines (discover pipeline_id + urgent status_id)
+  → create_lead(pipeline_id, status_id)    // born scoped to this JID
+  → list_tags (discover tag names)
+  → add_tags_to_lead(['urgente', 'cotizado'])
+  → add_note(entity_type='leads', text='Razón de urgencia: ...')
+```
+
+### 3. Move an existing-in-conversation lead
+
+```
+update_lead(lead_id, pipeline_id, status_id)
+  → tenancy verified via the scope tag stamped at create_lead
+  → refuses to touch leads owned by other JIDs
+```
+
+### 4. Attach a receipt the customer sent
+
+```
+upload_file → create_share_link → attach_file_to_lead(lead_id, url, name, caption)
+  → verifyLeadOwnership(lead_id) gates the attach
+```
+
+### 5. Schedule follow-up
+
+```
+schedule_task(prompt='Verificar pago a las 18h', schedule='2026-05-11T18:00')
+  → scheduling-self toolset = task lives inside the same per-JID folder,
+    fires the agent again at the scheduled time
+```
+
+## Known gaps (tracked, not yet plugged)
+
+### Contact tenancy
+
+`add_tags_to_contact`, `remove_tags_from_contact`, and `attach_file_to_contact` currently skip `verifyContactOwnership` (the function exists in plan, not yet wired). Practical exposure is low because the public toolset doesn't expose `find_contact` / `get_contact`, so the agent has no path to enumerate contact ids — only the ones it created in the same conversation. A prompt injection that fed a foreign `contact_id` could still mutate. Air-tight fix: verify ownership before each contact mutation (same pattern as lead).
+
+### `add_note` for contacts
+
+Same shape as above — when `entity_type='contacts'`, ownership isn't verified. Same mitigation: no enumeration path.
+
+### `create_task` ownership
+
+`create_task(entity_type, entity_id, ...)` doesn't verify ownership of the parent entity. Creating a task on a foreign lead is possible if its id is known. Low impact (tasks are non-destructive metadata) but worth tightening when contact tenancy is added.
+
+
+
 ## Threat model
 
 A WhatsApp end user can:
