@@ -124,6 +124,53 @@ echo "$NEW" > ~/.env-backups/sofi-0.formmy-shared-secret.txt
 scp root@64.23.167.64:/home/nanoclaw/app/.env ~/.env-backups/sofi-0.env
 ```
 
+## Desconectar (limpio, 3 lados)
+
+A partir de **formmy@15563d5** + **nanoclaw@a4e2763** existe un endpoint que limpia los 3 lados (Meta, Formmy, droplet) en una sola llamada.
+
+### Vía UI
+
+En `dashboard/agentes/<slug>?tab=Inicio`, debajo del card "WhatsApp Business conectado" hay un botón **Desconectar**. Confirma el prompt y muestra toast con los pasos: Meta unsubscribe, droplet cleanup, integración borrada, canal desconectado.
+
+### Vía API directo
+
+```bash
+# Sesión de Brenda como cookie
+curl -X POST https://formmy.app/api/v1/integrations/whatsapp/<INTEGRATION_ID>/disconnect \
+  -H "Cookie: <session>"
+```
+
+Respuesta:
+```json
+{
+  "ok": true,
+  "meta_unsubscribed": true,
+  "jobs_cancelled": 0,
+  "droplet_notified": true,
+  "droplet_response": { "ok": true, "cleaned": <N> },
+  "integration_deleted": true,
+  "channel_disconnected": true
+}
+```
+
+Cada bool muestra cuál paso fue. Si uno falla (`meta_unsubscribe_error` o `droplet_error`), el resto sigue.
+
+### Qué se limpia exactamente
+
+| Lado | Acción |
+|---|---|
+| Meta | `DELETE /<businessAccountId>/subscribed_apps` — deja de mandar webhooks |
+| Formmy DB | Agenda jobs `whatsapp-sync` con `integrationId=:id` cancelados; `Integration` row eliminada; `Channel.status` → `DISCONNECTED` (history se preserva) |
+| Sofi-0 SQLite | Filas de `formmy_jid_mapping`, `registered_groups`, `sessions`, `messages` con ese `integration_id` o JIDs derivados |
+| Sofi-0 disco | `groups/<folder>/` y `data/sessions/<folder>/` |
+| Sofi-0 docker | `docker kill nanoclaw-<folder>-*` |
+
+El `Channel` row se mantiene para que un re-pairing posterior reúse el mismo channelId.
+
+### Si el endpoint falla y necesitas desconectar manual
+
+Mismo procedimiento que el runbook de Parte 2.4 del plan original. Resumen: borrar Integration en Mongo via Fly SSH, llamar Meta DELETE subscribed_apps con curl, ejecutar SQL + rm en sofi-0.
+
 ## Verificar end-to-end después del primer mensaje
 
 ```bash
