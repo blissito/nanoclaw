@@ -15,7 +15,7 @@ vi.mock('../config.js', () => ({
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
 }));
 
-import { FormmyWhatsAppChannel } from './formmy-whatsapp.js';
+import { FormmyWhatsAppChannel, extractPhone } from './formmy-whatsapp.js';
 
 interface MockServerHandle {
   server: http.Server;
@@ -193,6 +193,17 @@ describe('FormmyWhatsAppChannel.postToFormmy', () => {
     expect(mock.requests).toHaveLength(2);
   }, 10_000);
 
+  it('strips @s.whatsapp.net from legacy JID before sending to Formmy', async () => {
+    mock = await startMockServer((_req, res) => {
+      res.writeHead(200);
+      res.end();
+    });
+    const ch = makeChannel(mock.port);
+    await ch.sendMessage('formmy_5217712412825@s.whatsapp.net', 'hola');
+    const sent = JSON.parse(mock.requests[0].body);
+    expect(sent.phone_number).toBe('5217712412825');
+  });
+
   it('reuses keep-alive sockets across back-to-back calls', async () => {
     const remoteSockets = new Set<string>();
     mock = await startMockServer((req, res) => {
@@ -208,5 +219,35 @@ describe('FormmyWhatsAppChannel.postToFormmy', () => {
     // All three requests should have originated from the same client socket
     // (one entry in the set), proving keep-alive reuse.
     expect(remoteSockets.size).toBe(1);
+  });
+});
+
+describe('extractPhone', () => {
+  it('strips formmy_ prefix and @s.whatsapp.net suffix (legacy JID)', () => {
+    expect(extractPhone('formmy_5217712412825@s.whatsapp.net')).toBe(
+      '5217712412825',
+    );
+  });
+
+  it('strips @c.us suffix', () => {
+    expect(extractPhone('formmy_5217712412825@c.us')).toBe('5217712412825');
+  });
+
+  it('returns plain phone for legacy JID without suffix', () => {
+    expect(extractPhone('formmy_5215555')).toBe('5215555');
+  });
+
+  it('parses new formmy_<integrationId>_<phone> format', () => {
+    expect(
+      extractPhone('formmy_6a022c27c5f337665dbf3151_5217712412825'),
+    ).toBe('5217712412825');
+  });
+
+  it('parses new format even with @s.whatsapp.net suffix appended', () => {
+    expect(
+      extractPhone(
+        'formmy_6a022c27c5f337665dbf3151_5217712412825@s.whatsapp.net',
+      ),
+    ).toBe('5217712412825');
   });
 });
