@@ -1221,3 +1221,22 @@ export function getAllFormmyJids(): string[] {
   }[];
   return rows.map((r) => r.jid);
 }
+
+export function getFormmyJidsByIntegrationId(
+  integrationId: string,
+): Array<{ jid: string; group_folder: string }> {
+  return db
+    .prepare(
+      'SELECT jid, group_folder FROM formmy_jid_mapping WHERE integration_id = ?',
+    )
+    .all(integrationId) as Array<{ jid: string; group_folder: string }>;
+}
+
+export function deleteFormmyJidMapping(jid: string): void {
+  db.prepare('DELETE FROM formmy_jid_mapping WHERE jid = ?').run(jid);
+}
+
+export function deleteMessagesByChatJid(chatJid: string): number {
+  const r = db.prepare('DELETE FROM messages WHERE chat_jid = ?').run(chatJid);
+  return r.changes;
+}
