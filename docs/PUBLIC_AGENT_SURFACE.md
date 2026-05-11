@@ -2,7 +2,7 @@
 
 Definition of the **safe surface** available to NanoClaw agents serving end users via the Formmy WABA channel (`formmy-whatsapp`). This document is the contract for any change touching `FORMMY_PUBLIC_TEMPLATE`, `KOMMO_TOOLSETS`, `EASYBITS_TOOLSETS`, or the corresponding MCP server toolset definitions.
 
-**Last reviewed:** 2026-05-11
+**Last reviewed:** 2026-05-11 (added `FORMMY_TRAINING_GROUP_FOLDER` for live training→production prompt mirroring)
 
 ## What the public agent CAN do (happy paths)
 
@@ -190,6 +190,23 @@ Server-side toolset filtering is not implemented in the skydropx MCP (no `SKYDRO
 - Syncs from `container/skills-public/` instead of `container/skills/` (curated subset).
 - Syncs from `container/agents-public/` instead of `container/agents/`.
 - If either `-public/` directory doesn't exist, sync is a no-op (fail-safe).
+
+### Training group as live source-of-truth (optional)
+
+Set `FORMMY_TRAINING_GROUP_FOLDER=<folder-name>` in `.env` to mount an internal "training" group folder (under `groups/`) into every Formmy WABA per-user container as `/workspace/extra/training`, read-only. The training group's `CLAUDE.md` becomes the live production prompt — edits in the training group reflect instantly in every public agent on the droplet without a restart or deploy.
+
+**Surface implications.** The mount is read-only and lands under `/workspace/extra/`, so the SDK's `additionalDirectories` auto-loads the training `CLAUDE.md`. The public agent's `Read`/`Glob`/`Grep` tools can also reach every other file in the folder — useful for catalog CSVs, product images, and reference quotes, but it means anything the public agent should not see (real customer conversations, generated quotes, session state, logs) must live under a `.private/` subfolder inside the training folder. Empty env var → no training mount (default for droplets that don't use this pattern).
+
+Existing per-row `container_config` rows do NOT get the mount retroactively — `FORMMY_PUBLIC_TEMPLATE` only applies at provision time. After enabling the env var on a droplet that already has Formmy users, either let the rows re-provision or update them in SQL:
+
+```sql
+UPDATE registered_groups
+SET container_config = json_set(container_config, '$.additionalMounts',
+  json('[{"hostPath":"/home/nanoclaw/app/groups/<training-folder>","containerPath":"training","readonly":true}]'))
+WHERE folder LIKE 'formmy_%';
+```
+
+Then restart (the in-memory cache only refreshes on boot).
 
 ### Rate limits (per JID)
 
