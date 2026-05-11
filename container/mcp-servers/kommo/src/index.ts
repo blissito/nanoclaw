@@ -406,6 +406,59 @@ tool('scoped-mutate',
   },
 );
 
+// ─── ATTACHMENTS ─────────────────────────────────────────────────────────────
+//
+// Kommo Drive uploads require multipart POST + bytes transfer + UUID linkage.
+// For agent use, the pragmatic shape is "log the file URL in the lead's note
+// timeline" — Kommo renders URLs as clickable links, the admin can preview /
+// download from there. This avoids the multi-step Drive flow and keeps the
+// tool surface small. If a customer later needs files INSIDE Kommo Drive
+// (offline access, audit-grade attachment metadata), upgrade these tools to
+// the full /api/v4/files + attachment-note flow.
+
+tool('create',
+  'attach_file_to_lead',
+  'Attach a file to a Kommo lead by recording its URL + name in the lead timeline. Use after mcp__easybits__upload_file + mcp__easybits__create_share_link to obtain a public URL. The note appears in the lead\'s feed with the link clickable. Tenancy: only leads owned by this conversation are touchable.',
+  {
+    lead_id: z.number().int().describe('Kommo lead id'),
+    file_url: z.string().url().describe('Public URL of the file (e.g. EasyBits share link)'),
+    file_name: z.string().min(1).describe('Display filename, shown in the note alongside the URL'),
+    caption: z.string().optional().describe('Optional context, e.g. "comprobante de pago" or "INE del cliente"'),
+  },
+  async ({ lead_id, file_url, file_name, caption }) => {
+    await verifyLeadOwnership(lead_id);
+    const text = caption
+      ? `📎 ${file_name}\n${caption}\n${file_url}`
+      : `📎 ${file_name}\n${file_url}`;
+    return toToolResult(
+      await kommo.post(`/api/v4/leads/${lead_id}/notes`, [
+        { note_type: 'common', params: { text } },
+      ]),
+    );
+  },
+);
+
+tool('create',
+  'attach_file_to_contact',
+  'Attach a file to a Kommo contact by recording its URL + name in the contact timeline. Same shape as attach_file_to_lead but for the contact entity.',
+  {
+    contact_id: z.number().int().describe('Kommo contact id'),
+    file_url: z.string().url().describe('Public URL of the file'),
+    file_name: z.string().min(1),
+    caption: z.string().optional(),
+  },
+  async ({ contact_id, file_url, file_name, caption }) => {
+    const text = caption
+      ? `📎 ${file_name}\n${caption}\n${file_url}`
+      : `📎 ${file_name}\n${file_url}`;
+    return toToolResult(
+      await kommo.post(`/api/v4/contacts/${contact_id}/notes`, [
+        { note_type: 'common', params: { text } },
+      ]),
+    );
+  },
+);
+
 tool('create',
   'add_tags_to_contact',
   "Add tags to a contact. Existing tags are preserved (read-modify-write). Kommo creates new tags on the fly if needed.",
