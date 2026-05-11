@@ -15,8 +15,9 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import Database from 'better-sqlite3';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
   getAllRegisteredGroups,
@@ -50,6 +51,32 @@ if (!TOKEN) {
 }
 
 initDatabase();
+
+// Resolved once at startup so /admin/channel-info responds without forking.
+const CHANNEL_INFO_VERSION: string = (() => {
+  try {
+    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
+      cwd: path.resolve('.'),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    try {
+      const pkg = JSON.parse(
+        fs.readFileSync(path.resolve('package.json'), 'utf8'),
+      ) as { version?: string };
+      return pkg.version ?? 'unknown';
+    } catch {
+      return 'unknown';
+    }
+  }
+})();
+
+function secretFingerprint(secret: string | undefined): string | null {
+  if (!secret) return null;
+  const hex = crypto.createHash('sha256').update(secret, 'utf8').digest('hex');
+  return `sha256:${hex.slice(0, 12)}`;
+}
 
 type Json =
   | Record<string, unknown>
@@ -236,6 +263,52 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
     const method = req.method ?? 'GET';
     const parts = url.pathname.split('/').filter(Boolean); // ['admin','agents', ...]
+
+    // GET /admin/channel-info
+    // Lets a pairing UI (e.g. Formmy panel) discover where to POST inbound
+    // forwards without the operator hand-copying port + secret. The secret
+    // itself is never returned; only a sha256:<12 hex> fingerprint so the
+    // caller can verify it holds the matching secret locally.
+    if (
+      method === 'GET' &&
+      parts[0] === 'admin' &&
+      parts[1] === 'channel-info' &&
+      parts.length === 2
+    ) {
+      return send(res, 200, {
+        channel: 'formmy-whatsapp',
+        port: Number(process.env.FORMMY_CHANNEL_PORT ?? 3940),
+        secretFingerprint: secretFingerprint(process.env.FORMMY_CHANNEL_SECRET),
+        version: CHANNEL_INFO_VERSION,
+      });
+    }
+
+    // POST /admin/channel-info/test-secret  body: { secret }
+    // Companion to the discovery endpoint: the caller submits the secret it
+    // believes matches, we compare in constant time against our own, and
+    // return { match }. Used by "Probar conexión" UI flows.
+    if (
+      method === 'POST' &&
+      parts[0] === 'admin' &&
+      parts[1] === 'channel-info' &&
+      parts[2] === 'test-secret' &&
+      parts.length === 3
+    ) {
+      const body = await readBody(req);
+      const candidate = typeof body.secret === 'string' ? body.secret : '';
+      const expected = process.env.FORMMY_CHANNEL_SECRET ?? '';
+      if (!candidate || !expected) {
+        return send(res, 200, { match: false });
+      }
+      const a = crypto
+        .createHash('sha256')
+        .update(candidate, 'utf8')
+        .digest();
+      const b = crypto.createHash('sha256').update(expected, 'utf8').digest();
+      const match =
+        a.length === b.length && crypto.timingSafeEqual(a, b);
+      return send(res, 200, { match });
+    }
 
     // GET /admin/agents
     if (
