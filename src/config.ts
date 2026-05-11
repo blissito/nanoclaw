@@ -25,7 +25,7 @@ export const ASSISTANT_HAS_OWN_NUMBER =
 // don't use this pattern). Anything sensitive in the folder should live
 // under a `.private/` subfolder; the agent's Read/Glob/Grep tools can
 // reach anything else in the mount.
-const FORMMY_TRAINING_GROUP_FOLDER =
+export const FORMMY_TRAINING_GROUP_FOLDER =
   process.env.FORMMY_TRAINING_GROUP_FOLDER?.trim() ||
   envConfig.FORMMY_TRAINING_GROUP_FOLDER?.trim() ||
   '';
@@ -158,13 +158,4 @@ export const FORMMY_PUBLIC_TEMPLATE: ContainerConfig = {
     'mcp__nanoclaw__*',
     'mcp__kommo__*',
   ],
-  ...(FORMMY_TRAINING_GROUP_FOLDER && {
-    additionalMounts: [
-      {
-        hostPath: path.join(GROUPS_DIR, FORMMY_TRAINING_GROUP_FOLDER),
-        containerPath: 'training',
-        readonly: true,
-      },
-    ],
-  }),
 };
