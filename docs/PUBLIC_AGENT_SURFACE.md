@@ -2,7 +2,9 @@
 
 Definition of the **safe surface** available to NanoClaw agents serving end users via the Formmy WABA channel (`formmy-whatsapp`). This document is the contract for any change touching `FORMMY_PUBLIC_TEMPLATE`, `KOMMO_TOOLSETS`, `EASYBITS_TOOLSETS`, or the corresponding MCP server toolset definitions.
 
-**Last reviewed:** 2026-05-11 (added `FORMMY_TRAINING_GROUP_FOLDER` for live training→production prompt mirroring)
+**Terminology.** A **WABA chat** is one isolated 1:1 conversation between an end-user phone number and the Formmy WABA channel. Each WABA chat has its own JID (`formmy_<phone>@s.whatsapp.net`), its own `groups/formmy_<jid>/` folder, its own SDK session under `data/sessions/`, and its own per-spawn container. "WABA chats" is the preferred plural — avoid "groups" (they aren't WhatsApp groups) or "WABA users" (a single end-user phone may correspond to multiple chats over time after re-provisioning). Internally the code still uses `registered_groups` for the SQLite table and "public agent" for the agent identity itself; those are stable identifiers, not the noun for the conversation.
+
+**Last reviewed:** 2026-05-11 (training overlay model + WABA chats terminology pinned)
 
 ## What the public agent CAN do (happy paths)
 
