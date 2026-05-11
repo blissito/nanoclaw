@@ -78,6 +78,63 @@ function secretFingerprint(secret: string | undefined): string | null {
   return `sha256:${hex.slice(0, 12)}`;
 }
 
+// Best-effort local teardown of a single group: kill its container, drop its
+// SQLite rows (registered_groups, sessions, messages, chats, formmy mapping),
+// and remove its on-disk folders. Each step is independent so a partial
+// failure doesn't abort the rest — collected errors are returned for the
+// caller to surface.
+async function cleanupGroupLocally(
+  jid: string,
+  folder: string,
+): Promise<string[]> {
+  const errs: string[] = [];
+  const DATA_DIR = process.env.NANOCLAW_DATA_DIR ?? path.resolve('data');
+  try {
+    await execFileAsync('sh', [
+      '-c',
+      `docker ps --format '{{.Names}}' | grep '^nanoclaw-${folder}-' | xargs -r docker kill`,
+    ]);
+  } catch (err) {
+    errs.push(`docker_kill: ${String(err).slice(0, 100)}`);
+  }
+  try {
+    deleteMessagesByChatJid(jid);
+  } catch (err) {
+    errs.push(`delete_messages: ${String(err).slice(0, 100)}`);
+  }
+  try {
+    deleteSession(folder);
+  } catch (err) {
+    errs.push(`delete_session: ${String(err).slice(0, 100)}`);
+  }
+  try {
+    deleteRegisteredGroup(jid);
+  } catch (err) {
+    errs.push(`delete_registered_group: ${String(err).slice(0, 100)}`);
+  }
+  try {
+    deleteFormmyJidMapping(jid);
+  } catch (err) {
+    errs.push(`delete_formmy_jid_mapping: ${String(err).slice(0, 100)}`);
+  }
+  // rm -rf is intentional — these dirs are scoped to a single tenant's folder
+  // and disappearing them is the whole point.
+  try {
+    fs.rmSync(path.join(GROUPS_DIR, folder), { recursive: true, force: true });
+  } catch (err) {
+    errs.push(`rm_groups_dir: ${String(err).slice(0, 100)}`);
+  }
+  try {
+    fs.rmSync(path.join(DATA_DIR, 'sessions', folder), {
+      recursive: true,
+      force: true,
+    });
+  } catch (err) {
+    errs.push(`rm_sessions_dir: ${String(err).slice(0, 100)}`);
+  }
+  return errs;
+}
+
 type Json =
   | Record<string, unknown>
   | unknown[]
@@ -523,6 +580,59 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { invite_link: result.link ?? null });
     }
 
+    // DELETE /admin/agents/:jid
+    // Tear down a single registered agent: ask Baileys to leave the WA group
+    // (best-effort), then run local cleanup (containers, SQLite, on-disk).
+    // Body (optional): { leaveGroup?: boolean }  default true. Set false when
+    // the operator already removed the bot manually from WhatsApp.
+    // Response: { ok, jid, folder, leftGroup, leaveGroupError, localCleanup }.
+    if (
+      method === 'DELETE' &&
+      parts[0] === 'admin' &&
+      parts[1] === 'agents' &&
+      parts.length === 3
+    ) {
+      const jid = decodeURIComponent(parts[2]);
+      const g = getAllRegisteredGroups()[jid];
+      if (!g) return send(res, 404, { error: 'not_found' });
+      const body = await readBody(req);
+      const shouldLeave = body.leaveGroup !== false;
+
+      let leftGroup = false;
+      let leaveGroupError: string | null = null;
+      if (shouldLeave) {
+        try {
+          const proxyResp = await fetch(`${PROXY_BASE}/nanoclaw/leave-group`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ jid }),
+          });
+          if (proxyResp.ok) {
+            leftGroup = true;
+          } else {
+            leaveGroupError = `proxy_${proxyResp.status}: ${(
+              await proxyResp.text()
+            ).slice(0, 200)}`;
+          }
+        } catch (err) {
+          leaveGroupError = `credential_proxy_unreachable: ${String(err).slice(
+            0,
+            200,
+          )}`;
+        }
+      }
+
+      const localErrors = await cleanupGroupLocally(jid, g.folder);
+      return send(res, 200, {
+        ok: true,
+        jid,
+        folder: g.folder,
+        leftGroup,
+        leaveGroupError,
+        localCleanup: { errors: localErrors },
+      });
+    }
+
     // POST /admin/integration/:id/cleanup
     // Tear down every formmy_<jid> group registered against this integration_id:
     // kill containers, drop SQLite rows (registered_groups, sessions, messages,
@@ -550,58 +660,9 @@ const server = http.createServer(async (req, res) => {
         folder: string;
         errors: string[];
       }> = [];
-      const DATA_DIR = process.env.NANOCLAW_DATA_DIR ?? path.resolve('data');
       for (const { jid, group_folder } of mappings) {
-        const errs: string[] = [];
-        // Best-effort: kill any running container for this folder.
-        try {
-          await execFileAsync('sh', [
-            '-c',
-            `docker ps --format '{{.Names}}' | grep '^nanoclaw-${group_folder}-' | xargs -r docker kill`,
-          ]);
-        } catch (err) {
-          errs.push(`docker_kill: ${String(err).slice(0, 100)}`);
-        }
-        // SQLite cleanup.
-        try {
-          deleteMessagesByChatJid(jid);
-        } catch (err) {
-          errs.push(`delete_messages: ${String(err).slice(0, 100)}`);
-        }
-        try {
-          deleteSession(group_folder);
-        } catch (err) {
-          errs.push(`delete_session: ${String(err).slice(0, 100)}`);
-        }
-        try {
-          deleteRegisteredGroup(jid);
-        } catch (err) {
-          errs.push(`delete_registered_group: ${String(err).slice(0, 100)}`);
-        }
-        try {
-          deleteFormmyJidMapping(jid);
-        } catch (err) {
-          errs.push(`delete_formmy_jid_mapping: ${String(err).slice(0, 100)}`);
-        }
-        // On-disk cleanup. rm -rf is intentional — these dirs are scoped to
-        // a single tenant's folder and disappearing them is the whole point.
-        try {
-          fs.rmSync(path.join(GROUPS_DIR, group_folder), {
-            recursive: true,
-            force: true,
-          });
-        } catch (err) {
-          errs.push(`rm_groups_dir: ${String(err).slice(0, 100)}`);
-        }
-        try {
-          fs.rmSync(path.join(DATA_DIR, 'sessions', group_folder), {
-            recursive: true,
-            force: true,
-          });
-        } catch (err) {
-          errs.push(`rm_sessions_dir: ${String(err).slice(0, 100)}`);
-        }
-        cleaned.push({ jid, folder: group_folder, errors: errs });
+        const errors = await cleanupGroupLocally(jid, group_folder);
+        cleaned.push({ jid, folder: group_folder, errors });
       }
       return send(res, 200, {
         ok: true,
