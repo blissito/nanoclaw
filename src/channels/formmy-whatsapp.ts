@@ -508,20 +508,36 @@ export class FormmyWhatsAppChannel implements Channel {
           agent,
         },
         (res) => {
-          // Drain the response body so the socket can be returned to the pool.
-          res.resume();
+          // Collect the body so we can log Meta's wamid / Formmy's response
+          // shape; bounded to 1 KB to keep logs sane on rare large payloads.
+          const chunks: Buffer[] = [];
+          let received = 0;
+          const bodyCap = 1024;
+          res.on('data', (chunk: Buffer) => {
+            if (received < bodyCap) {
+              chunks.push(chunk);
+              received += chunk.length;
+            }
+          });
           res.on('end', () => {
             const status = res.statusCode ?? 0;
+            const body = Buffer.concat(chunks)
+              .toString('utf8')
+              .slice(0, bodyCap);
             if (status >= 200 && status < 300) {
+              logger.info(
+                { status, type: String(payloadType), body },
+                '[formmy-whatsapp] Callback ok',
+              );
               resolve();
               return;
             }
             const retryable = isRetryableStatus(status);
             const err = Object.assign(
               new Error(
-                `[formmy-whatsapp] Callback ${status} for type=${String(payloadType)}`,
+                `[formmy-whatsapp] Callback ${status} for type=${String(payloadType)} body=${body}`,
               ),
-              { status, retryable },
+              { status, retryable, body },
             );
             reject(err);
           });
@@ -555,9 +571,15 @@ export class FormmyWhatsAppChannel implements Channel {
   }
 }
 
-function extractPhone(jid: string): string {
+export function extractPhone(jid: string): string {
   // formmy_<integrationId>_<phone> → phone (also handles legacy formmy_<phone>)
-  const stripped = jid.replace('formmy_', '');
+  // Also strips the WhatsApp suffix so the value is a clean E.164 number;
+  // Formmy forwards this verbatim to Meta Graph API, which silently no-ops
+  // (200 OK without delivery) when the recipient carries `@s.whatsapp.net`.
+  const stripped = jid
+    .replace(/^formmy_/, '')
+    .replace(/@s\.whatsapp\.net$/, '')
+    .replace(/@c\.us$/, '');
   const parts = stripped.split('_');
   // Integration IDs are 24-char hex (MongoDB ObjectId)
   if (parts.length > 1 && /^[a-f0-9]{24}$/.test(parts[0])) {
