@@ -85,7 +85,7 @@ export class FormmyWhatsAppChannel implements Channel {
   private port: number;
   private secret: string;
   private callbackUrl: string;
-  private integrationId: string;
+  private integrationId: string | null;
   private opts: ChannelOpts;
 
   constructor(
@@ -93,7 +93,7 @@ export class FormmyWhatsAppChannel implements Channel {
     port: number,
     secret: string,
     callbackUrl: string,
-    integrationId: string,
+    integrationId: string | null,
   ) {
     this.opts = opts;
     this.port = port;
@@ -294,7 +294,13 @@ export class FormmyWhatsAppChannel implements Channel {
   }
 
   private resolveIntegrationId(jid: string): string {
-    return getFormmyIntegrationId(jid) || this.integrationId;
+    const id = getFormmyIntegrationId(jid) || this.integrationId;
+    if (!id) {
+      throw new Error(
+        `[formmy-whatsapp] No integration_id for JID ${jid}: no formmy_jid_mapping row and no FORMMY_INTEGRATION_ID fallback. Outbound aborted to avoid misrouting.`,
+      );
+    }
+    return id;
   }
 
   async sendMessage(jid: string, text: string): Promise<void> {
@@ -614,9 +620,13 @@ registerChannel(CHANNEL_NAME, (opts: ChannelOpts) => {
   const port = parseInt(process.env.FORMMY_CHANNEL_PORT || '3940', 10);
   const secret = process.env.FORMMY_CHANNEL_SECRET;
   const callbackUrl = process.env.FORMMY_CALLBACK_URL;
-  const integrationId = process.env.FORMMY_INTEGRATION_ID;
+  // Optional: integration_id is normally received per-JID in each inbound
+  // forward (saved to formmy_jid_mapping) and resolved at outbound time.
+  // The env fallback only matters for outbound to JIDs without a mapping yet,
+  // which shouldn't happen in normal flow.
+  const integrationId = process.env.FORMMY_INTEGRATION_ID || null;
 
-  if (!secret || !callbackUrl || !integrationId) {
+  if (!secret || !callbackUrl) {
     return null; // Credentials missing -- skip
   }
 
