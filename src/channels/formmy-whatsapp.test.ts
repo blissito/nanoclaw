@@ -238,9 +238,9 @@ describe('extractPhone', () => {
   });
 
   it('parses new formmy_<integrationId>_<phone> format', () => {
-    expect(
-      extractPhone('formmy_6a022c27c5f337665dbf3151_5217712412825'),
-    ).toBe('5217712412825');
+    expect(extractPhone('formmy_6a022c27c5f337665dbf3151_5217712412825')).toBe(
+      '5217712412825',
+    );
   });
 
   it('parses new format even with @s.whatsapp.net suffix appended', () => {
