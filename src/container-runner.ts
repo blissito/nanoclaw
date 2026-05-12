@@ -829,7 +829,10 @@ export async function runContainerAgent(
         fs.writeFileSync(logFile, logLines.join('\n'));
         logger.debug({ logFile, verbose: isVerbose }, 'Container log written');
       } catch (err) {
-        logger.warn({ logFile, err: err instanceof Error ? err.message : String(err) }, 'Failed to write container log');
+        logger.warn(
+          { logFile, err: err instanceof Error ? err.message : String(err) },
+          'Failed to write container log',
+        );
       }
 
       if (code !== 0) {
