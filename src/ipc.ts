@@ -3,7 +3,13 @@ import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
-import { DATA_DIR, GROUPS_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+import {
+  DATA_DIR,
+  FORMMY_TRAINING_GROUP_FOLDER,
+  GROUPS_DIR,
+  IPC_POLL_INTERVAL,
+  TIMEZONE,
+} from './config.js';
 import { AvailableGroup } from './container-runner.js';
 import {
   createTask,
@@ -66,6 +72,48 @@ export interface IpcDeps {
 
 let ipcWatcherRunning = false;
 const RECOVERY_INTERVAL_MS = 60_000;
+
+// Public-profile groups get the training group's root files bind-mounted at
+// /workspace/group/<file> read-only (see container-runner.ts). The container
+// runtime auto-creates 0-byte mount-target stubs in the per-customer host
+// folder. send_message with `document_path` (or any media) round-trips through
+// the host IPC, which reads from the host folder — and would read the 0-byte
+// stub, sending an empty file. Detect that case and re-resolve to the real
+// training file. Only applies when subdir is empty (the overlay never mounts
+// subdirectories) and the target group is public-profile.
+function resolveMediaPath(
+  folder: string,
+  subdir: string,
+  filename: string,
+  targetGroup: RegisteredGroup | undefined,
+): string {
+  const perGroupPath = subdir
+    ? path.join(GROUPS_DIR, folder, subdir, filename)
+    : path.join(GROUPS_DIR, folder, filename);
+  if (
+    subdir ||
+    !FORMMY_TRAINING_GROUP_FOLDER ||
+    targetGroup?.containerConfig?.profile !== 'public'
+  ) {
+    return perGroupPath;
+  }
+  try {
+    if (fs.statSync(perGroupPath).size > 0) return perGroupPath;
+  } catch {
+    return perGroupPath;
+  }
+  const trainingPath = path.join(
+    GROUPS_DIR,
+    FORMMY_TRAINING_GROUP_FOLDER,
+    filename,
+  );
+  try {
+    if (fs.statSync(trainingPath).size > 0) return trainingPath;
+  } catch {
+    // training file missing — fall through with stub path
+  }
+  return perGroupPath;
+}
 
 export function startIpcWatcher(deps: IpcDeps): void {
   if (ipcWatcherRunning) {
@@ -202,9 +250,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       !data.subdir.includes('..')
                         ? data.subdir
                         : '';
-                    const absPath = subdir
-                      ? path.join(GROUPS_DIR, folder, subdir, data.filename)
-                      : path.join(GROUPS_DIR, folder, data.filename);
+                    const absPath = resolveMediaPath(
+                      folder,
+                      subdir,
+                      data.filename,
+                      targetGroup,
+                    );
                     await deps.sendAudio(data.chatJid, absPath);
                     logger.info(
                       { chatJid: data.chatJid, sourceGroup },
@@ -243,9 +294,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       !data.subdir.includes('..')
                         ? data.subdir
                         : '';
-                    const absPath = subdir
-                      ? path.join(GROUPS_DIR, folder, subdir, data.filename)
-                      : path.join(GROUPS_DIR, folder, data.filename);
+                    const absPath = resolveMediaPath(
+                      folder,
+                      subdir,
+                      data.filename,
+                      targetGroup,
+                    );
                     await deps.sendVideo(
                       data.chatJid,
                       absPath,
@@ -289,9 +343,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       !data.subdir.includes('..')
                         ? data.subdir
                         : '';
-                    const absPath = subdir
-                      ? path.join(GROUPS_DIR, folder, subdir, data.filename)
-                      : path.join(GROUPS_DIR, folder, data.filename);
+                    const absPath = resolveMediaPath(
+                      folder,
+                      subdir,
+                      data.filename,
+                      targetGroup,
+                    );
                     await deps.sendSticker(data.chatJid, absPath);
                     logger.info(
                       { chatJid: data.chatJid, sourceGroup },
@@ -415,9 +472,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       !data.subdir.includes('..')
                         ? data.subdir
                         : '';
-                    const absPath = subdir
-                      ? path.join(GROUPS_DIR, folder, subdir, data.filename)
-                      : path.join(GROUPS_DIR, folder, data.filename);
+                    const absPath = resolveMediaPath(
+                      folder,
+                      subdir,
+                      data.filename,
+                      targetGroup,
+                    );
                     await deps.sendDocument(
                       data.chatJid,
                       absPath,
@@ -525,9 +585,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       !data.subdir.includes('..')
                         ? data.subdir
                         : '';
-                    const absPath = subdir
-                      ? path.join(GROUPS_DIR, folder, subdir, data.filename)
-                      : path.join(GROUPS_DIR, folder, data.filename);
+                    const absPath = resolveMediaPath(
+                      folder,
+                      subdir,
+                      data.filename,
+                      targetGroup,
+                    );
                     await deps.sendImage(
                       data.chatJid,
                       absPath,
