@@ -241,7 +241,37 @@ FORMMY_CALLBACK_URL=https://formmy.app/api/v1/integrations/whatsapp/send
 FORMMY_INTEGRATION_ID=<fallback — cada JID resuelve su propio integration_id desde formmy_jid_mapping>
 FORMMY_CHANNEL_PORT=3940
 FORMMY_DEFAULT_GROUP=formmy_lobby
+# Optional — endpoint to release the WABA coexistence (manual_mode) timer.
+# Sin esto, el tool clear_coexistence_pause queda como no-op y reporta error.
+FORMMY_COEXISTENCE_RELEASE_URL=https://formmy.app/api/v1/integrations/whatsapp/coexistence/release
 ```
+
+## Coexistencia WABA (manual_mode)
+
+Meta WABA exige que cuando el owner contesta desde su tel, el agente automatizado se pause por una ventana (default Meta: 30 min). El timer lo lleva Formmy; NanoClaw solo respeta la señal y permite override.
+
+### Flujo de pausa
+1. Owner contesta desde su tel → Meta dispara webhook a Formmy.
+2. Formmy detecta human takeover y arranca timer interno de 30 min.
+3. Cada mensaje entrante durante esa ventana que Formmy reenvía a NanoClaw lleva `manual_mode: true` en el payload.
+4. NanoClaw lo recibe en `src/channels/formmy-whatsapp.ts:344`, lo persiste, pero **no** dispara container — ver `src/index.ts:462-470` (`Skipped (human takeover active — manual_mode)`).
+5. Cuando el timer expira en Formmy, deja de mandar `manual_mode=true` y el agente vuelve a responder solo.
+
+### Override desde NanoClaw (opcional)
+El grupo admin puede liberar la pausa antes de los 30 min via MCP tool `clear_coexistence_pause(chat_jid)`. Esto manda un IPC a `src/ipc.ts` que dispara `releaseCoexistence(jid)` en el canal, que hace `POST ${FORMMY_COEXISTENCE_RELEASE_URL}` con:
+
+```http
+POST {FORMMY_COEXISTENCE_RELEASE_URL}
+Authorization: Bearer {FORMMY_CHANNEL_SECRET}
+Content-Type: application/json
+
+{
+  "phone_number": "5217712412825",
+  "integration_id": "69cd57fc76b0bf8de81f7637"
+}
+```
+
+Respuesta 2xx → Formmy resetea el timer manual_mode para esa conversación. Sin `FORMMY_COEXISTENCE_RELEASE_URL` configurado, el tool falla limpio con "not configured" en logs.
 
 ## Mount allowlist (ya configurado en prod)
 Ubicación: `/root/.config/nanoclaw/mount-allowlist.json`

@@ -1717,6 +1717,18 @@ async function main(): Promise<void> {
         logger.warn({ jid }, 'No channel supports updateGroupName');
       }
     },
+    releaseCoexistence: async (jid) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) {
+        throw new Error(`No channel owns JID: ${jid}`);
+      }
+      if (!channel.releaseCoexistence) {
+        throw new Error(
+          `Channel ${channel.name} does not support coexistence release`,
+        );
+      }
+      await channel.releaseCoexistence(jid);
+    },
     registeredGroups: () => registeredGroups,
     registerGroup,
     syncGroups: async (force: boolean) => {

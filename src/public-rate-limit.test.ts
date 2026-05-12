@@ -153,7 +153,7 @@ describe('public-rate-limit', () => {
         retryAfterMs: 4 * 60 * 60_000,
         shouldNotify: true,
       });
-      expect(msg).toMatch(/límite diario/);
+      expect(msg).toMatch(/cupo de mensajes/);
       expect(msg).toMatch(/4 h/);
     });
   });
