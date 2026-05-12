@@ -52,7 +52,7 @@ const httpKeepAliveAgent = new http.Agent({
 // already waiting on the response.
 const FORMMY_POST_MAX_ATTEMPTS = 3;
 const FORMMY_POST_BASE_BACKOFF_MS = 1000;
-const FORMMY_POST_TIMEOUT_MS = 15_000;
+const FORMMY_POST_TIMEOUT_MS = 30_000;
 
 function isRetryableStatus(status: number): boolean {
   return status === 429 || status >= 500;
@@ -266,9 +266,35 @@ export class FormmyWhatsAppChannel implements Channel {
               template,
             );
             // Materialize the folder on disk so attachments/CLAUDE.md can land here.
-            fs.mkdirSync(path.join(GROUPS_DIR, resolvedFolder), {
-              recursive: true,
-            });
+            const groupDir = path.join(GROUPS_DIR, resolvedFolder);
+            fs.mkdirSync(groupDir, { recursive: true });
+            // Seed CLAUDE.md + bin/ from training template if present and target empty.
+            const trainingDir = path.join(GROUPS_DIR, '_training');
+            const trainingClaudeMd = path.join(trainingDir, 'formmy-public.md');
+            const targetClaudeMd = path.join(groupDir, 'CLAUDE.md');
+            try {
+              if (
+                fs.existsSync(trainingClaudeMd) &&
+                (!fs.existsSync(targetClaudeMd) || fs.statSync(targetClaudeMd).size === 0)
+              ) {
+                fs.copyFileSync(trainingClaudeMd, targetClaudeMd);
+              }
+              const trainingBin = path.join(trainingDir, 'bin');
+              if (fs.existsSync(trainingBin)) {
+                const targetBin = path.join(groupDir, 'bin');
+                fs.mkdirSync(targetBin, { recursive: true });
+                for (const f of fs.readdirSync(trainingBin)) {
+                  const src = path.join(trainingBin, f);
+                  const dst = path.join(targetBin, f);
+                  if (!fs.existsSync(dst)) {
+                    fs.copyFileSync(src, dst);
+                    fs.chmodSync(dst, 0o755);
+                  }
+                }
+              }
+            } catch (err) {
+              logger.warn({ err, folder: resolvedFolder }, '[formmy-whatsapp] failed to seed CLAUDE.md/bin from training');
+            }
             setFormmyJidMapping(fullJid, resolvedFolder, integration_id);
             logger.info(
               { jid: fullJid, folder: resolvedFolder, created },

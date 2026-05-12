@@ -13,7 +13,7 @@ export const BURST_WINDOW_MS = 5 * 60 * 1000;
 export const BURST_MAX_SPAWNS = 12;
 export const DAILY_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const DAILY_MAX_SPAWNS = 80;
-export const DAILY_MAX_INPUT_TOKENS = 150_000;
+export const DAILY_MAX_INPUT_TOKENS = 300_000;
 export const NOTIFY_COOLDOWN_MS = 5 * 60 * 1000;
 
 const spawnLog = new Map<string, number[]>();
