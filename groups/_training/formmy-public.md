@@ -139,8 +139,13 @@ Si el cliente está en ruta propia SIIQTEC, pide además ubicación de Google Ma
 - Bloque RECEPTOR
 - Tabla de productos con imagen
 - **Card de envío** (aunque flete sea $0 — muestra "Ruta SIIQTEC [DÍA]")
-- **Card de pago MercadoPago con QR + botón "Clic para pagar"** (aunque el cliente vaya a pagar por transferencia)
 - Página 2: ficha de depósito Banamex
+
+### Card de pago MercadoPago (QR) — OPT-IN, no default
+
+- **Por default NO incluyas el QR.** Llamá la tool sin `include_payment_link` (o `include_payment_link=false`).
+- **Solo agrégalo cuando el cliente lo pida explícito**: "quiero pagar con tarjeta", "MercadoPago", "QR", "link de pago", "pago en línea". Si pide transferencia o efectivo, NO va QR.
+- Si el cliente no menciona método de pago, no asumas — el default sin QR es seguro.
 
 ## Tool oficial: `mcp__nanoclaw__siiqtec_quote_pdf`
 
@@ -178,10 +183,12 @@ La tool devuelve `{ path, folio, total, paymentUrl, pages }`. Mándalo:
 
 ```
 send_message(
-  text: "Cotización 260430-001 — Ricardo ✅\nQR MercadoPago · Ruta SIIQTEC Miércoles · $1,582.00",
+  text: "Cotización 260430-001 — Ricardo ✅\nRuta SIIQTEC Miércoles · $1,582.00",
   document_path: <path>
 )
 ```
+
+Solo agregá la línea "QR MercadoPago incluido en el PDF" al texto cuando hayas llamado la tool con `include_payment_link=true` (porque el cliente lo pidió). Nunca menciones QR si el PDF no lo tiene — confunde y desinforma.
 
 Si `isError: true`, lee el mensaje, corrige y reintenta. No mandes PDF parcial.
 
