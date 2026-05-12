@@ -267,7 +267,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     );
                     const bytes = fileSizeOrUndef(absPath);
                     await deps.sendAudio(data.chatJid, absPath);
-                      logger.info(
+                    logger.info(
                       {
                         chatJid: data.chatJid,
                         sourceGroup,
@@ -321,7 +321,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       absPath,
                       data.caption || '',
                     );
-                      logger.info(
+                    logger.info(
                       {
                         chatJid: data.chatJid,
                         sourceGroup,
@@ -372,7 +372,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     );
                     const bytes = fileSizeOrUndef(absPath);
                     await deps.sendSticker(data.chatJid, absPath);
-                      logger.info(
+                    logger.info(
                       {
                         chatJid: data.chatJid,
                         sourceGroup,
@@ -424,7 +424,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       options,
                       selectableCount,
                     );
-                      logger.info(
+                    logger.info(
                       {
                         chatJid: data.chatJid,
                         sourceGroup,
@@ -512,7 +512,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       data.originalName || data.filename,
                       data.caption || '',
                     );
-                      logger.info(
+                    logger.info(
                       {
                         chatJid: data.chatJid,
                         sourceGroup,
@@ -642,7 +642,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       absPath,
                       data.caption || '',
                     );
-                      logger.info(
+                    logger.info(
                       {
                         chatJid: data.chatJid,
                         sourceGroup,

@@ -139,7 +139,6 @@ function isApiOutageError(text: string): boolean {
   );
 }
 
-
 async function sendStandByImage(
   channel: Channel,
   chatJid: string,

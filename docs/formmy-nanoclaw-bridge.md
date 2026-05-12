@@ -273,6 +273,48 @@ Content-Type: application/json
 
 Respuesta 2xx → Formmy resetea el timer manual_mode para esa conversación. Sin `FORMMY_COEXISTENCE_RELEASE_URL` configurado, el tool falla limpio con "not configured" en logs.
 
+## Rescate manual de un mensaje perdido
+
+Cuando el agente generó una respuesta que NO llegó al cliente (por un suppresor que se equivocó, un crash del container mid-turn, un fail al enviar a Meta que no se reintentó, o cualquier otro hueco), se puede inyectar el texto directo vía `POST /api/v1/integrations/whatsapp/send` y aparece en la conversación como si Sofi lo hubiera mandado normal.
+
+Esto NO regenera la respuesta — la tenés que reconstruir vos a partir de logs/docker output. Útil para flujos como cotización donde el agente terminó el trabajo (PDF entregado, lead en Kommo) pero un follow-up legítimo se perdió.
+
+### Script
+
+`scripts/formmy-rescue-message.sh` lo hace en una sola línea:
+
+```bash
+ssh root@<droplet> 'cd /home/nanoclaw/app && \
+  scripts/formmy-rescue-message.sh <phone> <integration_id> "<texto>"'
+```
+
+`<phone>` sin el `+` (ej. `5217717029744`). `<integration_id>` lo sacas de `formmy_jid_mapping`:
+
+```bash
+sqlite3 store/messages.db \
+  "SELECT integration_id FROM formmy_jid_mapping \
+   WHERE jid='formmy_<phone>@s.whatsapp.net';"
+```
+
+El script lee `FORMMY_CHANNEL_SECRET` del `.env`, manda `type:'text'` y sale con el `wamid` de éxito. Status ≠ 200 corta con el body del error.
+
+### Cuándo usarlo
+
+- Mi nuevo filter `paused-mid-run` suprimió outputs que NO debían suprimirse (debería ser raro, pero podría pasar).
+- Bug en el filter de meta-narración o equivalente que ya no existe pero podría volver.
+- Container murió en mid-turn pero el agente ya había terminado de razonar (logs `docker logs <container>` muestran el `Result #N` final).
+- Operador pidió "manda esto exacto al cliente X" desde el grupo admin pero por alguna razón el agente no obedece.
+
+### Cuándo NO usarlo
+
+- Si el cliente todavía está activo y mandó un mensaje nuevo: dejá que el agente responda al batch nuevo (va a tener el contexto completo).
+- Si no estás seguro del wording exacto: NO inventes — pedile a Sofi que lo regenere con un mensaje sintético tipo `ping` inyectado al messages.db, o esperá a que el cliente responda y el agente arme la respuesta solo.
+- Si la respuesta original ya está en messages.db con `is_bot_message=1`: ya se entregó. Re-enviarla duplica.
+
+### Audit trail
+
+El mensaje rescatado **no queda persistido en messages.db** del lado NanoClaw (es un POST directo a Formmy, salta `storeMessage`). Si necesitas trazabilidad, agregá un INSERT manual a la tabla `messages` con `is_bot_message=1` y un `id` único (`rescue_<ts>` por convención).
+
 ## Mount allowlist (ya configurado en prod)
 Ubicación: `/root/.config/nanoclaw/mount-allowlist.json`
 Permite que grupos no-main monten carpetas de otros grupos como additionalMounts read-write.
