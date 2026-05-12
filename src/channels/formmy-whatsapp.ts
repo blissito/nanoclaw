@@ -560,7 +560,21 @@ export class FormmyWhatsAppChannel implements Channel {
           { type: media.type, media_id: media.media_id, url_host: urlHost },
           '[formmy-whatsapp] fetching media via Formmy proxy URL',
         );
-        buffer = await downloadFile(media.url);
+        // The Formmy media proxy requires Bearer auth post-2026-05-12. Only
+        // forward our shared secret when the URL host matches the callback
+        // host so we don't leak it to arbitrary URLs from a forged payload.
+        const callbackHost = (() => {
+          try {
+            return new URL(this.callbackUrl).host;
+          } catch {
+            return null;
+          }
+        })();
+        const headers =
+          callbackHost && urlHost === callbackHost
+            ? { Authorization: `Bearer ${this.secret}` }
+            : undefined;
+        buffer = await downloadFile(media.url, headers);
         if (buffer.length === 0) {
           logger.warn(
             { type: media.type, media_id: media.media_id, url_host: urlHost },
@@ -810,19 +824,32 @@ function readBody(req: http.IncomingMessage): Promise<string> {
   });
 }
 
-function downloadFile(url: string): Promise<Buffer> {
+function downloadFile(
+  url: string,
+  headers?: Record<string, string>,
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const transport = url.startsWith('https') ? https : http;
+    const opts = headers ? { headers } : {};
     transport
-      .get(url, (res) => {
-        // Follow redirects
+      .get(url, opts, (res) => {
+        // Follow redirects (preserving auth header for same-host redirects)
         if (
           res.statusCode &&
           res.statusCode >= 300 &&
           res.statusCode < 400 &&
           res.headers.location
         ) {
-          downloadFile(res.headers.location).then(resolve).catch(reject);
+          const sameHost = (() => {
+            try {
+              return new URL(res.headers.location, url).host === new URL(url).host;
+            } catch {
+              return false;
+            }
+          })();
+          downloadFile(res.headers.location, sameHost ? headers : undefined)
+            .then(resolve)
+            .catch(reject);
           return;
         }
         if (res.statusCode && res.statusCode >= 400) {
