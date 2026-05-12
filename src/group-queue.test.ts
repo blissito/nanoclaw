@@ -211,6 +211,62 @@ describe('GroupQueue', () => {
     expect(callCount).toBe(countAfterMaxRetries);
   });
 
+  // --- setOnTurnSuccess ---
+
+  it('fires onTurnSuccess after a successful turn', async () => {
+    const onSuccess = vi.fn();
+    const processMessages = vi.fn(async () => true);
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.setOnTurnSuccess(onSuccess);
+    queue.enqueueMessageCheck('group-success@g.us');
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(processMessages).toHaveBeenCalledTimes(1);
+    expect(onSuccess).toHaveBeenCalledWith('group-success@g.us');
+  });
+
+  it('does not fire onTurnSuccess when the turn fails', async () => {
+    const onSuccess = vi.fn();
+    const processMessages = vi.fn(async () => false);
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.setOnTurnSuccess(onSuccess);
+    queue.enqueueMessageCheck('group-fail@g.us');
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(processMessages).toHaveBeenCalledTimes(1);
+    expect(onSuccess).not.toHaveBeenCalled();
+  });
+
+  it('fires onRetriesExhausted once per episode and onTurnSuccess clears it', async () => {
+    let phase: 'fail' | 'pass' = 'fail';
+    const onExhausted = vi.fn();
+    const onSuccess = vi.fn();
+    const processMessages = vi.fn(async () => phase === 'pass');
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.setOnRetriesExhausted(onExhausted);
+    queue.setOnTurnSuccess(onSuccess);
+
+    queue.enqueueMessageCheck('group-recovery@g.us');
+    // Initial + 2 retries (delays 5000 + 10000)
+    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(5010);
+    await vi.advanceTimersByTimeAsync(10010);
+    expect(onExhausted).toHaveBeenCalledTimes(1);
+
+    // Underlying issue resolves; advance past the 5-min cooldown so enqueue
+    // is allowed again, then verify success callback fires.
+    phase = 'pass';
+    await vi.advanceTimersByTimeAsync(5 * 60_000 + 10);
+    queue.enqueueMessageCheck('group-recovery@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+    expect(onSuccess).toHaveBeenCalledWith('group-recovery@g.us');
+  });
+
   // --- Waiting groups get drained when slots free up ---
 
   it('drains waiting groups when active slots free up', async () => {

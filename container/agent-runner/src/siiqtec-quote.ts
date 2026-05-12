@@ -22,7 +22,7 @@ const LOGO_URL = 'https://easybits-public.fly.storage.tigris.dev/69e19ed033ef9ab
 const BANK_LOGO_URL = 'https://easybits-public.fly.storage.tigris.dev/69e19ed033ef9abb7cd5a54b/eHr';
 
 export type QuoteInput = {
-  folio: string;
+  folio?: string;
   fecha?: string;
   cliente: {
     nombre: string;
@@ -80,6 +80,46 @@ function todayMx(): string {
   return `${dd}/${mm}/${yyyy}`;
 }
 
+function todayYYMMDD(): string {
+  // Use MX local time (TZ env is set to America/Mexico_City inside the container).
+  const d = new Date();
+  const yy = String(d.getFullYear() % 100).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yy}${mm}${dd}`;
+}
+
+/**
+ * Acquire a globally-unique folio for today, shared across all chats.
+ * Uses POSIX-atomic `mkdir` on a shared host-mounted directory.
+ * Multiple containers racing the same folio number: only one wins, others
+ * retry with the next number. No host-side coordination needed.
+ */
+const FOLIO_COUNTER_DIR = '/workspace/folio-counters';
+function acquireFolio(): string {
+  fs.mkdirSync(FOLIO_COUNTER_DIR, { recursive: true });
+  const yymmdd = todayYYMMDD();
+  const existing = fs.readdirSync(FOLIO_COUNTER_DIR).filter(
+    (n) => n.startsWith(`${yymmdd}-`),
+  );
+  const maxN = existing.reduce((m, n) => {
+    const v = parseInt(n.split('-')[1] || '', 10);
+    return Number.isFinite(v) && v > m ? v : m;
+  }, 0);
+  for (let n = maxN + 1; n < maxN + 200; n++) {
+    const folio = `${yymmdd}-${String(n).padStart(3, '0')}`;
+    try {
+      fs.mkdirSync(path.join(FOLIO_COUNTER_DIR, folio));
+      return folio;
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      if (e.code !== 'EEXIST') throw e;
+      // collision with concurrent container; retry with next n
+    }
+  }
+  throw new QuoteError('Could not acquire unique folio after 200 retries');
+}
+
 class QuoteError extends Error {
   constructor(msg: string) {
     super(`siiqtec_quote_pdf: ${msg}`);
@@ -90,7 +130,9 @@ class QuoteError extends Error {
 export function validate(input: QuoteInput): void {
   if (!input || typeof input !== 'object') throw new QuoteError('input must be an object');
 
-  if (!input.folio || !FOLIO_REGEX.test(input.folio)) {
+  // folio is optional — if present, must match format. If absent, runSiiqtecQuotePdf
+  // assigns one via acquireFolio() before reaching here.
+  if (input.folio !== undefined && !FOLIO_REGEX.test(input.folio)) {
     throw new QuoteError(`folio must match YYMMDD-NNN, got ${JSON.stringify(input.folio)}`);
   }
 
@@ -252,7 +294,7 @@ export function renderProductPage(opts: {
     </div>
     <div class="text-right border border-gray-300 rounded px-4 py-2 min-w-36">
       <p class="text-sm font-bold text-gray-700">Cotización</p>
-      <p class="text-lg font-black" style="color:#A73547">${escapeHtml(input.folio)}</p>
+      <p class="text-lg font-black" style="color:#A73547">${escapeHtml(input.folio!)}</p>
       <p class="text-xs text-gray-500 mt-1">Fecha</p>
       <p class="text-sm font-semibold text-gray-800">${fechaStr}</p>
       <p class="text-xs text-gray-500 mt-0.5">Moneda: MXN</p>
@@ -549,12 +591,17 @@ async function downloadPdf(url: string, dest: string): Promise<number> {
 }
 
 export async function runSiiqtecQuotePdf(input: QuoteInput): Promise<QuoteResult> {
+  // Auto-assign folio if the agent didn't supply one.
+  // Mutates input intentionally so downstream rendering uses the same value.
+  if (!input.folio) {
+    input.folio = acquireFolio();
+  }
   validate(input);
   await pruneBrokenImages(input.items);
   const totals = computeTotals(input);
 
   const paymentUrl = input.include_payment_link
-    ? await createMpLink(totals.total, input.folio)
+    ? await createMpLink(totals.total, input.folio!)
     : null;
 
   const chunks: QuoteInput['items'][] = [];
@@ -595,11 +642,11 @@ export async function runSiiqtecQuotePdf(input: QuoteInput): Promise<QuoteResult
     id: `p${chunks.length + 1}`,
     order: chunks.length,
     name: 'Ficha de depósito',
-    html: renderDepositPage({ folio: input.folio, total: totals.total, paymentUrl }),
+    html: renderDepositPage({ folio: input.folio!, total: totals.total, paymentUrl }),
   });
 
   const created = (await easybitsCall('create_document', {
-    name: `COT-${input.folio} — ${input.cliente.nombre}`,
+    name: `COT-${input.folio!} — ${input.cliente.nombre}`,
     sections,
   })) as { id?: string };
   if (!created?.id) throw new QuoteError('create_document returned no id');
@@ -611,12 +658,12 @@ export async function runSiiqtecQuotePdf(input: QuoteInput): Promise<QuoteResult
   if (!url) throw new QuoteError('export_document returned no file.url');
 
   fs.mkdirSync(GROUP_DIR, { recursive: true });
-  const dest = path.join(GROUP_DIR, `cot-${input.folio}.pdf`);
+  const dest = path.join(GROUP_DIR, `cot-${input.folio!}.pdf`);
   await downloadPdf(url, dest);
 
   return {
     path: dest,
-    folio: input.folio,
+    folio: input.folio!,
     total: totals.total,
     paymentUrl,
     pages: totalPages,

@@ -32,6 +32,7 @@ export interface ContainerConfig {
   timeout?: number; // Default: 300000 (5 minutes)
   mcpServers?: string[]; // Which extra MCP servers to enable (e.g. ['easybits', 'kommo']). 'nanoclaw' always included. undefined = all.
   protectClaudeMd?: boolean; // Mount CLAUDE.md as read-only to prevent prompt injection in public-facing groups
+  useLocalClaudeMd?: boolean; // For A/B testing: use per-chat CLAUDE.md (read-only) instead of the training overlay. Last-mount wins over public profile overlay.
   allowedTools?: string[]; // Override default tool list for restricted groups (e.g. public-facing). MCP tools auto-added from mcpServers.
   env?: Record<string, string>; // Per-group env var overrides (e.g. SMATCH_CLUB_ID). Overrides values from .env for this container only.
   stickerTrigger?: boolean; // Whether stickers count as trigger (default: true). Set false to ignore stickers.

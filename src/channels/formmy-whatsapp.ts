@@ -29,6 +29,7 @@ import {
   setFormmyJidMapping,
 } from '../db.js';
 import { logger } from '../logger.js';
+import { transcribeAudioBuffer } from '../transcription.js';
 import { Channel, NewMessage } from '../types.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 
@@ -52,7 +53,7 @@ const httpKeepAliveAgent = new http.Agent({
 // already waiting on the response.
 const FORMMY_POST_MAX_ATTEMPTS = 3;
 const FORMMY_POST_BASE_BACKOFF_MS = 1000;
-const FORMMY_POST_TIMEOUT_MS = 15_000;
+const FORMMY_POST_TIMEOUT_MS = 30_000;
 
 function isRetryableStatus(status: number): boolean {
   return status === 429 || status >= 500;
@@ -122,13 +123,106 @@ function sanitizeFolder(jid: string): string {
 }
 
 interface InboundMedia {
-  type: 'image' | 'sticker' | 'document' | 'audio';
+  type: 'image' | 'sticker' | 'document' | 'audio' | 'video';
   media_id?: string;
   url?: string;
   media_base64?: string;
   mime_type?: string;
   caption?: string;
   filename?: string;
+}
+
+interface InboundLocation {
+  latitude: number;
+  longitude: number;
+  name?: string;
+  address?: string;
+}
+
+interface InboundContact {
+  name?: string;
+  phones?: string[];
+  vcard_raw?: string;
+}
+
+interface InboundReaction {
+  to_message_id?: string;
+  emoji?: string;
+}
+
+interface InboundQuoted {
+  message_id?: string;
+  from?: string;
+  content_preview?: string;
+}
+
+interface InboundUnhandled {
+  meta_type?: string;
+  raw?: unknown;
+}
+
+/**
+ * Compose the final content string from any combination of non-media inbound
+ * fields. Each piece becomes its own bracketed line so the agent can parse
+ * what came in. Order: quoted prefix first (context), then the body.
+ */
+function composeExtras(opts: {
+  location?: InboundLocation;
+  contacts?: InboundContact[];
+  reaction?: InboundReaction;
+  quoted?: InboundQuoted;
+  unhandled?: InboundUnhandled;
+}): { prefix: string; body: string } {
+  let prefix = '';
+  const bodyParts: string[] = [];
+
+  if (opts.quoted) {
+    const preview = opts.quoted.content_preview?.trim();
+    const fromId = opts.quoted.from?.trim();
+    if (preview) {
+      prefix = fromId
+        ? `[Reply to msg from ${fromId}: "${preview.slice(0, 200)}"]\n`
+        : `[Reply to: "${preview.slice(0, 200)}"]\n`;
+    } else if (opts.quoted.message_id) {
+      prefix = `[Reply to msg ${opts.quoted.message_id}]\n`;
+    }
+  }
+
+  if (opts.location) {
+    const { latitude: lat, longitude: lng, name, address } = opts.location;
+    if (typeof lat === 'number' && typeof lng === 'number') {
+      const parts = [`[Location: ${lat},${lng}]`];
+      if (name) parts.push(`name="${name}"`);
+      if (address) parts.push(`address="${address}"`);
+      parts.push(`https://maps.google.com/?q=${lat},${lng}`);
+      bodyParts.push(parts.join(' '));
+    }
+  }
+
+  if (opts.contacts?.length) {
+    for (const c of opts.contacts) {
+      const name = c.name || '(sin nombre)';
+      const phones = (c.phones || []).join(', ');
+      bodyParts.push(
+        `[Contact: ${name}${phones ? ` · ${phones}` : ''}]`,
+      );
+    }
+  }
+
+  if (opts.reaction) {
+    const emoji = opts.reaction.emoji || '(unknown)';
+    const target = opts.reaction.to_message_id
+      ? ` to msg ${opts.reaction.to_message_id}`
+      : '';
+    bodyParts.push(`[Reaction: ${emoji}${target}]`);
+  }
+
+  if (opts.unhandled) {
+    const t = opts.unhandled.meta_type || 'unknown';
+    bodyParts.push(`[Unsupported WhatsApp message type: ${t}]`);
+  }
+
+  return { prefix, body: bodyParts.join('\n') };
 }
 
 export class FormmyWhatsAppChannel implements Channel {
@@ -192,15 +286,28 @@ export class FormmyWhatsAppChannel implements Channel {
           content,
           message_id,
           media,
+          location,
+          contacts,
+          reaction,
+          quoted,
+          unhandled,
           group_folder,
           integration_id,
           manual_mode,
           container_config,
         } = JSON.parse(body);
 
-        if (!jid || (!content && !media)) {
+        // Accept message if any signal-bearing field is present.
+        // location/contacts/reaction/quoted/unhandled count even when text/media absent.
+        const hasExtras =
+          !!location ||
+          (Array.isArray(contacts) && contacts.length > 0) ||
+          !!reaction ||
+          !!quoted ||
+          !!unhandled;
+        if (!jid || (!content && !media && !hasExtras)) {
           res.writeHead(400);
-          res.end('Missing jid or content/media');
+          res.end('Missing jid or signal-bearing field');
           return;
         }
 
@@ -266,9 +373,35 @@ export class FormmyWhatsAppChannel implements Channel {
               template,
             );
             // Materialize the folder on disk so attachments/CLAUDE.md can land here.
-            fs.mkdirSync(path.join(GROUPS_DIR, resolvedFolder), {
-              recursive: true,
-            });
+            const groupDir = path.join(GROUPS_DIR, resolvedFolder);
+            fs.mkdirSync(groupDir, { recursive: true });
+            // Seed CLAUDE.md + bin/ from training template if present and target empty.
+            const trainingDir = path.join(GROUPS_DIR, '_training');
+            const trainingClaudeMd = path.join(trainingDir, 'formmy-public.md');
+            const targetClaudeMd = path.join(groupDir, 'CLAUDE.md');
+            try {
+              if (
+                fs.existsSync(trainingClaudeMd) &&
+                (!fs.existsSync(targetClaudeMd) || fs.statSync(targetClaudeMd).size === 0)
+              ) {
+                fs.copyFileSync(trainingClaudeMd, targetClaudeMd);
+              }
+              const trainingBin = path.join(trainingDir, 'bin');
+              if (fs.existsSync(trainingBin)) {
+                const targetBin = path.join(groupDir, 'bin');
+                fs.mkdirSync(targetBin, { recursive: true });
+                for (const f of fs.readdirSync(trainingBin)) {
+                  const src = path.join(trainingBin, f);
+                  const dst = path.join(targetBin, f);
+                  if (!fs.existsSync(dst)) {
+                    fs.copyFileSync(src, dst);
+                    fs.chmodSync(dst, 0o755);
+                  }
+                }
+              }
+            } catch (err) {
+              logger.warn({ err, folder: resolvedFolder }, '[formmy-whatsapp] failed to seed CLAUDE.md/bin from training');
+            }
             setFormmyJidMapping(fullJid, resolvedFolder, integration_id);
             logger.info(
               { jid: fullJid, folder: resolvedFolder, created },
@@ -294,6 +427,25 @@ export class FormmyWhatsAppChannel implements Channel {
             groupFolder,
             finalContent,
           );
+        }
+
+        // Compose extras (location, contacts, reaction, quoted prefix, unhandled).
+        // Any combination can co-exist with text/media; we append them so the
+        // agent sees the full picture in one message.
+        const extras = composeExtras({
+          location: location as InboundLocation | undefined,
+          contacts: contacts as InboundContact[] | undefined,
+          reaction: reaction as InboundReaction | undefined,
+          quoted: quoted as InboundQuoted | undefined,
+          unhandled: unhandled as InboundUnhandled | undefined,
+        });
+        if (extras.body) {
+          finalContent = finalContent
+            ? `${finalContent}\n${extras.body}`
+            : extras.body;
+        }
+        if (extras.prefix) {
+          finalContent = `${extras.prefix}${finalContent}`;
         }
 
         if (!finalContent) {
@@ -557,12 +709,42 @@ export class FormmyWhatsAppChannel implements Channel {
             : `[Document: attachments/${filename} (${sizeKB}KB${mime ? `, ${mime}` : ''})]`;
           return caption ? `${caption}\n\n${docRef}` : docRef;
         }
+        case 'video': {
+          const attachDir = path.join(groupDir, 'attachments');
+          fs.mkdirSync(attachDir, { recursive: true });
+          const ext = extFromMime(media.mime_type) || '.mp4';
+          const filename = `video-${Date.now()}${ext}`;
+          fs.writeFileSync(path.join(attachDir, filename), buffer);
+          const sizeKB = Math.round(buffer.length / 1024);
+          const caption = media.caption || existingContent || '';
+          const videoRef = `[Video: attachments/${filename} (${sizeKB}KB)]`;
+          return caption ? `${caption}\n\n${videoRef}` : videoRef;
+        }
         case 'audio': {
           const attachDir = path.join(groupDir, 'attachments');
           fs.mkdirSync(attachDir, { recursive: true });
           const filename = `audio-${Date.now()}.ogg`;
           fs.writeFileSync(path.join(attachDir, filename), buffer);
-          return `[Audio: attachments/${filename}]`;
+          // Transcribe so the agent sees text, not just a file ref.
+          // Whisper.cpp local first (no API cost); OpenAI fallback if key set.
+          let transcript: string | null = null;
+          try {
+            transcript = await transcribeAudioBuffer(buffer);
+          } catch (err) {
+            logger.warn(
+              { err, filename },
+              '[formmy-whatsapp] transcription threw, continuing without text',
+            );
+          }
+          const fileRef = `[Audio: attachments/${filename}]`;
+          if (transcript) {
+            logger.info(
+              { filename, chars: transcript.length },
+              '[formmy-whatsapp] transcribed voice note',
+            );
+            return `${transcript}\n\n${fileRef}`;
+          }
+          return fileRef;
         }
         default:
           return existingContent || `[Media: ${media.type}]`;

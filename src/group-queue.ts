@@ -26,6 +26,7 @@ interface GroupState {
   groupFolder: string | null;
   retryCount: number;
   cooldownUntil: number;
+  errorAnnounced: boolean;
 }
 
 export class GroupQueue {
@@ -35,6 +36,7 @@ export class GroupQueue {
   private processMessagesFn: ((groupJid: string) => Promise<boolean>) | null =
     null;
   private onRetriesExhaustedFn: ((groupJid: string) => void) | null = null;
+  private onTurnSuccessFn: ((groupJid: string) => void) | null = null;
   private shuttingDown = false;
 
   private getGroup(groupJid: string): GroupState {
@@ -52,6 +54,7 @@ export class GroupQueue {
         groupFolder: null,
         retryCount: 0,
         cooldownUntil: 0,
+        errorAnnounced: false,
       };
       this.groups.set(groupJid, state);
     }
@@ -64,6 +67,10 @@ export class GroupQueue {
 
   setOnRetriesExhausted(fn: (groupJid: string) => void): void {
     this.onRetriesExhaustedFn = fn;
+  }
+
+  setOnTurnSuccess(fn: (groupJid: string) => void): void {
+    this.onTurnSuccessFn = fn;
   }
 
   enqueueMessageCheck(groupJid: string): void {
@@ -230,6 +237,7 @@ export class GroupQueue {
         if (success) {
           state.retryCount = 0;
           state.cooldownUntil = 0;
+          this.onTurnSuccessFn?.(groupJid);
         } else {
           this.scheduleRetry(groupJid, state);
         }

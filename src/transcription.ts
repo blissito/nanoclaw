@@ -191,3 +191,23 @@ export async function transcribeAudioMessage(
 export function isVoiceMessage(msg: WAMessage): boolean {
   return msg.message?.audioMessage?.ptt === true;
 }
+
+/**
+ * Transcribe an audio buffer directly (channel-agnostic).
+ * Used by Formmy WABA (which downloads via base64 or proxy URL),
+ * unlike transcribeAudioMessage above which is Baileys-specific.
+ * Returns null if both whisper.cpp and OpenAI fallback fail.
+ */
+export async function transcribeAudioBuffer(
+  buffer: Buffer,
+): Promise<string | null> {
+  if (!buffer || buffer.length === 0) {
+    logger.warn('transcribeAudioBuffer called with empty buffer');
+    return null;
+  }
+  const config = DEFAULT_CONFIG;
+  const transcript =
+    (await transcribeWithWhisper(buffer)) ??
+    (await transcribeWithOpenAI(buffer, config));
+  return transcript ? transcript.trim() : null;
+}

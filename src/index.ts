@@ -690,6 +690,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       if (result.status === 'success') {
         statusTracker.markAllDone(chatJid);
         queue.notifyIdle(chatJid);
+        // Persist cursor advancement IMMEDIATELY at success — don't wait for
+        // the container to actually exit. The container may idle-wait for
+        // more messages after success, and a restart during that idle window
+        // would re-trigger recoverPendingMessages → roll back the cursor →
+        // reprocess the already-delivered message (cause of duplicate-
+        // confirmation bug observed 2026-05-12 after restart for the
+        // transcription deploy). The final delete at the end of
+        // processGroupMessages stays as an idempotent safety net.
+        if (cursorBeforePipe[chatJid]) {
+          delete cursorBeforePipe[chatJid];
+          saveState();
+        }
       }
 
       if (result.status === 'error') {
@@ -1740,20 +1752,17 @@ async function main(): Promise<void> {
   await statusTracker.recover();
   startSessionCleanup();
   queue.setProcessMessagesFn(processGroupMessages);
-  const lastErrorSentAt: Record<string, number> = {};
+  // Track whether we've already logged the error for a group during the
+  // current failure episode. Reset when a turn succeeds (via setOnTurnSuccess).
+  // We never send the error to the channel — the client should never see
+  // these notices. Internal logging only.
+  const errorLoggedFor: Record<string, boolean> = {};
   queue.setOnRetriesExhausted((groupJid) => {
-    const now = Date.now();
-    if (
-      lastErrorSentAt[groupJid] &&
-      now - lastErrorSentAt[groupJid] < 5 * 60_000
-    ) {
-      logger.info(
-        { groupJid },
-        'Suppressing repeated error message to channel',
-      );
+    if (errorLoggedFor[groupJid]) {
+      // Subsequent exhaustion in the same episode: silent.
       return;
     }
-    lastErrorSentAt[groupJid] = now;
+    errorLoggedFor[groupJid] = true;
     const group = registeredGroups[groupJid];
     if (!group) return;
     // Auto-clear stale sessionId so the next message starts fresh instead of
@@ -1767,14 +1776,17 @@ async function main(): Promise<void> {
     } catch (err) {
       logger.warn({ groupJid, err }, 'Failed to clear session after cooldown');
     }
-    const channel = findChannel(channels, groupJid);
-    if (!channel) return;
-    channel
-      .sendMessage(
-        groupJid,
-        '_Entré en enfriamiento 5 min tras varios errores. Reinicié la sesión; vuelve a intentar en unos minutos._',
-      )
-      .catch(() => {});
+    // Deliberately NO channel.sendMessage — the client should not see these
+    // technical notices. They reach a human via journal/logs/alerts instead.
+  });
+  queue.setOnTurnSuccess((groupJid) => {
+    if (errorLoggedFor[groupJid]) {
+      logger.info(
+        { groupJid },
+        'Group recovered after error episode',
+      );
+      errorLoggedFor[groupJid] = false;
+    }
   });
   recoverPendingMessages();
 

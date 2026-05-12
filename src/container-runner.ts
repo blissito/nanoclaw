@@ -162,6 +162,15 @@ function buildVolumeMounts(
         })) {
           if (entry.name.startsWith('.')) continue;
           if (!entry.isFile()) continue;
+          // When useLocalClaudeMd is set, exclude CLAUDE.md from the overlay
+          // so the per-chat CLAUDE.md (mounted below) is the one visible to
+          // the agent. Docker rejects duplicate containerPath mounts.
+          if (
+            entry.name === 'CLAUDE.md' &&
+            group.containerConfig?.useLocalClaudeMd
+          ) {
+            continue;
+          }
           mounts.push({
             hostPath: path.join(trainingDir, entry.name),
             containerPath: `/workspace/group/${entry.name}`,
@@ -182,6 +191,45 @@ function buildVolumeMounts(
           containerPath: '/workspace/global',
           readonly: true,
         });
+      }
+    }
+
+    // Shared folio counter directory — writable, shared across all containers
+    // so siiqtec_quote_pdf can atomically allocate globally-unique folios per
+    // day via POSIX mkdir. Each successful mkdir of {YYMMDD-NNN}/ claims that
+    // folio for the calling container. Other containers retry with the next N
+    // on EEXIST. No host-side coordination needed.
+    const folioCounterDir = path.join(DATA_DIR, 'folio-counters');
+    fs.mkdirSync(folioCounterDir, { recursive: true });
+    mounts.push({
+      hostPath: folioCounterDir,
+      containerPath: '/workspace/folio-counters',
+      readonly: false,
+    });
+
+    // Per-chat CLAUDE.md override — for A/B testing slim prompts on specific
+    // chats. When `useLocalClaudeMd: true` is set on container_config, mount
+    // the per-chat CLAUDE.md read-only AFTER the training overlay so it wins
+    // by Docker's last-mount semantics. The chat reads its own CLAUDE.md
+    // instead of the training group's. Still read-only — same safety as the
+    // overlay default.
+    if (group.containerConfig?.useLocalClaudeMd) {
+      const localClaudeMd = path.join(groupDir, 'CLAUDE.md');
+      if (fs.existsSync(localClaudeMd) && fs.statSync(localClaudeMd).size > 0) {
+        mounts.push({
+          hostPath: localClaudeMd,
+          containerPath: '/workspace/group/CLAUDE.md',
+          readonly: true,
+        });
+        logger.info(
+          { folder: group.folder, bytes: fs.statSync(localClaudeMd).size },
+          'Using per-chat CLAUDE.md override (overlay shadowed)',
+        );
+      } else {
+        logger.warn(
+          { folder: group.folder, localClaudeMd },
+          'useLocalClaudeMd flag set but per-chat CLAUDE.md missing or empty — falling back to training overlay',
+        );
       }
     }
   }

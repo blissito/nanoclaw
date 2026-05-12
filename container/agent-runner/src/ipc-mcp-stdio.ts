@@ -1319,9 +1319,9 @@ tool('email',
 
 tool('quote',
   'siiqtec_quote_pdf',
-  'Genera una cotización SIIQTEC en PDF (template oficial: header SIIQTEC, RECEPTOR, productos con imagen, totales con envío Ruta SIIQTEC o paquetería, ficha de depósito con datos bancarios). La tool valida cantidades, recalcula montos, valida que las imágenes existan (cae a placeholder S/I si fallan), y particiona automáticamente en páginas si hay >6 productos. NUNCA inventes amounts; pasa qty + unit_price por item y la tool calcula. Por default NO incluye link de pago MercadoPago — pasá include_payment_link=true para añadir el card con QR + botón "Clic para pagar". Cada página lleva la leyenda "Esta cotización es generada con IA y puede tener errores". Devuelve el path local del PDF para mandarlo con send_message.',
+  'Genera una cotización SIIQTEC en PDF (template oficial: header SIIQTEC, RECEPTOR, productos con imagen, totales con envío Ruta SIIQTEC o paquetería, ficha de depósito con datos bancarios). La tool valida cantidades, recalcula montos, valida que las imágenes existan (cae a placeholder S/I si fallan), y particiona automáticamente en páginas si hay >6 productos. NUNCA inventes amounts; pasa qty + unit_price por item y la tool calcula. **Folio: NO lo pases — la tool asigna el siguiente consecutivo del día (YYMMDD-NNN, global entre chats) automáticamente.** Por default NO incluye link de pago MercadoPago — pasá include_payment_link=true para añadir el card con QR + botón "Clic para pagar". Cada página lleva la leyenda "Esta cotización es generada con IA y puede tener errores". Devuelve el path local del PDF y el folio asignado para mandarlo con send_message y registrarlo en Kommo.',
   {
-    folio: z.string().regex(/^\d{6}-\d{3}$/, 'folio debe ser YYMMDD-NNN').describe('Folio de cotización formato YYMMDD-NNN (ej: 260430-001).'),
+    folio: z.string().regex(/^\d{6}-\d{3}$/, 'folio debe ser YYMMDD-NNN').optional().describe('Opcional. NO lo pases en uso normal — la tool asigna el siguiente consecutivo del día (YYMMDD-NNN) automáticamente. Sólo pásalo si necesitas un folio específico (debugging o casos especiales).'),
     fecha: z.string().optional().describe('Fecha en formato DD/MM/YYYY. Si se omite, usa la fecha de hoy.'),
     cliente: z.object({
       nombre: z.string().min(1).describe('Nombre del cliente. Requerido.'),
