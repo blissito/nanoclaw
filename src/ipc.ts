@@ -115,6 +115,14 @@ function resolveMediaPath(
   return perGroupPath;
 }
 
+function fileSizeOrUndef(p: string): number | undefined {
+  try {
+    return fs.statSync(p).size;
+  } catch {
+    return undefined;
+  }
+}
+
 export function startIpcWatcher(deps: IpcDeps): void {
   if (ipcWatcherRunning) {
     logger.debug('IPC watcher already running, skipping duplicate start');
@@ -256,9 +264,15 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       data.filename,
                       targetGroup,
                     );
+                    const bytes = fileSizeOrUndef(absPath);
                     await deps.sendAudio(data.chatJid, absPath);
                     logger.info(
-                      { chatJid: data.chatJid, sourceGroup },
+                      {
+                        chatJid: data.chatJid,
+                        sourceGroup,
+                        filename: data.filename,
+                        bytes,
+                      },
                       'IPC audio sent',
                     );
                   }
@@ -300,13 +314,19 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       data.filename,
                       targetGroup,
                     );
+                    const bytes = fileSizeOrUndef(absPath);
                     await deps.sendVideo(
                       data.chatJid,
                       absPath,
                       data.caption || '',
                     );
                     logger.info(
-                      { chatJid: data.chatJid, sourceGroup },
+                      {
+                        chatJid: data.chatJid,
+                        sourceGroup,
+                        filename: data.filename,
+                        bytes,
+                      },
                       'IPC video sent',
                     );
                   }
@@ -349,9 +369,15 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       data.filename,
                       targetGroup,
                     );
+                    const bytes = fileSizeOrUndef(absPath);
                     await deps.sendSticker(data.chatJid, absPath);
                     logger.info(
-                      { chatJid: data.chatJid, sourceGroup },
+                      {
+                        chatJid: data.chatJid,
+                        sourceGroup,
+                        filename: data.filename,
+                        bytes,
+                      },
                       'IPC sticker sent',
                     );
                   }
@@ -478,6 +504,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       data.filename,
                       targetGroup,
                     );
+                    const bytes = fileSizeOrUndef(absPath);
                     await deps.sendDocument(
                       data.chatJid,
                       absPath,
@@ -489,6 +516,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                         chatJid: data.chatJid,
                         sourceGroup,
                         filename: data.filename,
+                        bytes,
                       },
                       'IPC document sent',
                     );
@@ -591,6 +619,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       data.filename,
                       targetGroup,
                     );
+                    const bytes = fileSizeOrUndef(absPath);
                     await deps.sendImage(
                       data.chatJid,
                       absPath,
@@ -601,6 +630,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                         chatJid: data.chatJid,
                         sourceGroup,
                         filename: data.filename,
+                        bytes,
                       },
                       'IPC image sent',
                     );
