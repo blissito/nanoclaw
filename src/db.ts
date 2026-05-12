@@ -1235,6 +1235,22 @@ export function getFormmyIntegrationId(jid: string): string | null {
   return getFormmyJidMapping(jid)?.integration_id ?? null;
 }
 
+/**
+ * True if the integration_id is already known on this droplet (i.e. at least
+ * one JID has been mapped to it). Used by the channel to decide whether a JID
+ * of the form formmy_<int_id>_<phone> can be safely canonicalized to the
+ * legacy formmy_<phone>@s.whatsapp.net form — we only collapse when we're
+ * confident the integration belongs to us, never blindly.
+ */
+export function isKnownIntegrationId(integrationId: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT 1 FROM formmy_jid_mapping WHERE integration_id = ? LIMIT 1`,
+    )
+    .get(integrationId) as { 1: number } | undefined;
+  return row !== undefined;
+}
+
 export function setFormmyJidMapping(
   jid: string,
   folder: string,

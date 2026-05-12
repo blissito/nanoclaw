@@ -25,6 +25,7 @@ import { FORMMY_PUBLIC_TEMPLATE, GROUPS_DIR } from '../config.js';
 import {
   getFormmyGroupFolder,
   getFormmyIntegrationId,
+  isKnownIntegrationId,
   registerFormmyUserGroup,
   setFormmyJidMapping,
 } from '../db.js';
@@ -208,9 +209,20 @@ export class FormmyWhatsAppChannel implements Channel {
           return;
         }
 
-        const fullJid = jid.startsWith(JID_PREFIX)
-          ? jid
-          : `${JID_PREFIX}${jid}`;
+        // Canonicalize the JID. Formmy emits two formats today:
+        //   legacy → formmy_<phone>@s.whatsapp.net   (customer webhook path)
+        //   new    → formmy_<24hex_intId>_<phone>    (echo / coexistence path)
+        // Both refer to the same logical conversation, but the chat folder
+        // and conversation history live under the legacy key. Without this
+        // step, every Operador echo creates a phantom u_<hash> folder and
+        // the customer's Claude session never sees what the human said.
+        // We normalize to the legacy form when we can confirm the embedded
+        // integration_id is known (either matches the payload's
+        // `integration_id` or already lives in formmy_jid_mapping). If we
+        // can't confirm, we leave the JID untouched so we don't accidentally
+        // merge unrelated conversations.
+        const rawJid = jid.startsWith(JID_PREFIX) ? jid : `${JID_PREFIX}${jid}`;
+        const fullJid = canonicalizeJid(rawJid, integration_id);
 
         // Resolve group via mapping table.
         // Three modes (priority order):
@@ -798,6 +810,34 @@ export class FormmyWhatsAppChannel implements Channel {
   }
 }
 
+/**
+ * Collapse the integration-id-prefixed JID variant onto the legacy form so
+ * customer messages and Operador echoes land in the same chat folder.
+ *
+ *   input  formmy_<24hex>_<phone>   (Formmy echo / coexistence path)
+ *   output formmy_<phone>@s.whatsapp.net   (legacy customer-webhook form)
+ *
+ * Only collapses when the integration_id is verifiably ours — either matches
+ * the integration_id from the payload, or is already mapped on this droplet.
+ * Unknown integrations are left untouched so a forged or cross-tenant payload
+ * can't merge into a real conversation. Legacy JIDs pass through unchanged.
+ */
+export function canonicalizeJid(
+  jid: string,
+  payloadIntegrationId: string | undefined,
+): string {
+  if (jid.endsWith('@s.whatsapp.net') || jid.endsWith('@c.us')) return jid;
+  const stripped = jid.replace(/^formmy_/, '');
+  const parts = stripped.split('_');
+  if (parts.length < 2 || !/^[a-f0-9]{24}$/.test(parts[0])) return jid;
+  const embeddedIntId = parts[0];
+  const phone = parts.slice(1).join('_');
+  const isOurs =
+    embeddedIntId === payloadIntegrationId || isKnownIntegrationId(embeddedIntId);
+  if (!isOurs) return jid;
+  return `formmy_${phone}@s.whatsapp.net`;
+}
+
 export function extractPhone(jid: string): string {
   // formmy_<integrationId>_<phone> → phone (also handles legacy formmy_<phone>)
   // Also strips the WhatsApp suffix so the value is a clean E.164 number;
@@ -842,7 +882,9 @@ function downloadFile(
         ) {
           const sameHost = (() => {
             try {
-              return new URL(res.headers.location, url).host === new URL(url).host;
+              return (
+                new URL(res.headers.location, url).host === new URL(url).host
+              );
             } catch {
               return false;
             }
