@@ -1601,12 +1601,22 @@ async function main(): Promise<void> {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       if (messageId) {
-        if (!channel.sendReaction)
-          throw new Error('Channel does not support sendReaction');
+        if (!channel.sendReaction) {
+          logger.warn(
+            { jid, emoji, channel: channel.constructor?.name },
+            'Channel does not support sendReaction — skipping',
+          );
+          return;
+        }
         await channel.sendReaction(jid, messageId, emoji);
       } else {
-        if (!channel.reactToLatestMessage)
-          throw new Error('Channel does not support reactions');
+        if (!channel.reactToLatestMessage) {
+          logger.warn(
+            { jid, emoji, channel: channel.constructor?.name },
+            'Channel does not support reactToLatestMessage — skipping',
+          );
+          return;
+        }
         await channel.reactToLatestMessage(jid, emoji);
       }
     },

@@ -62,6 +62,20 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Guard against sending 0-byte payloads. Previously a bind-mount stub in the
+// training overlay caused empty PDFs to ship with a 200 from Formmy — fail
+// loudly here so the symptom is visible in logs and the retry loop doesn't
+// silently mask it. See src/ipc.ts:resolveMediaPath for the upstream fix.
+function readNonEmptyFile(filePath: string, kind: string): Buffer {
+  const buffer = fs.readFileSync(filePath);
+  if (buffer.length === 0) {
+    throw new Error(
+      `[formmy-whatsapp] refusing to send empty ${kind} (${filePath})`,
+    );
+  }
+  return buffer;
+}
+
 // Defensive: JIDs already match the group-folder regex (`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`),
 // but if Formmy ever changes format, replace any unsafe char with underscore.
 function sanitizeFolder(jid: string): string {
@@ -317,25 +331,23 @@ export class FormmyWhatsAppChannel implements Channel {
     filePath: string,
     caption: string,
   ): Promise<void> {
-    const buffer = fs.readFileSync(filePath);
-    const base64 = buffer.toString('base64');
+    const buffer = readNonEmptyFile(filePath, 'image');
     await this.postToFormmy({
       phone_number: extractPhone(jid),
       integration_id: this.resolveIntegrationId(jid),
       type: 'image',
-      media_base64: base64,
+      media_base64: buffer.toString('base64'),
       caption,
     });
   }
 
   async sendSticker(jid: string, filePath: string): Promise<void> {
-    const buffer = fs.readFileSync(filePath);
-    const base64 = buffer.toString('base64');
+    const buffer = readNonEmptyFile(filePath, 'sticker');
     await this.postToFormmy({
       phone_number: extractPhone(jid),
       integration_id: this.resolveIntegrationId(jid),
       type: 'sticker',
-      media_base64: base64,
+      media_base64: buffer.toString('base64'),
     });
   }
 
@@ -345,15 +357,50 @@ export class FormmyWhatsAppChannel implements Channel {
     filename: string,
     caption: string,
   ): Promise<void> {
-    const buffer = fs.readFileSync(filePath);
-    const base64 = buffer.toString('base64');
+    const buffer = readNonEmptyFile(filePath, 'document');
     await this.postToFormmy({
       phone_number: extractPhone(jid),
       integration_id: this.resolveIntegrationId(jid),
       type: 'document',
-      media_base64: base64,
+      media_base64: buffer.toString('base64'),
       filename,
       caption,
+    });
+  }
+
+  // Tentative — pending Formmy bridge confirmation that `type: 'audio'` is
+  // accepted upstream (Meta Cloud API supports audio/ogg voice notes). Until
+  // confirmed, this method posts and surfaces the bridge's error if any.
+  async sendAudio(jid: string, filePath: string): Promise<void> {
+    const buffer = readNonEmptyFile(filePath, 'audio');
+    await this.postToFormmy({
+      phone_number: extractPhone(jid),
+      integration_id: this.resolveIntegrationId(jid),
+      type: 'audio',
+      media_base64: buffer.toString('base64'),
+    });
+  }
+
+  // Tentative — pending Formmy bridge confirmation that `type: 'reaction'`
+  // is accepted upstream (Meta Cloud API supports message reactions).
+  async sendReaction(
+    jid: string,
+    messageId: string | undefined,
+    emoji: string,
+  ): Promise<void> {
+    if (!messageId) {
+      logger.warn(
+        { jid, emoji },
+        '[formmy-whatsapp] sendReaction requires messageId, skipping',
+      );
+      return;
+    }
+    await this.postToFormmy({
+      phone_number: extractPhone(jid),
+      integration_id: this.resolveIntegrationId(jid),
+      type: 'reaction',
+      message_id: messageId,
+      emoji,
     });
   }
 
@@ -421,7 +468,11 @@ export class FormmyWhatsAppChannel implements Channel {
           fs.writeFileSync(path.join(attachDir, filename), buffer);
           const sizeKB = Math.round(buffer.length / 1024);
           const caption = media.caption || existingContent || '';
-          const docRef = `[Document: attachments/${filename} (${sizeKB}KB)]`;
+          const mime = media.mime_type || '';
+          const hint = unreadableDocumentHint(mime);
+          const docRef = hint
+            ? `[Document: attachments/${filename} (${sizeKB}KB, ${mime}) — ${hint}]`
+            : `[Document: attachments/${filename} (${sizeKB}KB${mime ? `, ${mime}` : ''})]`;
           return caption ? `${caption}\n\n${docRef}` : docRef;
         }
         case 'audio': {
@@ -635,6 +686,26 @@ function extFromMime(mime?: string): string {
     'application/msword': '.doc',
   };
   return map[mime] || '';
+}
+
+// Hint inserted into the inbound document placeholder when the public agent
+// has no parser for the format. The agent reads this hint and can prompt the
+// user for a supported format instead of asking generic "to what are you
+// saying yes". PDFs and plain text are intentionally absent — public template
+// can read those via Read tool over /workspace/group/attachments/.
+function unreadableDocumentHint(mime: string): string {
+  const office = [
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // xlsx
+    'application/vnd.ms-excel', // xls
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // docx
+    'application/msword', // doc
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation', // pptx
+    'application/vnd.ms-powerpoint', // ppt
+  ];
+  if (office.includes(mime)) {
+    return 'no puedo leer este formato directamente — pedile al usuario que lo mande como PDF o CSV';
+  }
+  return '';
 }
 
 // Self-register
