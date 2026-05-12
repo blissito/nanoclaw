@@ -13,7 +13,7 @@ export const BURST_WINDOW_MS = 5 * 60 * 1000;
 export const BURST_MAX_SPAWNS = 12;
 export const DAILY_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const DAILY_MAX_SPAWNS = 80;
-export const DAILY_MAX_INPUT_TOKENS = 300_000;
+export const DAILY_MAX_INPUT_TOKENS = 600_000;
 export const NOTIFY_COOLDOWN_MS = 5 * 60 * 1000;
 
 const spawnLog = new Map<string, number[]>();
@@ -119,7 +119,7 @@ export function formatRetryMessage(decision: RateLimitDecision): string {
   if (decision.reason === 'burst') {
     return `Vas muy rápido. Pausa unos minutos e intenta de nuevo en ~${human}.`;
   }
-  return `Llegaste al límite diario de mensajes. Vuelve a escribirme en ~${human}.`;
+  return `Por hoy ya cubrimos nuestro cupo de mensajes 🙏 Te respondo de nuevo en ~${human}. Si es urgente, déjame tu pregunta y la retomamos en cuanto vuelva a estar disponible.`;
 }
 
 export function _resetPublicRateLimitState(): void {
