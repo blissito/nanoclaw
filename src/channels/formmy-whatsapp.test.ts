@@ -204,6 +204,36 @@ describe('FormmyWhatsAppChannel.postToFormmy', () => {
     expect(sent.phone_number).toBe('5217712412825');
   });
 
+  it('rejects on 200 with wrapped Meta error (no retry)', async () => {
+    mock = await startMockServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: 'Meta API error',
+          details: {
+            error: {
+              message:
+                "(#132018) There's an issue with the parameters in your template",
+              code: 132018,
+              type: 'OAuthException',
+              error_data: {
+                messaging_product: 'whatsapp',
+                details: 'Either one of media ID or link must be present',
+              },
+              fbtrace_id: 'AfnSwB055AJnmwPdJvidqzM',
+            },
+          },
+        }),
+      );
+    });
+    const ch = makeChannel(mock.port);
+    await expect(ch.sendMessage('formmy_5215555', 'hola')).rejects.toThrow(
+      /132018/,
+    );
+    // Non-retryable: only one attempt
+    expect(mock.requests).toHaveLength(1);
+  });
+
   it('reuses keep-alive sockets across back-to-back calls', async () => {
     const remoteSockets = new Set<string>();
     mock = await startMockServer((req, res) => {

@@ -58,6 +58,45 @@ function isRetryableStatus(status: number): boolean {
   return status === 429 || status >= 500;
 }
 
+// Parse Formmy response bodies that wrap an upstream Meta error inside a 2xx.
+// Returns a short summary string when a wrapped error is found, else null.
+// Recognized shape:
+//   { "error": "Meta API error",
+//     "details": { "error": { "code": 132018, "message": "...",
+//                              "error_data": { "details": "..." } } } }
+// Also handles a top-level `error` field of any truthy shape as a defensive
+// fallback in case the bridge changes envelope keys.
+function extractWrappedError(body: string): string | null {
+  if (!body) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const top = parsed as { error?: unknown; details?: unknown };
+  if (!top.error) return null;
+  const innerHolder = top.details as { error?: unknown } | undefined;
+  const inner = innerHolder?.error as
+    | {
+        code?: unknown;
+        message?: unknown;
+        error_data?: { details?: unknown };
+      }
+    | undefined;
+  if (inner && typeof inner === 'object') {
+    const code = inner.code ?? '?';
+    const message = typeof inner.message === 'string' ? inner.message : '';
+    const sub =
+      typeof inner.error_data?.details === 'string'
+        ? inner.error_data.details
+        : '';
+    return `meta_code=${String(code)} message="${message}" details="${sub}"`;
+  }
+  return typeof top.error === 'string' ? top.error : JSON.stringify(top.error);
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -619,6 +658,24 @@ export class FormmyWhatsAppChannel implements Channel {
               .toString('utf8')
               .slice(0, bodyCap);
             if (status >= 200 && status < 300) {
+              // Formmy sometimes returns 200 with the upstream Meta error
+              // wrapped in the JSON body instead of propagating Meta's 4xx.
+              // Detect that so we don't tell the agent the message was
+              // delivered when Meta actually rejected it (e.g. error 132018
+              // "Either one of media ID or link must be present" for
+              // documents). Treated as non-retryable since the same bytes
+              // will produce the same Meta validation error.
+              const wrapped = extractWrappedError(body);
+              if (wrapped) {
+                const err = Object.assign(
+                  new Error(
+                    `[formmy-whatsapp] Callback 200 with wrapped error for type=${String(payloadType)}: ${wrapped}`,
+                  ),
+                  { status, retryable: false, body },
+                );
+                reject(err);
+                return;
+              }
               logger.info(
                 { status, type: String(payloadType), body },
                 '[formmy-whatsapp] Callback ok',
