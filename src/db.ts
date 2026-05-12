@@ -471,6 +471,25 @@ export function getMessagesSince(
     .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
 }
 
+/**
+ * True if any message in this chat has manual_mode=1 with timestamp > since.
+ * Used as an OUTPUT-TIME pause check in src/index.ts: when the agent finishes
+ * a turn that started before a coexistence pause was applied, suppress its
+ * outputs instead of dumping them on the customer after the operator took
+ * over. The spawn-time check in processGroupMessages catches new turns; this
+ * one catches in-flight turns whose outputs would arrive late.
+ */
+export function hasManualModeSince(chatJid: string, since: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT 1 FROM messages
+       WHERE chat_jid = ? AND manual_mode = 1 AND timestamp > ?
+       LIMIT 1`,
+    )
+    .get(chatJid, since) as { 1: number } | undefined;
+  return row !== undefined;
+}
+
 export function getMessageFromMe(messageId: string, chatJid: string): boolean {
   const row = db
     .prepare(

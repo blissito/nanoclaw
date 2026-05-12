@@ -45,6 +45,7 @@ import {
   getLastBotMessageTimestamp,
   getMessageFromMe,
   getMessagesSince,
+  hasManualModeSince,
   getNewMessages,
   getRouterState,
   initDatabase,
@@ -102,6 +103,18 @@ let lastAgentTimestamp: Record<string, string> = {};
 // Used to roll back if the container dies after piping.
 let cursorBeforePipe: Record<string, string> = {};
 let messageLoopRunning = false;
+
+// Per-chat output-suppression state for the current agent run. Two signals
+// suppress trailing text outputs that Claude tends to emit after tool calls:
+//   1. mcpOutbound > 0  → the agent already delivered the customer-facing
+//      message via send_message/send_image/etc; any further text is post-tool
+//      narration ("Listo ✅ ya le mandé...", "Todo listo, lead registrado...").
+//   2. runStartedAt set → re-query messages.db for manual_mode=1 rows since
+//      the agent run began. Catches the case where the operator took over
+//      mid-turn and the in-flight container's outputs would arrive late.
+// Reset at processGroupMessages start, incremented via IpcDeps callback.
+const agentRunOutbound: Record<string, number> = {};
+const agentRunStartedAt: Record<string, string> = {};
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
@@ -589,6 +602,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let outputSentToUser = false;
   let firstOutputSeen = false;
 
+  // Reset per-run output-suppression state. Track timestamp here so
+  // hasManualModeSince() can catch pauses applied while the agent is mid-turn.
+  agentRunStartedAt[chatJid] = new Date().toISOString();
+  agentRunOutbound[chatJid] = 0;
+
   const output = await runAgent(
     group,
     prompt,
@@ -627,7 +645,31 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           { group: group.name },
           `Agent output: ${raw.length} chars${isMetaNoResponse ? ' (filtered: no-response-needed)' : ''}`,
         );
-        if (text && !isMetaNoResponse) {
+        // Suppression checks (in order, cheapest first):
+        // a) The agent already delivered the customer-facing message via an
+        //    MCP outbound (send_message / send_image / etc) — any further
+        //    text in this run is post-tool narration. Drop it.
+        // b) Output-time coexistence re-check — pause may have been applied
+        //    AFTER spawn. Spawn-gate at L462 doesn't help if the agent is
+        //    already mid-turn. Re-query DB; if any manual_mode=1 since this
+        //    run started, drop ALL further outputs for this run.
+        const startedAt = agentRunStartedAt[chatJid];
+        const isPostMcpNarration = (agentRunOutbound[chatJid] || 0) > 0;
+        const pausedMidRun =
+          !!startedAt && hasManualModeSince(chatJid, startedAt);
+        if (text && !isMetaNoResponse && (isPostMcpNarration || pausedMidRun)) {
+          logger.info(
+            {
+              group: group.name,
+              chatJid,
+              reason: isPostMcpNarration
+                ? 'post-mcp-narration'
+                : 'paused-mid-run',
+              preview: text.slice(0, 120),
+            },
+            'Agent output suppressed',
+          );
+        } else if (text && !isMetaNoResponse) {
           if (isApiOutageError(text)) {
             await sendStandByImage(channel, chatJid, group.name, text);
           } else {
@@ -1722,6 +1764,9 @@ async function main(): Promise<void> {
         throw new Error(`JID ${jid} is not a Formmy/WABA JID`);
       }
       await formmyChannel.releaseCoexistence(jid);
+    },
+    notifyMcpOutboundSent: (jid) => {
+      agentRunOutbound[jid] = (agentRunOutbound[jid] || 0) + 1;
     },
     registeredGroups: () => registeredGroups,
     registerGroup,

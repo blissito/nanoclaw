@@ -53,6 +53,14 @@ export interface IpcDeps {
     name: string | undefined,
     address: string | undefined,
   ) => Promise<void>;
+  /**
+   * Signal that an outbound message/media was sent for this chat via the
+   * agent's MCP tools (send_message, send_image, etc.). The agent-run handler
+   * uses this to suppress trailing post-tool narration text outputs that
+   * Claude tends to emit ("Listo ✅ ya le mandé...", "Todo listo, lead
+   * registrado..."). Idempotent — fire on every successful outbound.
+   */
+  notifyMcpOutboundSent?: (jid: string) => void;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -180,6 +188,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
                   await deps.sendMessage(data.chatJid, data.text);
+                  deps.notifyMcpOutboundSent?.(data.chatJid);
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC message sent',
@@ -267,6 +276,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     );
                     const bytes = fileSizeOrUndef(absPath);
                     await deps.sendAudio(data.chatJid, absPath);
+                    deps.notifyMcpOutboundSent?.(data.chatJid);
                     logger.info(
                       {
                         chatJid: data.chatJid,
@@ -321,6 +331,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       absPath,
                       data.caption || '',
                     );
+                    deps.notifyMcpOutboundSent?.(data.chatJid);
                     logger.info(
                       {
                         chatJid: data.chatJid,
@@ -372,6 +383,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     );
                     const bytes = fileSizeOrUndef(absPath);
                     await deps.sendSticker(data.chatJid, absPath);
+                    deps.notifyMcpOutboundSent?.(data.chatJid);
                     logger.info(
                       {
                         chatJid: data.chatJid,
@@ -424,6 +436,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       options,
                       selectableCount,
                     );
+                    deps.notifyMcpOutboundSent?.(data.chatJid);
                     logger.info(
                       {
                         chatJid: data.chatJid,
@@ -458,6 +471,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     typeof data.name === 'string' ? data.name : undefined,
                     typeof data.address === 'string' ? data.address : undefined,
                   );
+                  deps.notifyMcpOutboundSent?.(data.chatJid);
                   logger.info(
                     {
                       chatJid: data.chatJid,
@@ -512,6 +526,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       data.originalName || data.filename,
                       data.caption || '',
                     );
+                    deps.notifyMcpOutboundSent?.(data.chatJid);
                     logger.info(
                       {
                         chatJid: data.chatJid,
@@ -642,6 +657,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       absPath,
                       data.caption || '',
                     );
+                    deps.notifyMcpOutboundSent?.(data.chatJid);
                     logger.info(
                       {
                         chatJid: data.chatJid,
