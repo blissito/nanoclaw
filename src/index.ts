@@ -110,6 +110,52 @@ let messageLoopRunning = false;
 // after the operator took over. Reset at processGroupMessages start.
 const agentRunStartedAt: Record<string, string> = {};
 
+// Per-chat count of MCP outbounds (send_message/image/document/audio/...)
+// delivered during the current agent run. When >0, the result handler runs a
+// narrow regex check on any trailing text — if it matches a known narration
+// pattern ("Le envié al cliente…", "lead registrado en Kommo…"), it is
+// dropped. Anything that doesn't match is delivered as-is so legitimate
+// post-MCP follow-ups (bank details, invoice fields) survive. Bumped via
+// IpcDeps.notifyMcpOutboundSent. Reset at processGroupMessages start.
+//
+// Why narrow regex instead of "drop all text after MCP outbound" (the
+// approach e483bd1 took): the broad rule killed Luis Ordoñez's
+// "transferencia OK, datos bancarios: Banamex…, para factura necesito RFC…"
+// follow-up on 2026-05-12, which was real customer-facing content sent after
+// a send_document. The narrow rule trips only on third-person/internal-tool
+// markers that don't appear in legit customer-facing text.
+const agentRunOutbound: Record<string, number> = {};
+
+// Patterns that mark a `result.result` text as post-tool narration when an
+// MCP outbound already landed in the same run. Keep narrow — anything that
+// is even ambiguously customer-facing should NOT match.
+//   - "le envié al cliente la foto"        → 3rd-person reference (Eloina case)
+//   - "ya le mandé la cotización"          → 3rd-person dative pronoun
+//   - "lead/registro … Kommo"              → internal CRM mention (Enrique case)
+//   - "esperando respuesta del cliente"    → 3rd-person waiting phrase
+//   - "ya quedé a esperar …"               → meta statement about agent state
+//   - "ya está en el chat"                → narration about a just-sent file
+//   - "nota de voz enviada"                → recap of just-sent audio
+// "ya está en el chat" is kept tight to avoid catching legit phrases like
+// "tu paquete ya está enviado" — only the specific "ya está … en el chat"
+// pattern is suppressed.
+const NARRATION_PATTERNS: readonly RegExp[] = [
+  /\ble (envi|mand|compart|pas)é al cliente\b/i,
+  /\bya le (envié|mandé|compartí|pasé)\b/i,
+  /\b(lead|registro)\b.*\bKommo\b/i,
+  /\besperando.*\b(respuesta del cliente|su respuesta)\b/i,
+  /\bya qued[ée] a?\s*esperar\b/i,
+  /\bya está.{0,30}\ben el chat\b/i,
+  /\bnota de voz (ya\s+)?enviad[oa]\b/i,
+];
+
+function matchedNarrationPattern(text: string): string | null {
+  for (const re of NARRATION_PATTERNS) {
+    if (re.test(text)) return re.source;
+  }
+  return null;
+}
+
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 let statusTracker: StatusTracker;
@@ -599,6 +645,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Capture run start so hasManualModeSince() can catch pauses applied
   // while the agent is mid-turn.
   agentRunStartedAt[chatJid] = new Date().toISOString();
+  // Reset per-run MCP outbound counter so the narration filter only fires
+  // for outbounds that landed in THIS run, not a previous one.
+  agentRunOutbound[chatJid] = 0;
 
   const output = await runAgent(
     group,
@@ -638,19 +687,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           { group: group.name },
           `Agent output: ${raw.length} chars${isMetaNoResponse ? ' (filtered: no-response-needed)' : ''}`,
         );
-        // Output-time coexistence re-check — pause may have been applied
-        // AFTER spawn. Spawn-gate at L462 doesn't help if the agent is
-        // already mid-turn. Re-query DB; if any manual_mode=1 since this
-        // run started, drop ALL further outputs for this run.
-        // Note: post-MCP narration ("Todo listo ✅ ya le mandé...") used to
-        // have its own regex-based filter here. Removed 2026-05-12 after
-        // false positives ate Luis Ordoñez's bank-details follow-up. We now
-        // rely on the prompt rule ("alto después de send_message") and
-        // accept the rare extra status bubble — false negatives in the
-        // suppressor are worse than false positives in the prompt.
+        // Suppression checks (cheapest first):
+        //   a) paused-mid-run: pause was applied AFTER spawn; spawn-gate at
+        //      L462 can't catch this. Re-query DB; if any manual_mode=1 since
+        //      this run started, drop ALL remaining outputs.
+        //   b) post-MCP narration: an MCP outbound already landed in this
+        //      run AND the trailing text matches a narration pattern (3rd-
+        //      person reference to "cliente", internal tool name like Kommo,
+        //      "ya está en el chat" recap, etc). Narrow on purpose — anything
+        //      that doesn't match passes through, so legitimate follow-ups
+        //      like Luis Ordoñez's bank-details continuation after a PDF
+        //      send_document are not affected. See agentRunOutbound docs.
         const startedAt = agentRunStartedAt[chatJid];
         const pausedMidRun =
           !!startedAt && hasManualModeSince(chatJid, startedAt);
+        const isPostMcp = (agentRunOutbound[chatJid] || 0) > 0;
+        const narrationMatch =
+          isPostMcp && text ? matchedNarrationPattern(text) : null;
         if (text && !isMetaNoResponse && pausedMidRun) {
           logger.info(
             {
@@ -658,6 +711,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
               chatJid,
               reason: 'paused-mid-run',
               preview: text.slice(0, 120),
+            },
+            'Agent output suppressed',
+          );
+        } else if (text && !isMetaNoResponse && narrationMatch) {
+          logger.info(
+            {
+              group: group.name,
+              chatJid,
+              reason: 'post-mcp-narration',
+              pattern: narrationMatch,
+              preview: text.slice(0, 200),
             },
             'Agent output suppressed',
           );
@@ -1756,6 +1820,9 @@ async function main(): Promise<void> {
         throw new Error(`JID ${jid} is not a Formmy/WABA JID`);
       }
       await formmyChannel.releaseCoexistence(jid);
+    },
+    notifyMcpOutboundSent: (jid) => {
+      agentRunOutbound[jid] = (agentRunOutbound[jid] || 0) + 1;
     },
     registeredGroups: () => registeredGroups,
     registerGroup,
