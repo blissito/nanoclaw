@@ -429,10 +429,13 @@ export class FormmyWhatsAppChannel implements Channel {
     groupFolder: string,
     existingContent: string,
   ): Promise<string> {
-    // Formmy bridge sends media as base64 inline (per their contract). We do
-    // NOT fetch `media.url` ourselves — that URL is Meta's media endpoint and
-    // requires the integration token, which Formmy holds. If only `url` is
-    // present, surface the gap so the bridge team can debug their forwarding.
+    // Formmy bridge delivers media one of two ways:
+    //   - `media_base64` inline (small payloads, no extra roundtrip), or
+    //   - `media.url` pointing at Formmy's own proxy
+    //     (e.g. https://formmy.app/api/v1/integrations/whatsapp/media/<id>?integration_id=<id>),
+    //     which fetches from Meta with the integration token on our behalf.
+    // Prefer base64 when present; otherwise fetch the proxy URL. We never hit
+    // Meta's CDN directly — that would 401 since Formmy holds the token.
     let buffer: Buffer;
     try {
       if (media.media_base64) {
@@ -448,24 +451,28 @@ export class FormmyWhatsAppChannel implements Channel {
           );
         }
       } else if (media.url) {
-        logger.warn(
-          {
-            type: media.type,
-            media_id: media.media_id,
-            url_host: (() => {
-              try {
-                return new URL(media.url).host;
-              } catch {
-                return 'invalid';
-              }
-            })(),
-          },
-          '[formmy-whatsapp] media.url received without media_base64 — Formmy bridge is expected to inline the file; not fetching url without auth',
+        const urlHost = (() => {
+          try {
+            return new URL(media.url).host;
+          } catch {
+            return 'invalid';
+          }
+        })();
+        logger.info(
+          { type: media.type, media_id: media.media_id, url_host: urlHost },
+          '[formmy-whatsapp] fetching media via Formmy proxy URL',
         );
-        return (
-          existingContent ||
-          `[Media: ${media.type} — bridge did not inline payload]`
-        );
+        buffer = await downloadFile(media.url);
+        if (buffer.length === 0) {
+          logger.warn(
+            { type: media.type, media_id: media.media_id, url_host: urlHost },
+            '[formmy-whatsapp] proxy fetch returned 0 bytes',
+          );
+          return (
+            existingContent ||
+            `[Media: ${media.type} — empty payload from proxy]`
+          );
+        }
       } else {
         logger.warn(
           { type: media.type, media_id: media.media_id },
