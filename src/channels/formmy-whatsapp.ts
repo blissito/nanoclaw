@@ -139,6 +139,7 @@ export class FormmyWhatsAppChannel implements Channel {
   private port: number;
   private secret: string;
   private callbackUrl: string;
+  private coexistenceReleaseUrl: string | null;
   private integrationId: string | null;
   private opts: ChannelOpts;
 
@@ -148,12 +149,14 @@ export class FormmyWhatsAppChannel implements Channel {
     secret: string,
     callbackUrl: string,
     integrationId: string | null,
+    coexistenceReleaseUrl: string | null,
   ) {
     this.opts = opts;
     this.port = port;
     this.secret = secret;
     this.callbackUrl = callbackUrl;
     this.integrationId = integrationId;
+    this.coexistenceReleaseUrl = coexistenceReleaseUrl;
   }
 
   async connect(): Promise<void> {
@@ -195,6 +198,7 @@ export class FormmyWhatsAppChannel implements Channel {
           group_folder,
           integration_id,
           manual_mode,
+          is_from_me,
           container_config,
         } = JSON.parse(body);
 
@@ -342,6 +346,11 @@ export class FormmyWhatsAppChannel implements Channel {
           content: finalContent,
           timestamp: new Date().toISOString(),
           manual_mode: manual_mode === true,
+          // Owner replied from their phone (Meta WABA coexistence): Formmy sets
+          // this when the message originated from the business phone, not the
+          // API. Keeps the conversation history coherent (operator turns enter
+          // as role:assistant via downstream filters in src/index.ts).
+          is_from_me: is_from_me === true,
         };
 
         // Deliver metadata for chat discovery
@@ -472,6 +481,26 @@ export class FormmyWhatsAppChannel implements Channel {
       message_id: messageId,
       emoji,
     });
+  }
+
+  // Coexistence (Meta WABA): clear the upstream 30-min manual_mode timer for
+  // this conversation. The timer lives on the Formmy bridge — we just signal a
+  // release. No local pause state is tracked. The endpoint URL must be set
+  // explicitly via FORMMY_COEXISTENCE_RELEASE_URL; if absent, this is a no-op
+  // that throws so the agent surfaces "feature not configured" to the user.
+  async releaseCoexistence(jid: string): Promise<void> {
+    if (!this.coexistenceReleaseUrl) {
+      throw new Error(
+        '[formmy-whatsapp] FORMMY_COEXISTENCE_RELEASE_URL not configured',
+      );
+    }
+    await this.postToFormmy(
+      {
+        phone_number: extractPhone(jid),
+        integration_id: this.resolveIntegrationId(jid),
+      },
+      this.coexistenceReleaseUrl,
+    );
   }
 
   isConnected(): boolean {
@@ -606,9 +635,12 @@ export class FormmyWhatsAppChannel implements Channel {
     }
   }
 
-  private async postToFormmy(payload: Record<string, unknown>): Promise<void> {
+  private async postToFormmy(
+    payload: Record<string, unknown>,
+    endpointUrl: string = this.callbackUrl,
+  ): Promise<void> {
     const data = JSON.stringify(payload);
-    const url = new URL(this.callbackUrl);
+    const url = new URL(endpointUrl);
     const isHttps = url.protocol === 'https:';
 
     let lastError: Error | null = null;
@@ -848,6 +880,11 @@ registerChannel(CHANNEL_NAME, (opts: ChannelOpts) => {
   // The env fallback only matters for outbound to JIDs without a mapping yet,
   // which shouldn't happen in normal flow.
   const integrationId = process.env.FORMMY_INTEGRATION_ID || null;
+  // Optional: Formmy endpoint to release the WABA coexistence (manual_mode)
+  // timer for a given conversation. When unset, the clear_coexistence_pause
+  // tool returns a clear "not configured" error instead of silently failing.
+  const coexistenceReleaseUrl =
+    process.env.FORMMY_COEXISTENCE_RELEASE_URL || null;
 
   if (!secret || !callbackUrl) {
     return null; // Credentials missing -- skip
@@ -859,5 +896,6 @@ registerChannel(CHANNEL_NAME, (opts: ChannelOpts) => {
     secret,
     callbackUrl,
     integrationId,
+    coexistenceReleaseUrl,
   );
 });

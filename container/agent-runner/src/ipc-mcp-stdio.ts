@@ -331,6 +331,43 @@ tool('messaging-admin',
   },
 );
 
+tool('messaging-admin',
+  'clear_coexistence_pause',
+  `Release the WABA coexistence pause (Meta human-takeover / Formmy manual_mode timer) for a specific 1:1 chat.
+
+When the human owner replies to a customer from their phone, Meta WABA marks the conversation as "human-handled" for 30 minutes — during that window NanoClaw skips agent responses. This tool tells the upstream bridge (Formmy) to clear that timer early so the agent resumes responding immediately.
+
+Use cases:
+- Owner intervened, resolved it, and wants the agent to take over again before 30 min pass.
+- Owner accidentally tapped reply and wants to undo the pause.
+
+The chat_jid must be a Formmy 1:1 JID like "formmy_<integration_id>_<phone>". Look up the JID from available_groups.json. Calling this for an unrelated tenant's chat is allowed but logged — only use it for chats your admin group is responsible for.
+
+Requires FORMMY_COEXISTENCE_RELEASE_URL to be configured on the host; otherwise this is a no-op that surfaces an error in host logs.`,
+  {
+    chat_jid: z
+      .string()
+      .describe('The Formmy 1:1 chat JID (e.g. "formmy_69cd57fc76b0bf8de81f7637_5217712412825")'),
+  },
+  async (args) => {
+    const data = {
+      type: 'clear_coexistence_pause',
+      chatJid: args.chat_jid,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+    writeIpcFile(MESSAGES_DIR, data);
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Coexistence pause release requested for ${args.chat_jid}. If Formmy is reachable and the release URL is configured, the agent will resume responding within a few seconds. If nothing changes, check NanoClaw host logs for "Coexistence pause release failed".`,
+        },
+      ],
+    };
+  },
+);
+
 tool('scheduling-self',
   'schedule_task',
   `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools.

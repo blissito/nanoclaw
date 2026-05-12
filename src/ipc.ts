@@ -65,6 +65,7 @@ export interface IpcDeps {
   ) => void;
   updateProfilePicture: (jid: string, filePath: string) => Promise<void>;
   updateGroupName: (jid: string, name: string) => Promise<void>;
+  releaseCoexistence: (jid: string) => Promise<void>;
   onTasksChanged: () => void;
   statusHeartbeat?: () => void;
   recoverPendingMessages?: () => void;
@@ -562,6 +563,22 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   { sourceGroup, chatJid: data.chatJid, name: data.name },
                   'Group name updated via IPC',
                 );
+              } else if (
+                data.type === 'clear_coexistence_pause' &&
+                data.chatJid
+              ) {
+                try {
+                  await deps.releaseCoexistence(data.chatJid);
+                  logger.info(
+                    { sourceGroup, chatJid: data.chatJid },
+                    'Coexistence pause release requested via IPC',
+                  );
+                } catch (err) {
+                  logger.warn(
+                    { err, sourceGroup, chatJid: data.chatJid },
+                    'Coexistence pause release failed',
+                  );
+                }
               } else if (data.type === 'track_video_gen') {
                 trackImageGeneration({
                   group_folder: sourceGroup,

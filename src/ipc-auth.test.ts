@@ -70,6 +70,7 @@ beforeEach(() => {
     writeGroupsSnapshot: () => {},
     updateProfilePicture: async () => {},
     updateGroupName: async () => {},
+    releaseCoexistence: async () => {},
     onTasksChanged: () => {},
   };
 });
