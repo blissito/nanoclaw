@@ -86,6 +86,7 @@ interface InboundMedia {
   type: 'image' | 'sticker' | 'document' | 'audio';
   media_id?: string;
   url?: string;
+  media_base64?: string;
   mime_type?: string;
   caption?: string;
   filename?: string;
@@ -428,17 +429,52 @@ export class FormmyWhatsAppChannel implements Channel {
     groupFolder: string,
     existingContent: string,
   ): Promise<string> {
-    const downloadUrl = media.url;
-    if (!downloadUrl) {
-      logger.warn(
-        { media_id: media.media_id },
-        '[formmy-whatsapp] No URL in media — cannot download (media_id only not supported)',
-      );
-      return existingContent || `[Media: ${media.type} — download URL missing]`;
-    }
-
+    // Formmy bridge sends media as base64 inline (per their contract). We do
+    // NOT fetch `media.url` ourselves — that URL is Meta's media endpoint and
+    // requires the integration token, which Formmy holds. If only `url` is
+    // present, surface the gap so the bridge team can debug their forwarding.
+    let buffer: Buffer;
     try {
-      const buffer = await downloadFile(downloadUrl);
+      if (media.media_base64) {
+        buffer = Buffer.from(media.media_base64, 'base64');
+        if (buffer.length === 0) {
+          logger.warn(
+            { type: media.type, media_id: media.media_id },
+            '[formmy-whatsapp] media_base64 decoded to 0 bytes',
+          );
+          return (
+            existingContent ||
+            `[Media: ${media.type} — empty payload from bridge]`
+          );
+        }
+      } else if (media.url) {
+        logger.warn(
+          {
+            type: media.type,
+            media_id: media.media_id,
+            url_host: (() => {
+              try {
+                return new URL(media.url).host;
+              } catch {
+                return 'invalid';
+              }
+            })(),
+          },
+          '[formmy-whatsapp] media.url received without media_base64 — Formmy bridge is expected to inline the file; not fetching url without auth',
+        );
+        return (
+          existingContent ||
+          `[Media: ${media.type} — bridge did not inline payload]`
+        );
+      } else {
+        logger.warn(
+          { type: media.type, media_id: media.media_id },
+          '[formmy-whatsapp] media has neither base64 nor url',
+        );
+        return (
+          existingContent || `[Media: ${media.type} — no payload from bridge]`
+        );
+      }
       const groupDir = path.join(GROUPS_DIR, groupFolder);
 
       switch (media.type) {
