@@ -203,9 +203,7 @@ function composeExtras(opts: {
     for (const c of opts.contacts) {
       const name = c.name || '(sin nombre)';
       const phones = (c.phones || []).join(', ');
-      bodyParts.push(
-        `[Contact: ${name}${phones ? ` · ${phones}` : ''}]`,
-      );
+      bodyParts.push(`[Contact: ${name}${phones ? ` · ${phones}` : ''}]`);
     }
   }
 
@@ -382,7 +380,8 @@ export class FormmyWhatsAppChannel implements Channel {
             try {
               if (
                 fs.existsSync(trainingClaudeMd) &&
-                (!fs.existsSync(targetClaudeMd) || fs.statSync(targetClaudeMd).size === 0)
+                (!fs.existsSync(targetClaudeMd) ||
+                  fs.statSync(targetClaudeMd).size === 0)
               ) {
                 fs.copyFileSync(trainingClaudeMd, targetClaudeMd);
               }
@@ -400,7 +399,10 @@ export class FormmyWhatsAppChannel implements Channel {
                 }
               }
             } catch (err) {
-              logger.warn({ err, folder: resolvedFolder }, '[formmy-whatsapp] failed to seed CLAUDE.md/bin from training');
+              logger.warn(
+                { err, folder: resolvedFolder },
+                '[formmy-whatsapp] failed to seed CLAUDE.md/bin from training',
+              );
             }
             setFormmyJidMapping(fullJid, resolvedFolder, integration_id);
             logger.info(

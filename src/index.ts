@@ -1781,10 +1781,7 @@ async function main(): Promise<void> {
   });
   queue.setOnTurnSuccess((groupJid) => {
     if (errorLoggedFor[groupJid]) {
-      logger.info(
-        { groupJid },
-        'Group recovered after error episode',
-      );
+      logger.info({ groupJid }, 'Group recovered after error episode');
       errorLoggedFor[groupJid] = false;
     }
   });
