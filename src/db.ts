@@ -233,6 +233,16 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* columns already exist */
   }
+
+  // WABA coexistence flag (Formmy manual_mode). Must persist + round-trip
+  // through SELECT so the message-loop skip in src/index.ts:462 can see it.
+  try {
+    database.exec(
+      `ALTER TABLE messages ADD COLUMN manual_mode INTEGER DEFAULT 0`,
+    );
+  } catch {
+    /* column already exists */
+  }
 }
 
 export function initDatabase(): void {
@@ -356,7 +366,7 @@ export function setLastGroupSync(): void {
  */
 export function storeMessage(msg: NewMessage): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, reply_to_message_id, reply_to_message_content, reply_to_sender_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, reply_to_message_id, reply_to_message_content, reply_to_sender_name, manual_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -369,6 +379,7 @@ export function storeMessage(msg: NewMessage): void {
     msg.reply_to_message_id ?? null,
     msg.reply_to_message_content ?? null,
     msg.reply_to_sender_name ?? null,
+    msg.manual_mode ? 1 : 0,
   );
 }
 
@@ -445,7 +456,8 @@ export function getMessagesSince(
   const sql = `
     SELECT * FROM (
       SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me,
-             reply_to_message_id, reply_to_message_content, reply_to_sender_name
+             reply_to_message_id, reply_to_message_content, reply_to_sender_name,
+             manual_mode
       FROM messages
       WHERE chat_jid = ? AND timestamp > ?
         AND is_bot_message = 0 AND content NOT LIKE ?
