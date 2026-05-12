@@ -459,15 +459,22 @@ export class FormmyWhatsAppChannel implements Channel {
     });
   }
 
-  // Tentative — pending Formmy bridge confirmation that `type: 'audio'` is
-  // accepted upstream (Meta Cloud API supports audio/ogg voice notes). Until
-  // confirmed, this method posts and surfaces the bridge's error if any.
+  // Outbound voice note. The Formmy bridge accepts type:'audio' as of
+  // 2026-05-12 (uploads base64 to Meta /<PHONE_NUMBER_ID>/media then sends
+  // {type:'audio', audio:{id:<media_id>}}). The explicit
+  // `audio/ogg; codecs=opus` mime hint tells Formmy to render as a native
+  // PTT (push-to-talk) bubble; without it the typeFallback ships plain
+  // audio/ogg and WhatsApp shows a regular audio attachment instead of the
+  // voice-note bubble. ElevenLabs is configured to output opus_48000_64
+  // upstream (container/skills-public/voice/text-to-speech), so the file
+  // really is opus — no need to transcode.
   async sendAudio(jid: string, filePath: string): Promise<void> {
     const buffer = readNonEmptyFile(filePath, 'audio');
     await this.postToFormmy({
       phone_number: extractPhone(jid),
       integration_id: this.resolveIntegrationId(jid),
       type: 'audio',
+      mime_type: 'audio/ogg; codecs=opus',
       media_base64: buffer.toString('base64'),
     });
   }
@@ -833,7 +840,8 @@ export function canonicalizeJid(
   const embeddedIntId = parts[0];
   const phone = parts.slice(1).join('_');
   const isOurs =
-    embeddedIntId === payloadIntegrationId || isKnownIntegrationId(embeddedIntId);
+    embeddedIntId === payloadIntegrationId ||
+    isKnownIntegrationId(embeddedIntId);
   if (!isOurs) return jid;
   return `formmy_${phone}@s.whatsapp.net`;
 }
