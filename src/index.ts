@@ -17,6 +17,7 @@ import {
 } from './config.js';
 import { NanoClawHandlers, startCredentialProxy } from './credential-proxy.js';
 import './channels/index.js';
+import { FormmyWhatsAppChannel } from './channels/formmy-whatsapp.js';
 import {
   getChannelFactory,
   getRegisteredChannelNames,
@@ -1706,16 +1707,21 @@ async function main(): Promise<void> {
       }
     },
     releaseCoexistence: async (jid) => {
-      const channel = findChannel(channels, jid);
-      if (!channel) {
-        throw new Error(`No channel owns JID: ${jid}`);
+      // Coexistence is a Formmy/WABA-specific concept (upstream bridge owns the
+      // manual_mode timer). The generic Channel interface intentionally does NOT
+      // know about it — native channels like Baileys, Telegram, Slack, Discord
+      // have no business with coexistence state. Resolve the Formmy channel by
+      // name and call its method directly.
+      const formmyChannel = channels.find(
+        (c): c is FormmyWhatsAppChannel => c.name === 'formmy-whatsapp',
+      );
+      if (!formmyChannel) {
+        throw new Error('Formmy channel not connected — cannot release pause');
       }
-      if (!channel.releaseCoexistence) {
-        throw new Error(
-          `Channel ${channel.name} does not support coexistence release`,
-        );
+      if (!formmyChannel.ownsJid(jid)) {
+        throw new Error(`JID ${jid} is not a Formmy/WABA JID`);
       }
-      await channel.releaseCoexistence(jid);
+      await formmyChannel.releaseCoexistence(jid);
     },
     registeredGroups: () => registeredGroups,
     registerGroup,
