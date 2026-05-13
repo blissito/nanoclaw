@@ -24,7 +24,6 @@ import path from 'path';
 import { FORMMY_PUBLIC_TEMPLATE, GROUPS_DIR } from '../config.js';
 import {
   clearChatPauseUntil,
-  createTask,
   getFormmyIntegrationId,
   isKnownIntegrationId,
   registerFormmyUserGroup,
@@ -267,33 +266,45 @@ export class FormmyWhatsAppChannel implements Channel {
             res.end(`No registered group for jid ${fullJid}`);
             return;
           }
-          const now = new Date().toISOString();
-          const taskId = `trigger-reply-${Date.now()}-${Math.random()
-            .toString(36)
-            .slice(2, 8)}`;
-          const promptText =
-            (typeof prompt === 'string' && prompt.trim().length > 0
+
+          // Wake the agent through the SAME entry point as a real customer
+          // inbound. We synthesize a NewMessage that looks like the operator
+          // wrote in the chat from the Formmy dashboard. onMessage stores it
+          // and the message loop (POLL_INTERVAL=2s) picks it up and runs
+          // processGroupMessages, which gives the agent her full session
+          // memory + recent chat history + normal output filters (<internal>
+          // strip, isMetaNoResponse, narration). No scheduled_tasks, no
+          // bespoke auto-relay path, no scratchpad leakage.
+          const operatorPrompt =
+            typeof prompt === 'string' && prompt.trim().length > 0
               ? prompt.trim()
-              : '[Operador desde dashboard] Retoma esta conversación con el cliente: revisa el último estado, decide si hay algo que comunicar o cerrar, y responde según corresponda.') +
-            '\n\nIMPORTANTE: en este canal NADA llega al cliente si no llamas explícitamente a mcp__nanoclaw__send_message. Todo mensaje al cliente debe pasar por ese tool, sin excepción.';
-          createTask({
-            id: taskId,
-            group_folder: group.folder,
+              : '[Operador desde dashboard] Activación de turno: revisa el hilo y decide si hay algo pendiente para el cliente. Si no hay nada que responder, no contestes.';
+          const nowIso = new Date().toISOString();
+          const syntheticMessage: NewMessage = {
+            id: `operator-nudge-${Date.now()}-${Math.random()
+              .toString(36)
+              .slice(2, 8)}`,
             chat_jid: fullJid,
-            prompt: promptText,
-            schedule_type: 'once',
-            schedule_value: '',
-            context_mode: 'group',
-            next_run: now,
-            status: 'active',
-            created_at: now,
-          });
+            sender: 'operator@dashboard',
+            sender_name: 'Operador',
+            content: operatorPrompt,
+            timestamp: nowIso,
+            is_from_me: false,
+            is_bot_message: false,
+          };
+          this.opts.onMessage(fullJid, syntheticMessage);
           logger.info(
-            { taskId, jid: fullJid, folder: group.folder },
-            '[formmy-whatsapp] Operator trigger-reply queued',
+            { jid: fullJid, folder: group.folder, msgId: syntheticMessage.id },
+            '[formmy-whatsapp] Operator trigger-reply injected as inbound',
           );
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, taskId, folder: group.folder }));
+          res.end(
+            JSON.stringify({
+              ok: true,
+              messageId: syntheticMessage.id,
+              folder: group.folder,
+            }),
+          );
         } catch (err) {
           logger.error({ err }, '[formmy-whatsapp] trigger-reply failed');
           res.writeHead(500);
