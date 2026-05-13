@@ -463,7 +463,7 @@ tool('create',
 
 tool('create',
   'upload_file_to_lead',
-  'Upload a file from the agent filesystem into Kommo Drive AND associate it to the lead — appears under the lead\'s "Archivos" tab with audit metadata. Use this (not attach_file_to_lead) when the file must live inside Kommo. Flow: POST drive-g.kommo.com/v1.0/sessions → POST upload_url with bytes → POST /api/v4/leads/{id}/files with the returned uuid. Tenancy: only leads owned by this conversation are touchable.',
+  'Upload a file from the agent filesystem into Kommo Drive AND associate it to the lead — appears under the lead\'s "Archivos" tab with audit metadata. Use this (not attach_file_to_lead) when the file must live inside Kommo. Flow: POST drive-g.kommo.com/v1.0/sessions → POST upload_url with bytes → PUT /api/v4/leads/{id}/files with the returned uuid. Tenancy: only leads owned by this conversation are touchable.',
   {
     lead_id: z.number().int().describe('Kommo lead id'),
     file_path: z.string().min(1).describe('Absolute path to the file inside the container, e.g. /tmp/cot-260513-001.pdf'),
@@ -542,10 +542,12 @@ tool('create',
     }
 
     // Step 3 — associate the uuid with the lead.
-    // NOTE: method is POST, not PUT. PUT silently returns nothing (looks like
-    // success with curl -s) but never wires the file to the lead.
+    // NOTE: method is PUT. Kommo responds HTTP 202 Accepted with an empty
+    // body (the association is processed async server-side; the GET on
+    // /api/v4/leads/{id}/files reflects it once processed). Confirmed via
+    // smoke test 2026-05-13. POST returns 405 Method Not Allowed.
     return toToolResult(
-      await kommo.post(`/api/v4/leads/${lead_id}/files`, [{ file_uuid: upload.uuid }]),
+      await kommo.put(`/api/v4/leads/${lead_id}/files`, [{ file_uuid: upload.uuid }]),
     );
   },
 );
