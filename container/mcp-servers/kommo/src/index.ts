@@ -8,6 +8,8 @@
  */
 
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { basename, extname } from 'node:path';
 
 import { McpServer, ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ZodRawShape } from 'zod';
@@ -408,13 +410,34 @@ tool('scoped-mutate',
 
 // ─── ATTACHMENTS ─────────────────────────────────────────────────────────────
 //
-// Kommo Drive uploads require multipart POST + bytes transfer + UUID linkage.
-// For agent use, the pragmatic shape is "log the file URL in the lead's note
-// timeline" — Kommo renders URLs as clickable links, the admin can preview /
-// download from there. This avoids the multi-step Drive flow and keeps the
-// tool surface small. If a customer later needs files INSIDE Kommo Drive
-// (offline access, audit-grade attachment metadata), upgrade these tools to
-// the full /api/v4/files + attachment-note flow.
+// Two shapes:
+//   1. attach_file_to_lead / attach_file_to_contact — log a public URL in the
+//      timeline as a note. Cheap, but the file lives outside Kommo (e.g. on
+//      EasyBits) so deleting the share link breaks the link.
+//   2. upload_file_to_lead — full Kommo Drive flow: session → binary upload →
+//      POST /api/v4/leads/{id}/files. File lives INSIDE Kommo Drive with
+//      audit-grade metadata and shows up under the lead's "Archivos" tab.
+
+const MIME_BY_EXT: Record<string, string> = {
+  '.pdf': 'application/pdf',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.txt': 'text/plain',
+  '.csv': 'text/csv',
+  '.json': 'application/json',
+  '.xml': 'application/xml',
+  '.zip': 'application/zip',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+};
+function guessMime(name: string): string {
+  return MIME_BY_EXT[extname(name).toLowerCase()] ?? 'application/octet-stream';
+}
 
 tool('create',
   'attach_file_to_lead',
@@ -434,6 +457,95 @@ tool('create',
       await kommo.post(`/api/v4/leads/${lead_id}/notes`, [
         { note_type: 'common', params: { text } },
       ]),
+    );
+  },
+);
+
+tool('create',
+  'upload_file_to_lead',
+  'Upload a file from the agent filesystem into Kommo Drive AND associate it to the lead — appears under the lead\'s "Archivos" tab with audit metadata. Use this (not attach_file_to_lead) when the file must live inside Kommo. Flow: POST drive-g.kommo.com/v1.0/sessions → POST upload_url with bytes → POST /api/v4/leads/{id}/files with the returned uuid. Tenancy: only leads owned by this conversation are touchable.',
+  {
+    lead_id: z.number().int().describe('Kommo lead id'),
+    file_path: z.string().min(1).describe('Absolute path to the file inside the container, e.g. /tmp/cot-260513-001.pdf'),
+    file_name: z.string().min(1).optional().describe('Display name in Kommo. Defaults to basename(file_path).'),
+    content_type: z.string().min(1).optional().describe('MIME type, e.g. application/pdf. Auto-detected from extension if omitted.'),
+  },
+  async ({ lead_id, file_path, file_name, content_type }) => {
+    await verifyLeadOwnership(lead_id);
+
+    const token = process.env.KOMMO_ACCESS_TOKEN;
+    if (!token) {
+      return toToolResult({ ok: false, status: 0, title: 'Config error', detail: 'KOMMO_ACCESS_TOKEN not set' });
+    }
+
+    let buf: Buffer;
+    try {
+      buf = await readFile(file_path);
+    } catch (err) {
+      return toToolResult({
+        ok: false,
+        status: 0,
+        title: 'File read failed',
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
+    const name = file_name ?? basename(file_path);
+    const ctype = content_type ?? guessMime(name);
+
+    // Step 1 — create Drive session
+    const sessionRes = await fetch('https://drive-g.kommo.com/v1.0/sessions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        file_name: name,
+        file_size: buf.length,
+        content_type: ctype,
+        with_preview: false,
+      }),
+    });
+    if (!sessionRes.ok) {
+      return toToolResult({
+        ok: false,
+        status: sessionRes.status,
+        title: 'Kommo Drive session failed',
+        detail: (await sessionRes.text()).slice(0, 500),
+      });
+    }
+    const session = (await sessionRes.json()) as { upload_url?: string };
+    if (!session.upload_url) {
+      return toToolResult({ ok: false, status: 0, title: 'Drive session response missing upload_url', detail: JSON.stringify(session).slice(0, 500) });
+    }
+
+    // Step 2 — upload binary to the pre-signed URL
+    // Node's undici fetch accepts Buffer/Uint8Array bodies at runtime, but the
+    // DOM lib types only declare BodyInit (Blob/string/FormData/...). Cast to
+    // satisfy the type-checker; the runtime is fine.
+    const upRes = await fetch(session.upload_url, {
+      method: 'POST',
+      headers: { 'Content-Type': ctype },
+      body: buf as unknown as BodyInit,
+    });
+    if (!upRes.ok) {
+      return toToolResult({
+        ok: false,
+        status: upRes.status,
+        title: 'Kommo Drive binary upload failed',
+        detail: (await upRes.text()).slice(0, 500),
+      });
+    }
+    const upload = (await upRes.json()) as { uuid?: string };
+    if (!upload.uuid) {
+      return toToolResult({ ok: false, status: 0, title: 'Drive upload response missing uuid', detail: JSON.stringify(upload).slice(0, 500) });
+    }
+
+    // Step 3 — associate the uuid with the lead.
+    // NOTE: method is POST, not PUT. PUT silently returns nothing (looks like
+    // success with curl -s) but never wires the file to the lead.
+    return toToolResult(
+      await kommo.post(`/api/v4/leads/${lead_id}/files`, [{ file_uuid: upload.uuid }]),
     );
   },
 );
