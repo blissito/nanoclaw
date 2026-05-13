@@ -24,6 +24,7 @@ import path from 'path';
 import { FORMMY_PUBLIC_TEMPLATE, GROUPS_DIR } from '../config.js';
 import {
   clearChatPauseUntil,
+  createTask,
   getFormmyIntegrationId,
   isKnownIntegrationId,
   registerFormmyUserGroup,
@@ -219,17 +220,83 @@ export class FormmyWhatsAppChannel implements Channel {
         return;
       }
 
-      if (req.method !== 'POST' || req.url !== '/message') {
+      if (
+        req.method !== 'POST' ||
+        (req.url !== '/message' && req.url !== '/trigger-reply')
+      ) {
         res.writeHead(404);
         res.end('Not found');
         return;
       }
 
-      // Auth check
+      // Auth check (shared by /message and /trigger-reply — same Bearer secret)
       const auth = req.headers.authorization;
       if (auth !== `Bearer ${this.secret}`) {
         res.writeHead(401);
         res.end('Unauthorized');
+        return;
+      }
+
+      // Operator-initiated wake-up: dashboard "pedir respuesta" button posts
+      // here so Sofi/agent gets a chance to react when the customer hasn't
+      // sent anything new but state has changed off-band (e.g. price loaded
+      // into the catalog DB). Mirrors the manual scheduled_tasks INSERT we
+      // used during the 2026-05-13 incident.
+      if (req.url === '/trigger-reply') {
+        try {
+          const body = await readBody(req);
+          const parsed = JSON.parse(body);
+          const { jid, integration_id, prompt } = parsed as {
+            jid?: string;
+            integration_id?: string;
+            prompt?: string;
+          };
+          if (!jid) {
+            res.writeHead(400);
+            res.end('Missing jid');
+            return;
+          }
+          const rawJid = jid.startsWith(JID_PREFIX) ? jid : `${JID_PREFIX}${jid}`;
+          const fullJid = canonicalizeJid(rawJid, integration_id);
+          const groups = this.opts.registeredGroups();
+          const group = groups[fullJid];
+          if (!group) {
+            res.writeHead(404);
+            res.end(`No registered group for jid ${fullJid}`);
+            return;
+          }
+          const now = new Date().toISOString();
+          const taskId = `trigger-reply-${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2, 8)}`;
+          const promptText =
+            (typeof prompt === 'string' && prompt.trim().length > 0
+              ? prompt.trim()
+              : '[Operador desde dashboard] Retoma esta conversación con el cliente: revisa el último estado, decide si hay algo que comunicar o cerrar, y responde según corresponda.') +
+            '\n\nIMPORTANTE: en este canal NADA llega al cliente si no llamas explícitamente a mcp__nanoclaw__send_message. Todo mensaje al cliente debe pasar por ese tool, sin excepción.';
+          createTask({
+            id: taskId,
+            group_folder: group.folder,
+            chat_jid: fullJid,
+            prompt: promptText,
+            schedule_type: 'once',
+            schedule_value: '',
+            context_mode: 'group',
+            next_run: now,
+            status: 'active',
+            created_at: now,
+          });
+          logger.info(
+            { taskId, jid: fullJid, folder: group.folder },
+            '[formmy-whatsapp] Operator trigger-reply queued',
+          );
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, taskId, folder: group.folder }));
+        } catch (err) {
+          logger.error({ err }, '[formmy-whatsapp] trigger-reply failed');
+          res.writeHead(500);
+          res.end('Internal error');
+        }
         return;
       }
 
