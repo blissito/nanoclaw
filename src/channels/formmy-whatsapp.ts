@@ -136,8 +136,7 @@ function seedFormmyGroupFiles(folder: string): void {
   try {
     if (
       fs.existsSync(trainingClaudeMd) &&
-      (!fs.existsSync(targetClaudeMd) ||
-        fs.statSync(targetClaudeMd).size === 0)
+      (!fs.existsSync(targetClaudeMd) || fs.statSync(targetClaudeMd).size === 0)
     ) {
       fs.copyFileSync(trainingClaudeMd, targetClaudeMd);
     }
