@@ -611,7 +611,9 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
-      systemPrompt: globalClaudeMd || undefined,
+      systemPrompt: globalClaudeMd
+        ? { type: 'preset', preset: 'claude_code', append: globalClaudeMd }
+        : undefined,
       allowedTools: buildAllowedTools(containerInput, mcpServerPath),
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
