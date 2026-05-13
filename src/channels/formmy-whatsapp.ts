@@ -23,11 +23,18 @@ import path from 'path';
 
 import { FORMMY_PUBLIC_TEMPLATE, GROUPS_DIR } from '../config.js';
 import {
+  clearChatPauseUntil,
   getFormmyIntegrationId,
   isKnownIntegrationId,
   registerFormmyUserGroup,
+  setChatPauseUntil,
   setFormmyJidMapping,
 } from '../db.js';
+// clearChatPauseUntil + setChatPauseUntil are used by the inbound POST /message
+// handler (below), driven by Formmy's authoritative `paused_until` field on
+// each forwarded customer message. Do NOT call them from outbound /send
+// response parsing — that path was tried and abandoned: when the gate skips
+// inference, no /send happens, so the flag never clears (deadlock).
 import { logger } from '../logger.js';
 import { Channel, NewMessage } from '../types.js';
 import { registerChannel, ChannelOpts } from './registry.js';
@@ -241,6 +248,7 @@ export class FormmyWhatsAppChannel implements Channel {
           manual_mode,
           is_from_me,
           container_config,
+          paused_until,
         } = parsed;
 
         // Diagnostic: surface upstream payloads that the destructuring above
@@ -390,6 +398,23 @@ export class FormmyWhatsAppChannel implements Channel {
           CHANNEL_NAME,
           false,
         );
+
+        // Sync upstream pause state. Formmy is authoritative — it owns the
+        // operator-only handoff timer and knows on every inbound whether the
+        // bot should respond. We just mirror that into chats.paused_until so
+        // the spawn gate in src/index.ts can short-circuit before any LLM
+        // inference runs (saved ~$0.06+ per skipped run on sofi-0).
+        //
+        // Contract with Formmy webhook forward:
+        //   field absent     → backward compat, ignore (older Formmy)
+        //   typeof === string → active pause until that ISO timestamp
+        //   null             → no pause (operator unpaused or never paused);
+        //                      clear any stale flag we may have set earlier
+        if (typeof paused_until === 'string' && paused_until.length > 0) {
+          setChatPauseUntil(fullJid, paused_until);
+        } else if (paused_until === null) {
+          clearChatPauseUntil(fullJid);
+        }
 
         // Deliver message to NanoClaw message loop
         this.opts.onMessage(fullJid, message);

@@ -42,6 +42,7 @@ import {
   deleteTask,
   getTasksForGroup,
   getAllTasks,
+  getChatPauseUntil,
   getLastBotMessageTimestamp,
   getMessageFromMe,
   getMessagesSince,
@@ -527,6 +528,29 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       { group: group.name, chatJid },
       'Skipped (human takeover active — manual_mode)',
     );
+    return true;
+  }
+
+  // Upstream pause gate: Formmy is authoritative about operator handoff and
+  // ships the current `paused_until` on every inbound webhook (see
+  // src/channels/formmy-whatsapp.ts inbound handler). Short-circuit BEFORE
+  // spawning the agent — saves the full LLM inference (~$0.06+ per skipped
+  // run on sofi-0, dominated by cache-read tokens). When the operator
+  // unpauses upstream, the next inbound carries paused_until=null and the
+  // channel clears the flag; this gate then lets the message through
+  // normally. No deadlock: the source of truth is pushed on every message,
+  // not learned from outbound failures.
+  const pausedUntil = getChatPauseUntil(chatJid);
+  if (pausedUntil && new Date(pausedUntil) > new Date()) {
+    logger.info(
+      { group: group.name, chatJid, pausedUntil },
+      'Skipped (upstream pause active — no inference)',
+    );
+    // Advance the cursor so we don't re-process these messages when the
+    // pause lifts. Persistence already happened in the channel handler.
+    lastAgentTimestamp[chatJid] =
+      missedMessages[missedMessages.length - 1].timestamp;
+    saveState();
     return true;
   }
 

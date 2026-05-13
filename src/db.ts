@@ -243,6 +243,16 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+
+  // Upstream pause state (Formmy /send returned skipped:true). When set and
+  // not yet expired, src/index.ts skips agent spawn entirely — saves the full
+  // LLM inference per inbound during operator-only handoff. ISO timestamp;
+  // "9999-12-31T..." means manual_permanent (until operator unpauses upstream).
+  try {
+    database.exec(`ALTER TABLE chats ADD COLUMN paused_until TEXT`);
+  } catch {
+    /* column already exists */
+  }
 }
 
 export function initDatabase(): void {
@@ -358,6 +368,34 @@ export function setLastGroupSync(): void {
   db.prepare(
     `INSERT OR REPLACE INTO chats (jid, name, last_message_time) VALUES ('__group_sync__', '__group_sync__', ?)`,
   ).run(now);
+}
+
+/**
+ * Upstream pause state — set when Formmy /send returns {skipped:true} or when
+ * the inbound webhook signals an active pause. Used by src/index.ts to skip
+ * agent spawn entirely (no LLM inference) while the operator owns the chat.
+ *
+ * Returns the ISO timestamp the pause expires at, or null if not paused.
+ * Callers should treat past timestamps as "not paused" — the cleanup happens
+ * on the next successful send (clearChatPauseUntil) or on schema reads.
+ */
+export function getChatPauseUntil(chatJid: string): string | null {
+  const row = db
+    .prepare(`SELECT paused_until FROM chats WHERE jid = ?`)
+    .get(chatJid) as { paused_until: string | null } | undefined;
+  return row?.paused_until || null;
+}
+
+export function setChatPauseUntil(chatJid: string, until: string): void {
+  // Upsert: row may not exist yet if pause learned before first message stored.
+  db.prepare(
+    `INSERT INTO chats (jid, paused_until) VALUES (?, ?)
+     ON CONFLICT(jid) DO UPDATE SET paused_until = excluded.paused_until`,
+  ).run(chatJid, until);
+}
+
+export function clearChatPauseUntil(chatJid: string): void {
+  db.prepare(`UPDATE chats SET paused_until = NULL WHERE jid = ?`).run(chatJid);
 }
 
 /**
