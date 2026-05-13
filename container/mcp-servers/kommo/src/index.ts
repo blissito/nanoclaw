@@ -514,31 +514,82 @@ tool('create',
         detail: (await sessionRes.text()).slice(0, 500),
       });
     }
-    const session = (await sessionRes.json()) as { upload_url?: string };
+    const session = (await sessionRes.json()) as {
+      upload_url?: string;
+      max_part_size?: number;
+    };
     if (!session.upload_url) {
       return toToolResult({ ok: false, status: 0, title: 'Drive session response missing upload_url', detail: JSON.stringify(session).slice(0, 500) });
     }
 
-    // Step 2 — upload binary to the pre-signed URL
-    // Node's undici fetch accepts Buffer/Uint8Array bodies at runtime, but the
-    // DOM lib types only declare BodyInit (Blob/string/FormData/...). Cast to
-    // satisfy the type-checker; the runtime is fine.
-    const upRes = await fetch(session.upload_url, {
-      method: 'POST',
-      headers: { 'Content-Type': ctype },
-      body: buf as unknown as BodyInit,
-    });
-    if (!upRes.ok) {
+    // Step 2 — upload binary in chunks. Kommo Drive enforces a per-part
+    // size limit returned in `max_part_size` (observed: 524288 bytes / 512KB).
+    // Single-shot POST works only when the file fits in one part; larger
+    // files come back with HTTP 409 `ResourceConflict: part too big`. The
+    // protocol: each non-final part response carries a fresh `next_url`;
+    // the final part response carries the file metadata including `uuid`.
+    const partSize = session.max_part_size && session.max_part_size > 0
+      ? session.max_part_size
+      : buf.length;
+    let uploadUrl = session.upload_url;
+    let offset = 0;
+    let uploadUuid: string | undefined;
+    let partNum = 0;
+    // Safety bound — buf.length / partSize parts + small slack. Prevents
+    // an infinite loop if Kommo ever stops returning next_url before EOF.
+    const maxParts = Math.ceil(buf.length / Math.max(1, partSize)) + 2;
+    while (offset < buf.length) {
+      partNum += 1;
+      if (partNum > maxParts) {
+        return toToolResult({
+          ok: false,
+          status: 0,
+          title: 'Kommo Drive upload exceeded part budget',
+          detail: `Looped ${partNum} parts without final uuid (file size ${buf.length}, part size ${partSize})`,
+        });
+      }
+      const end = Math.min(offset + partSize, buf.length);
+      const chunk = buf.subarray(offset, end);
+      // undici accepts Buffer at runtime; the DOM BodyInit type doesn't cover it.
+      const upRes = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': ctype },
+        body: chunk as unknown as BodyInit,
+      });
+      if (!upRes.ok) {
+        return toToolResult({
+          ok: false,
+          status: upRes.status,
+          title: 'Kommo Drive binary upload failed',
+          detail: `part ${partNum}/${maxParts} bytes=${offset}-${end}: ${(await upRes.text()).slice(0, 400)}`,
+        });
+      }
+      const partBody = (await upRes.json()) as {
+        next_url?: string;
+        uuid?: string;
+      };
+      offset = end;
+      if (offset < buf.length) {
+        if (!partBody.next_url) {
+          return toToolResult({
+            ok: false,
+            status: 0,
+            title: 'Kommo Drive intermediate part missing next_url',
+            detail: `after part ${partNum} bytes=${offset}/${buf.length}: ${JSON.stringify(partBody).slice(0, 400)}`,
+          });
+        }
+        uploadUrl = partBody.next_url;
+      } else {
+        uploadUuid = partBody.uuid;
+      }
+    }
+    if (!uploadUuid) {
       return toToolResult({
         ok: false,
-        status: upRes.status,
-        title: 'Kommo Drive binary upload failed',
-        detail: (await upRes.text()).slice(0, 500),
+        status: 0,
+        title: 'Drive upload finished without uuid',
+        detail: `parts=${partNum}, file_size=${buf.length}, part_size=${partSize}`,
       });
-    }
-    const upload = (await upRes.json()) as { uuid?: string };
-    if (!upload.uuid) {
-      return toToolResult({ ok: false, status: 0, title: 'Drive upload response missing uuid', detail: JSON.stringify(upload).slice(0, 500) });
     }
 
     // Step 3 — associate the uuid with the lead.
@@ -547,7 +598,7 @@ tool('create',
     // /api/v4/leads/{id}/files reflects it once processed). Confirmed via
     // smoke test 2026-05-13. POST returns 405 Method Not Allowed.
     return toToolResult(
-      await kommo.put(`/api/v4/leads/${lead_id}/files`, [{ file_uuid: upload.uuid }]),
+      await kommo.put(`/api/v4/leads/${lead_id}/files`, [{ file_uuid: uploadUuid }]),
     );
   },
 );
