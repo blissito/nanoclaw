@@ -129,8 +129,7 @@ const agentRunOutbound: Record<string, number> = {};
 // Patterns that mark a `result.result` text as post-tool narration when an
 // MCP outbound already landed in the same run. Keep narrow — anything that
 // is even ambiguously customer-facing should NOT match.
-//   - "le envié al cliente la foto"        → 3rd-person reference (Eloina case)
-//   - "ya le mandé la cotización"          → 3rd-person dative pronoun
+//   - "le envié/mandé/pedí …"              → 3rd-person past-tense recap
 //   - "lead/registro … Kommo"              → internal CRM mention (Enrique case)
 //   - "esperando respuesta del cliente"    → 3rd-person waiting phrase
 //   - "ya quedé a esperar …"               → meta statement about agent state
@@ -139,9 +138,17 @@ const agentRunOutbound: Record<string, number> = {};
 // "ya está en el chat" is kept tight to avoid catching legit phrases like
 // "tu paquete ya está enviado" — only the specific "ya está … en el chat"
 // pattern is suppressed.
+//
+// The 3rd-person past-tense pattern was originally two narrower forms
+// ("le V-é al cliente" + "ya le V-é"). The "ya le V-é\b" variant was
+// effectively a no-op: JS regex `\b` is ASCII-only, so the trailing
+// boundary never matched after the accented vowel (é/í) — confirmed
+// 2026-05-13 when Sofi emitted "¡Listo! Le mandé los precios y le pedí
+// los datos para proceder con la cotización" and nothing caught it.
+// Broadened to an explicit verb list with NO trailing `\b` (alternation
+// is exhaustive enough). isPostMcp gate prevents misfires.
 const NARRATION_PATTERNS: readonly RegExp[] = [
-  /\ble (envi|mand|compart|pas)é al cliente\b/i,
-  /\bya le (envié|mandé|compartí|pasé)\b/i,
+  /\ble (envió|envié|mandó|mandé|compartió|compartí|pasó|pasé|pidió|pedí)/i,
   /\b(lead|registro)\b.*\bKommo\b/i,
   /\besperando.*\b(respuesta del cliente|su respuesta)\b/i,
   /\bya qued[ée] a?\s*esperar\b/i,
