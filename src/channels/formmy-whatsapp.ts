@@ -256,7 +256,9 @@ export class FormmyWhatsAppChannel implements Channel {
             res.end('Missing jid');
             return;
           }
-          const rawJid = jid.startsWith(JID_PREFIX) ? jid : `${JID_PREFIX}${jid}`;
+          const rawJid = jid.startsWith(JID_PREFIX)
+            ? jid
+            : `${JID_PREFIX}${jid}`;
           const fullJid = canonicalizeJid(rawJid, integration_id);
           const groups = this.opts.registeredGroups();
           const group = groups[fullJid];
