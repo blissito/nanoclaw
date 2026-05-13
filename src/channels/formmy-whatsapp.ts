@@ -23,7 +23,6 @@ import path from 'path';
 
 import { FORMMY_PUBLIC_TEMPLATE, GROUPS_DIR } from '../config.js';
 import {
-  getFormmyGroupFolder,
   getFormmyIntegrationId,
   isKnownIntegrationId,
   registerFormmyUserGroup,
@@ -120,6 +119,47 @@ function readNonEmptyFile(filePath: string, kind: string): Buffer {
 // but if Formmy ever changes format, replace any unsafe char with underscore.
 function sanitizeFolder(jid: string): string {
   return jid.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);
+}
+
+// Materialize a Formmy group folder on disk. Creates the directory, seeds
+// CLAUDE.md from groups/_training/formmy-public.md, and copies any
+// executable in groups/_training/bin/ into the group's bin/ with +x bits.
+// Idempotent — safe to call when the folder already has files. Failures
+// are warned (not thrown) so a missing training file doesn't block message
+// delivery; the group can still operate with an empty CLAUDE.md.
+function seedFormmyGroupFiles(folder: string): void {
+  const groupDir = path.join(GROUPS_DIR, folder);
+  fs.mkdirSync(groupDir, { recursive: true });
+  const trainingDir = path.join(GROUPS_DIR, '_training');
+  const trainingClaudeMd = path.join(trainingDir, 'formmy-public.md');
+  const targetClaudeMd = path.join(groupDir, 'CLAUDE.md');
+  try {
+    if (
+      fs.existsSync(trainingClaudeMd) &&
+      (!fs.existsSync(targetClaudeMd) ||
+        fs.statSync(targetClaudeMd).size === 0)
+    ) {
+      fs.copyFileSync(trainingClaudeMd, targetClaudeMd);
+    }
+    const trainingBin = path.join(trainingDir, 'bin');
+    if (fs.existsSync(trainingBin)) {
+      const targetBin = path.join(groupDir, 'bin');
+      fs.mkdirSync(targetBin, { recursive: true });
+      for (const f of fs.readdirSync(trainingBin)) {
+        const src = path.join(trainingBin, f);
+        const dst = path.join(targetBin, f);
+        if (!fs.existsSync(dst)) {
+          fs.copyFileSync(src, dst);
+          fs.chmodSync(dst, 0o755);
+        }
+      }
+    }
+  } catch (err) {
+    logger.warn(
+      { err, folder },
+      '[formmy-whatsapp] failed to seed CLAUDE.md/bin from training',
+    );
+  }
 }
 
 interface InboundMedia {
@@ -224,109 +264,70 @@ export class FormmyWhatsAppChannel implements Channel {
         const rawJid = jid.startsWith(JID_PREFIX) ? jid : `${JID_PREFIX}${jid}`;
         const fullJid = canonicalizeJid(rawJid, integration_id);
 
-        // Resolve group via mapping table.
-        // Three modes (priority order):
+        // Resolve group. Two modes:
         //   1. Cache hit on JID → use directly.
-        //   2. Explicit `group_folder` from Formmy → respect (shared lobby /
-        //      multi-user agent). Update mapping if it changed.
-        //   3. No mapping yet → auto-provision a per-user folder named after
-        //      the JID itself (already globally unique). Each WABA end-user
-        //      gets isolated CLAUDE.md, attachments, IPC, .claude/ session.
-        //      Inherits FORMMY_PUBLIC_TEMPLATE — sandboxed profile, no global,
-        //      restricted MCP toolsets, granular tool allowlist.
+        //   2. Cache miss → auto-provision a per-user folder named after the
+        //      JID. Each WABA end-user gets isolated CLAUDE.md, attachments,
+        //      IPC, .claude/ session.
+        //
+        // We deliberately do NOT honor the `group_folder` field that the
+        // Formmy bridge has historically sent. Folder ownership is a
+        // NanoClaw-side concern; letting Formmy declare folder strings
+        // leaked our naming convention into the bridge contract and caused
+        // the 2026-05-13 incident where 32 chats got mapped to a phantom
+        // u_<hash> folder Formmy invented and silently dropped every
+        // message (no registered_groups row → "no registered group found").
+        // The `formmy_jid_mapping` row is still written so outbound can
+        // resolve integration_id, but its group_folder column is no longer
+        // authoritative for inbound routing — `getFormmyGroupFolder` is
+        // gone from this resolver.
+        if (group_folder) {
+          logger.warn(
+            { jid: fullJid, group_folder },
+            '[formmy-whatsapp] explicit group_folder from Formmy is deprecated and ignored — folder ownership stays NanoClaw-side',
+          );
+        }
+
         const groups = this.opts.registeredGroups();
         let group: import('../types.js').RegisteredGroup | undefined =
           groups[fullJid];
 
         if (!group) {
-          const existingFolder = getFormmyGroupFolder(fullJid);
-          let resolvedFolder: string;
-
-          if (group_folder) {
-            // Explicit override from Formmy (shared/lobby case).
-            resolvedFolder = group_folder;
-            if (existingFolder !== group_folder) {
-              setFormmyJidMapping(fullJid, group_folder, integration_id);
-              logger.info(
-                { jid: fullJid, from: existingFolder, to: group_folder },
-                '[formmy-whatsapp] JID mapped to explicit group_folder',
-              );
-            }
-          } else if (existingFolder) {
-            // Already mapped from a previous webhook.
-            resolvedFolder = existingFolder;
-          } else {
-            // New WABA user — auto-provision isolated folder = JID.
-            // sanitizeFolder is defensive; the JID format already matches the
-            // group-folder regex, so this is a no-op in practice.
-            //
-            // Template selection: per-tenant container_config from Formmy
-            // (Agent.containerConfig, forwarded by handleChannelMessage) wins
-            // when present and well-shaped. Else fall back to the hardcoded
-            // FORMMY_PUBLIC_TEMPLATE — every Formmy customer gets the safe
-            // default for their first integration, even without explicit
-            // per-Agent config. The shape check is best-effort; if Formmy
-            // sends garbage, NanoClaw still has a working default.
-            resolvedFolder = sanitizeFolder(fullJid);
-            const isValidConfig =
-              container_config &&
-              typeof container_config === 'object' &&
-              !Array.isArray(container_config);
-            const template = isValidConfig
-              ? (container_config as typeof FORMMY_PUBLIC_TEMPLATE)
-              : FORMMY_PUBLIC_TEMPLATE;
-            const created = registerFormmyUserGroup(
-              fullJid,
-              resolvedFolder,
-              sender_name || 'WhatsApp User',
-              template,
-            );
-            // Materialize the folder on disk so attachments/CLAUDE.md can land here.
-            const groupDir = path.join(GROUPS_DIR, resolvedFolder);
-            fs.mkdirSync(groupDir, { recursive: true });
-            // Seed CLAUDE.md + bin/ from training template if present and target empty.
-            const trainingDir = path.join(GROUPS_DIR, '_training');
-            const trainingClaudeMd = path.join(trainingDir, 'formmy-public.md');
-            const targetClaudeMd = path.join(groupDir, 'CLAUDE.md');
-            try {
-              if (
-                fs.existsSync(trainingClaudeMd) &&
-                (!fs.existsSync(targetClaudeMd) ||
-                  fs.statSync(targetClaudeMd).size === 0)
-              ) {
-                fs.copyFileSync(trainingClaudeMd, targetClaudeMd);
-              }
-              const trainingBin = path.join(trainingDir, 'bin');
-              if (fs.existsSync(trainingBin)) {
-                const targetBin = path.join(groupDir, 'bin');
-                fs.mkdirSync(targetBin, { recursive: true });
-                for (const f of fs.readdirSync(trainingBin)) {
-                  const src = path.join(trainingBin, f);
-                  const dst = path.join(targetBin, f);
-                  if (!fs.existsSync(dst)) {
-                    fs.copyFileSync(src, dst);
-                    fs.chmodSync(dst, 0o755);
-                  }
-                }
-              }
-            } catch (err) {
-              logger.warn(
-                { err, folder: resolvedFolder },
-                '[formmy-whatsapp] failed to seed CLAUDE.md/bin from training',
-              );
-            }
-            setFormmyJidMapping(fullJid, resolvedFolder, integration_id);
-            logger.info(
-              { jid: fullJid, folder: resolvedFolder, created },
-              '[formmy-whatsapp] Auto-provisioned per-user public group',
-            );
-          }
+          // sanitizeFolder is defensive; the JID format already matches the
+          // group-folder regex, so this is a no-op in practice.
+          //
+          // Template selection: per-tenant container_config from Formmy
+          // (Agent.containerConfig, forwarded by handleChannelMessage) wins
+          // when present and well-shaped. Else fall back to the hardcoded
+          // FORMMY_PUBLIC_TEMPLATE — every Formmy customer gets the safe
+          // default for their first integration, even without explicit
+          // per-Agent config.
+          const isValidConfig =
+            container_config &&
+            typeof container_config === 'object' &&
+            !Array.isArray(container_config);
+          const template = isValidConfig
+            ? (container_config as typeof FORMMY_PUBLIC_TEMPLATE)
+            : FORMMY_PUBLIC_TEMPLATE;
+          const resolvedFolder = sanitizeFolder(fullJid);
+          const created = registerFormmyUserGroup(
+            fullJid,
+            resolvedFolder,
+            sender_name || 'WhatsApp User',
+            template,
+          );
+          seedFormmyGroupFiles(resolvedFolder);
+          setFormmyJidMapping(fullJid, resolvedFolder, integration_id);
+          logger.info(
+            { jid: fullJid, folder: resolvedFolder, created },
+            '[formmy-whatsapp] Auto-provisioned per-user public group',
+          );
 
           group = Object.values(groups).find(
             (g) => g.folder === resolvedFolder,
           );
-          // Cache miss is fine — index.ts:processGroupMessages re-loads from DB
-          // when it can't find the JID in the in-memory cache.
+          // Cache miss is fine — index.ts:processGroupMessages re-loads from
+          // DB when it can't find the JID in the in-memory cache.
         }
 
         const groupFolder = group?.folder;
