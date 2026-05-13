@@ -228,6 +228,7 @@ export class FormmyWhatsAppChannel implements Channel {
 
       try {
         const body = await readBody(req);
+        const parsed = JSON.parse(body);
         const {
           jid,
           sender,
@@ -240,7 +241,23 @@ export class FormmyWhatsAppChannel implements Channel {
           manual_mode,
           is_from_me,
           container_config,
-        } = JSON.parse(body);
+        } = parsed;
+
+        // Diagnostic: surface upstream payloads that the destructuring above
+        // would silently drop — generic "[Unsupported" placeholders and any
+        // extra fields (`unhandled`, `messageStubType`) Formmy may already be
+        // shipping. Fires only on anomalies; lets us deduce the real WhatsApp
+        // type without round-tripping with the bridge team.
+        if (
+          (typeof content === 'string' && content.startsWith('[Unsupported')) ||
+          parsed.unhandled !== undefined ||
+          parsed.messageStubType !== undefined
+        ) {
+          logger.warn(
+            { payload: parsed },
+            '[formmy-whatsapp] non-standard payload from upstream',
+          );
+        }
 
         if (!jid || (!content && !media)) {
           res.writeHead(400);
