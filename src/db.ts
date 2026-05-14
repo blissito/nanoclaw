@@ -233,6 +233,26 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* columns already exist */
   }
+
+  // WABA coexistence flag (Formmy manual_mode). Must persist + round-trip
+  // through SELECT so the message-loop skip in src/index.ts:462 can see it.
+  try {
+    database.exec(
+      `ALTER TABLE messages ADD COLUMN manual_mode INTEGER DEFAULT 0`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  // Upstream pause state (Formmy /send returned skipped:true). When set and
+  // not yet expired, src/index.ts skips agent spawn entirely — saves the full
+  // LLM inference per inbound during operator-only handoff. ISO timestamp;
+  // "9999-12-31T..." means manual_permanent (until operator unpauses upstream).
+  try {
+    database.exec(`ALTER TABLE chats ADD COLUMN paused_until TEXT`);
+  } catch {
+    /* column already exists */
+  }
 }
 
 export function initDatabase(): void {
@@ -351,12 +371,40 @@ export function setLastGroupSync(): void {
 }
 
 /**
+ * Upstream pause state — set when Formmy /send returns {skipped:true} or when
+ * the inbound webhook signals an active pause. Used by src/index.ts to skip
+ * agent spawn entirely (no LLM inference) while the operator owns the chat.
+ *
+ * Returns the ISO timestamp the pause expires at, or null if not paused.
+ * Callers should treat past timestamps as "not paused" — the cleanup happens
+ * on the next successful send (clearChatPauseUntil) or on schema reads.
+ */
+export function getChatPauseUntil(chatJid: string): string | null {
+  const row = db
+    .prepare(`SELECT paused_until FROM chats WHERE jid = ?`)
+    .get(chatJid) as { paused_until: string | null } | undefined;
+  return row?.paused_until || null;
+}
+
+export function setChatPauseUntil(chatJid: string, until: string): void {
+  // Upsert: row may not exist yet if pause learned before first message stored.
+  db.prepare(
+    `INSERT INTO chats (jid, paused_until) VALUES (?, ?)
+     ON CONFLICT(jid) DO UPDATE SET paused_until = excluded.paused_until`,
+  ).run(chatJid, until);
+}
+
+export function clearChatPauseUntil(chatJid: string): void {
+  db.prepare(`UPDATE chats SET paused_until = NULL WHERE jid = ?`).run(chatJid);
+}
+
+/**
  * Store a message with full content.
  * Only call this for registered groups where message history is needed.
  */
 export function storeMessage(msg: NewMessage): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, reply_to_message_id, reply_to_message_content, reply_to_sender_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, reply_to_message_id, reply_to_message_content, reply_to_sender_name, manual_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -369,6 +417,7 @@ export function storeMessage(msg: NewMessage): void {
     msg.reply_to_message_id ?? null,
     msg.reply_to_message_content ?? null,
     msg.reply_to_sender_name ?? null,
+    msg.manual_mode ? 1 : 0,
   );
 }
 
@@ -445,7 +494,8 @@ export function getMessagesSince(
   const sql = `
     SELECT * FROM (
       SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me,
-             reply_to_message_id, reply_to_message_content, reply_to_sender_name
+             reply_to_message_id, reply_to_message_content, reply_to_sender_name,
+             manual_mode
       FROM messages
       WHERE chat_jid = ? AND timestamp > ?
         AND is_bot_message = 0 AND content NOT LIKE ?
@@ -457,6 +507,25 @@ export function getMessagesSince(
   return db
     .prepare(sql)
     .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
+}
+
+/**
+ * True if any message in this chat has manual_mode=1 with timestamp > since.
+ * Used as an OUTPUT-TIME pause check in src/index.ts: when the agent finishes
+ * a turn that started before a coexistence pause was applied, suppress its
+ * outputs instead of dumping them on the customer after the operator took
+ * over. The spawn-time check in processGroupMessages catches new turns; this
+ * one catches in-flight turns whose outputs would arrive late.
+ */
+export function hasManualModeSince(chatJid: string, since: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT 1 FROM messages
+       WHERE chat_jid = ? AND manual_mode = 1 AND timestamp > ?
+       LIMIT 1`,
+    )
+    .get(chatJid, since) as { 1: number } | undefined;
+  return row !== undefined;
 }
 
 export function getMessageFromMe(messageId: string, chatJid: string): boolean {
@@ -1202,6 +1271,22 @@ export function getFormmyGroupFolder(jid: string): string | null {
 
 export function getFormmyIntegrationId(jid: string): string | null {
   return getFormmyJidMapping(jid)?.integration_id ?? null;
+}
+
+/**
+ * True if the integration_id is already known on this droplet (i.e. at least
+ * one JID has been mapped to it). Used by the channel to decide whether a JID
+ * of the form formmy_<int_id>_<phone> can be safely canonicalized to the
+ * legacy formmy_<phone>@s.whatsapp.net form — we only collapse when we're
+ * confident the integration belongs to us, never blindly.
+ */
+export function isKnownIntegrationId(integrationId: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT 1 FROM formmy_jid_mapping WHERE integration_id = ? LIMIT 1`,
+    )
+    .get(integrationId) as { 1: number } | undefined;
+  return row !== undefined;
 }
 
 export function setFormmyJidMapping(

@@ -8,6 +8,8 @@
  */
 
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { basename, extname } from 'node:path';
 
 import { McpServer, ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ZodRawShape } from 'zod';
@@ -408,13 +410,34 @@ tool('scoped-mutate',
 
 // ─── ATTACHMENTS ─────────────────────────────────────────────────────────────
 //
-// Kommo Drive uploads require multipart POST + bytes transfer + UUID linkage.
-// For agent use, the pragmatic shape is "log the file URL in the lead's note
-// timeline" — Kommo renders URLs as clickable links, the admin can preview /
-// download from there. This avoids the multi-step Drive flow and keeps the
-// tool surface small. If a customer later needs files INSIDE Kommo Drive
-// (offline access, audit-grade attachment metadata), upgrade these tools to
-// the full /api/v4/files + attachment-note flow.
+// Two shapes:
+//   1. attach_file_to_lead / attach_file_to_contact — log a public URL in the
+//      timeline as a note. Cheap, but the file lives outside Kommo (e.g. on
+//      EasyBits) so deleting the share link breaks the link.
+//   2. upload_file_to_lead — full Kommo Drive flow: session → binary upload →
+//      POST /api/v4/leads/{id}/files. File lives INSIDE Kommo Drive with
+//      audit-grade metadata and shows up under the lead's "Archivos" tab.
+
+const MIME_BY_EXT: Record<string, string> = {
+  '.pdf': 'application/pdf',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.txt': 'text/plain',
+  '.csv': 'text/csv',
+  '.json': 'application/json',
+  '.xml': 'application/xml',
+  '.zip': 'application/zip',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+};
+function guessMime(name: string): string {
+  return MIME_BY_EXT[extname(name).toLowerCase()] ?? 'application/octet-stream';
+}
 
 tool('create',
   'attach_file_to_lead',
@@ -434,6 +457,148 @@ tool('create',
       await kommo.post(`/api/v4/leads/${lead_id}/notes`, [
         { note_type: 'common', params: { text } },
       ]),
+    );
+  },
+);
+
+tool('create',
+  'upload_file_to_lead',
+  'Upload a file from the agent filesystem into Kommo Drive AND associate it to the lead — appears under the lead\'s "Archivos" tab with audit metadata. Use this (not attach_file_to_lead) when the file must live inside Kommo. Flow: POST drive-g.kommo.com/v1.0/sessions → POST upload_url with bytes → PUT /api/v4/leads/{id}/files with the returned uuid. Tenancy: only leads owned by this conversation are touchable.',
+  {
+    lead_id: z.number().int().describe('Kommo lead id'),
+    file_path: z.string().min(1).describe('Absolute path to the file inside the container, e.g. /tmp/cot-260513-001.pdf'),
+    file_name: z.string().min(1).optional().describe('Display name in Kommo. Defaults to basename(file_path).'),
+    content_type: z.string().min(1).optional().describe('MIME type, e.g. application/pdf. Auto-detected from extension if omitted.'),
+  },
+  async ({ lead_id, file_path, file_name, content_type }) => {
+    await verifyLeadOwnership(lead_id);
+
+    const token = process.env.KOMMO_ACCESS_TOKEN;
+    if (!token) {
+      return toToolResult({ ok: false, status: 0, title: 'Config error', detail: 'KOMMO_ACCESS_TOKEN not set' });
+    }
+
+    let buf: Buffer;
+    try {
+      buf = await readFile(file_path);
+    } catch (err) {
+      return toToolResult({
+        ok: false,
+        status: 0,
+        title: 'File read failed',
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
+    const name = file_name ?? basename(file_path);
+    const ctype = content_type ?? guessMime(name);
+
+    // Step 1 — create Drive session
+    const sessionRes = await fetch('https://drive-g.kommo.com/v1.0/sessions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        file_name: name,
+        file_size: buf.length,
+        content_type: ctype,
+        with_preview: false,
+      }),
+    });
+    if (!sessionRes.ok) {
+      return toToolResult({
+        ok: false,
+        status: sessionRes.status,
+        title: 'Kommo Drive session failed',
+        detail: (await sessionRes.text()).slice(0, 500),
+      });
+    }
+    const session = (await sessionRes.json()) as {
+      upload_url?: string;
+      max_part_size?: number;
+    };
+    if (!session.upload_url) {
+      return toToolResult({ ok: false, status: 0, title: 'Drive session response missing upload_url', detail: JSON.stringify(session).slice(0, 500) });
+    }
+
+    // Step 2 — upload binary in chunks. Kommo Drive enforces a per-part
+    // size limit returned in `max_part_size` (observed: 524288 bytes / 512KB).
+    // Single-shot POST works only when the file fits in one part; larger
+    // files come back with HTTP 409 `ResourceConflict: part too big`. The
+    // protocol: each non-final part response carries a fresh `next_url`;
+    // the final part response carries the file metadata including `uuid`.
+    const partSize = session.max_part_size && session.max_part_size > 0
+      ? session.max_part_size
+      : buf.length;
+    let uploadUrl = session.upload_url;
+    let offset = 0;
+    let uploadUuid: string | undefined;
+    let partNum = 0;
+    // Safety bound — buf.length / partSize parts + small slack. Prevents
+    // an infinite loop if Kommo ever stops returning next_url before EOF.
+    const maxParts = Math.ceil(buf.length / Math.max(1, partSize)) + 2;
+    while (offset < buf.length) {
+      partNum += 1;
+      if (partNum > maxParts) {
+        return toToolResult({
+          ok: false,
+          status: 0,
+          title: 'Kommo Drive upload exceeded part budget',
+          detail: `Looped ${partNum} parts without final uuid (file size ${buf.length}, part size ${partSize})`,
+        });
+      }
+      const end = Math.min(offset + partSize, buf.length);
+      const chunk = buf.subarray(offset, end);
+      // undici accepts Buffer at runtime; the DOM BodyInit type doesn't cover it.
+      const upRes = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': ctype },
+        body: chunk as unknown as BodyInit,
+      });
+      if (!upRes.ok) {
+        return toToolResult({
+          ok: false,
+          status: upRes.status,
+          title: 'Kommo Drive binary upload failed',
+          detail: `part ${partNum}/${maxParts} bytes=${offset}-${end}: ${(await upRes.text()).slice(0, 400)}`,
+        });
+      }
+      const partBody = (await upRes.json()) as {
+        next_url?: string;
+        uuid?: string;
+      };
+      offset = end;
+      if (offset < buf.length) {
+        if (!partBody.next_url) {
+          return toToolResult({
+            ok: false,
+            status: 0,
+            title: 'Kommo Drive intermediate part missing next_url',
+            detail: `after part ${partNum} bytes=${offset}/${buf.length}: ${JSON.stringify(partBody).slice(0, 400)}`,
+          });
+        }
+        uploadUrl = partBody.next_url;
+      } else {
+        uploadUuid = partBody.uuid;
+      }
+    }
+    if (!uploadUuid) {
+      return toToolResult({
+        ok: false,
+        status: 0,
+        title: 'Drive upload finished without uuid',
+        detail: `parts=${partNum}, file_size=${buf.length}, part_size=${partSize}`,
+      });
+    }
+
+    // Step 3 — associate the uuid with the lead.
+    // NOTE: method is PUT. Kommo responds HTTP 202 Accepted with an empty
+    // body (the association is processed async server-side; the GET on
+    // /api/v4/leads/{id}/files reflects it once processed). Confirmed via
+    // smoke test 2026-05-13. POST returns 405 Method Not Allowed.
+    return toToolResult(
+      await kommo.put(`/api/v4/leads/${lead_id}/files`, [{ file_uuid: uploadUuid }]),
     );
   },
 );

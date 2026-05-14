@@ -588,6 +588,28 @@ async function runQuery(
     globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
   }
 
+  // LLMs miscompute weekday from an ISO date alone, so inject the host's
+  // current date + day name + time of day in es-MX as ground truth. The
+  // hour matters because the agent picks greetings ("buenos días" vs
+  // "buenas tardes" vs "buenas noches") from this — without it the model
+  // defaults to "buenas tardes" regardless of actual time.
+  const nowMx = new Date();
+  const todayMx = new Intl.DateTimeFormat('es-MX', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    timeZone: 'America/Mexico_City',
+  }).format(nowMx);
+  const timeMx = new Intl.DateTimeFormat('es-MX', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'America/Mexico_City',
+  }).format(nowMx);
+  const dateNote = `\n\n## Fecha y hora actuales (host)\nHoy es **${todayMx}**, son las **${timeMx}** (America/Mexico_City). Úsalas como verdad absoluta para referencias a "hoy", "mañana", "ayer", al día de la semana y al saludo según la hora (buenos días <12:00, buenas tardes 12:00–18:59, buenas noches ≥19:00). No las recalcules a partir de la fecha ISO; si dudas, corre \`date\` en Bash.`;
+  const systemAppend = globalClaudeMd ? globalClaudeMd + dateNote : dateNote;
+
   // Discover additional directories mounted at /workspace/extra/*
   // These are passed to the SDK so their CLAUDE.md files are loaded automatically
   const extraDirs: string[] = [];
@@ -611,7 +633,9 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
-      systemPrompt: globalClaudeMd || undefined,
+      systemPrompt: globalClaudeMd
+        ? { type: 'preset', preset: 'claude_code', append: systemAppend }
+        : undefined,
       allowedTools: buildAllowedTools(containerInput, mcpServerPath),
       env: sdkEnv,
       permissionMode: 'bypassPermissions',

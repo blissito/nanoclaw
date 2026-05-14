@@ -17,6 +17,7 @@ import {
 } from './config.js';
 import { NanoClawHandlers, startCredentialProxy } from './credential-proxy.js';
 import './channels/index.js';
+import { FormmyWhatsAppChannel } from './channels/formmy-whatsapp.js';
 import {
   getChannelFactory,
   getRegisteredChannelNames,
@@ -41,9 +42,11 @@ import {
   deleteTask,
   getTasksForGroup,
   getAllTasks,
+  getChatPauseUntil,
   getLastBotMessageTimestamp,
   getMessageFromMe,
   getMessagesSince,
+  hasManualModeSince,
   getNewMessages,
   getRouterState,
   initDatabase,
@@ -102,6 +105,78 @@ let lastAgentTimestamp: Record<string, string> = {};
 let cursorBeforePipe: Record<string, string> = {};
 let messageLoopRunning = false;
 
+// Per-chat run-start timestamp. Used as the "since" bound for the output-time
+// coexistence re-check (hasManualModeSince) — catches pauses applied AFTER
+// spawn so an in-flight container's late outputs don't dump on the customer
+// after the operator took over. Reset at processGroupMessages start.
+const agentRunStartedAt: Record<string, string> = {};
+
+// Per-chat count of MCP outbounds (send_message/image/document/audio/...)
+// delivered during the current agent run. When >0, the result handler runs a
+// narrow regex check on any trailing text — if it matches a known narration
+// pattern ("Le envié al cliente…", "lead registrado en Kommo…"), it is
+// dropped. Anything that doesn't match is delivered as-is so legitimate
+// post-MCP follow-ups (bank details, invoice fields) survive. Bumped via
+// IpcDeps.notifyMcpOutboundSent. Reset at processGroupMessages start.
+//
+// Why narrow regex instead of "drop all text after MCP outbound" (the
+// approach e483bd1 took): the broad rule killed Luis Ordoñez's
+// "transferencia OK, datos bancarios: Banamex…, para factura necesito RFC…"
+// follow-up on 2026-05-12, which was real customer-facing content sent after
+// a send_document. The narrow rule trips only on third-person/internal-tool
+// markers that don't appear in legit customer-facing text.
+const agentRunOutbound: Record<string, number> = {};
+
+// Per-chat one-shot flag: when set, the next processGroupMessages run for that
+// chat will bypass the manual_mode skip (Phase 2 of coexistence handoff). The
+// flag is consumed (deleted) on read. Today the only writer is the
+// `clear_coexistence_pause` IPC handler — when the admin agent releases an
+// upstream pause, we want the worker chat to re-evaluate even if its pending
+// messages still carry stale manual_mode=true flags from the pre-release
+// webhooks. The agent then reads operator↔customer history (already in the
+// formatMessages() XML) and decides whether to follow up.
+const forceNextEvaluation = new Set<string>();
+export function forceEvaluationOnce(chatJid: string): void {
+  forceNextEvaluation.add(chatJid);
+}
+
+// Patterns that mark a `result.result` text as post-tool narration when an
+// MCP outbound already landed in the same run. Keep narrow — anything that
+// is even ambiguously customer-facing should NOT match.
+//   - "le envié/mandé/pedí …"              → 3rd-person past-tense recap
+//   - "lead/registro … Kommo"              → internal CRM mention (Enrique case)
+//   - "esperando respuesta del cliente"    → 3rd-person waiting phrase
+//   - "ya quedé a esperar …"               → meta statement about agent state
+//   - "ya está en el chat"                → narration about a just-sent file
+//   - "nota de voz enviada"                → recap of just-sent audio
+// "ya está en el chat" is kept tight to avoid catching legit phrases like
+// "tu paquete ya está enviado" — only the specific "ya está … en el chat"
+// pattern is suppressed.
+//
+// The 3rd-person past-tense pattern was originally two narrower forms
+// ("le V-é al cliente" + "ya le V-é"). The "ya le V-é\b" variant was
+// effectively a no-op: JS regex `\b` is ASCII-only, so the trailing
+// boundary never matched after the accented vowel (é/í) — confirmed
+// 2026-05-13 when Sofi emitted "¡Listo! Le mandé los precios y le pedí
+// los datos para proceder con la cotización" and nothing caught it.
+// Broadened to an explicit verb list with NO trailing `\b` (alternation
+// is exhaustive enough). isPostMcp gate prevents misfires.
+const NARRATION_PATTERNS: readonly RegExp[] = [
+  /\ble (envió|envié|mandó|mandé|compartió|compartí|pasó|pasé|pidió|pedí)/i,
+  /\b(lead|registro)\b.*\bKommo\b/i,
+  /\besperando.*\b(respuesta del cliente|su respuesta)\b/i,
+  /\bya qued[ée] a?\s*esperar\b/i,
+  /\bya está.{0,30}\ben el chat\b/i,
+  /\bnota de voz (ya\s+)?enviad[oa]\b/i,
+];
+
+function matchedNarrationPattern(text: string): string | null {
+  for (const re of NARRATION_PATTERNS) {
+    if (re.test(text)) return re.source;
+  }
+  return null;
+}
+
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 let statusTracker: StatusTracker;
@@ -127,7 +202,18 @@ function isApiOutageError(text: string): boolean {
     ) ||
     /adaptive thinking is not supported/i.test(text) ||
     /^\s*Connection error\.?\s*$/i.test(text) ||
-    /^\s*Bad Gateway\s*$/i.test(text)
+    /^\s*Bad Gateway\s*$/i.test(text) ||
+    // Anthropic API response artifacts leaking as chat text (defensive).
+    // Observed 2026-05-14 on sofi-0 after the coexistence stuck-skip fix:
+    // a chat with a bad image got API 400 "Could not process image" → the
+    // result.result string "API Error: 400 {...request_id:req_011Cb2h...}"
+    // somehow reached the user as just `"req_011Cb2hWujV..."}` (tail only).
+    // Root cause TBD. These guards catch any orphan Anthropic request_id
+    // pattern OR the JSON-tail fragment pattern, so the agent-runner output
+    // can never leak Anthropic API metadata to a customer chat.
+    /"request_id"\s*:\s*"req_[A-Za-z0-9]{15,}"/.test(text) ||
+    /^\s*"req_[A-Za-z0-9]{15,}"\s*}?\s*$/.test(text) ||
+    /Could not process image/i.test(text)
   );
 }
 
@@ -459,13 +545,100 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   );
   if (actionableMessages.length === 0) return true;
 
-  // Coexistence: skip response if human agent has taken over (Formmy manual_mode)
-  const hasManualMode = actionableMessages.some((m) => m.manual_mode);
-  if (hasManualMode) {
+  // Coexistence gate (consolidated). Spawn the agent only when there's a
+  // customer who is actually waiting: a customer message that is fresh,
+  // not paused by Meta coexistence, and not already answered by an
+  // operator/bot turn that came after it. Each rule maps to a real
+  // failure observed on sofi-0 on 2026-05-14 after the coexistence
+  // stuck-skip fix unblocked thousands of paused chats:
+  //   - no-customer:       chat had only operator activity since the
+  //                        last spawn → bot opened with "Buenos días X 😊"
+  //                        unprompted.
+  //   - manual_mode:       Meta marks the inbound while the owner is
+  //                        replying from the linked phone → bot races
+  //                        the operator.
+  //   - operator-replied:  operator/bot answered the customer's last
+  //                        input after it landed → re-evaluating just
+  //                        produces meta-narration ("Esta conversación
+  //                        ya está resuelta entre el Operador y X").
+  //   - stale:             customer's last input is hours/days old →
+  //                        re-engaging is intrusive.
+  // forceEval (set by clear_coexistence_pause) bypasses all four — admin
+  // explicit intent. Cursor advances on every skip so we don't re-scan
+  // these messages on subsequent ticks.
+  const forceEval = forceNextEvaluation.delete(chatJid);
+  if (!forceEval) {
+    const latestCustomerMsg = [...actionableMessages]
+      .reverse()
+      .find((m) => !m.is_from_me && !m.is_bot_message);
+    const latestOperatorMsg = [...actionableMessages]
+      .reverse()
+      .find((m) => m.is_from_me && !m.is_bot_message);
+    const latestMsg = actionableMessages[actionableMessages.length - 1];
+    const STALE_MS = 60 * 60 * 1000;
+
+    let skipReason: string | null = null;
+    let extra: Record<string, number> = {};
+    if (!latestCustomerMsg) {
+      skipReason = 'no pending customer message';
+    } else if (latestCustomerMsg.manual_mode === true) {
+      skipReason = 'human takeover active (manual_mode)';
+    } else if (
+      latestOperatorMsg &&
+      new Date(latestOperatorMsg.timestamp).getTime() >
+        new Date(latestCustomerMsg.timestamp).getTime()
+    ) {
+      skipReason = 'operator replied after customer';
+      extra.opLagMin = Math.round(
+        (new Date(latestOperatorMsg.timestamp).getTime() -
+          new Date(latestCustomerMsg.timestamp).getTime()) /
+          60000,
+      );
+    } else {
+      const custAgeMs =
+        Date.now() - new Date(latestCustomerMsg.timestamp).getTime();
+      if (custAgeMs > STALE_MS) {
+        skipReason = 'last customer message too old';
+        extra.custAgeMin = Math.round(custAgeMs / 60000);
+      }
+    }
+
+    if (skipReason) {
+      logger.info(
+        { group: group.name, chatJid, skipReason, ...extra },
+        'Skipped',
+      );
+      lastAgentTimestamp[chatJid] = latestMsg.timestamp;
+      saveState();
+      return true;
+    }
+  } else {
     logger.info(
       { group: group.name, chatJid },
-      'Skipped (human takeover active — manual_mode)',
+      'Force-evaluating chat (coexistence release)',
     );
+  }
+
+  // Upstream pause gate: Formmy is authoritative about operator handoff and
+  // ships the current `paused_until` on every inbound webhook (see
+  // src/channels/formmy-whatsapp.ts inbound handler). Short-circuit BEFORE
+  // spawning the agent — saves the full LLM inference (~$0.06+ per skipped
+  // run on sofi-0, dominated by cache-read tokens). When the operator
+  // unpauses upstream, the next inbound carries paused_until=null and the
+  // channel clears the flag; this gate then lets the message through
+  // normally. No deadlock: the source of truth is pushed on every message,
+  // not learned from outbound failures.
+  const pausedUntil = getChatPauseUntil(chatJid);
+  if (pausedUntil && new Date(pausedUntil) > new Date()) {
+    logger.info(
+      { group: group.name, chatJid, pausedUntil },
+      'Skipped (upstream pause active — no inference)',
+    );
+    // Advance the cursor so we don't re-process these messages when the
+    // pause lifts. Persistence already happened in the channel handler.
+    lastAgentTimestamp[chatJid] =
+      missedMessages[missedMessages.length - 1].timestamp;
+    saveState();
     return true;
   }
 
@@ -588,6 +761,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let outputSentToUser = false;
   let firstOutputSeen = false;
 
+  // Capture run start so hasManualModeSince() can catch pauses applied
+  // while the agent is mid-turn.
+  agentRunStartedAt[chatJid] = new Date().toISOString();
+  // Reset per-run MCP outbound counter so the narration filter only fires
+  // for outbounds that landed in THIS run, not a previous one.
+  agentRunOutbound[chatJid] = 0;
+
   const output = await runAgent(
     group,
     prompt,
@@ -618,15 +798,78 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           'i',
         );
         const text = cleaned.replace(prefixRe, '').trim();
-        // Filter out meta-responses where the agent says it won't respond
+        // Filter out meta-responses where the agent says it won't respond.
+        // The global CLAUDE.md tells agents to stay silent (wrap reasoning in
+        // <internal>), but they sometimes leak a parenthetical explanation
+        // anyway — observed in español on sofi-0 after the coexistence
+        // wake-up fix unstuck WABA chats: "(Sin acción — solo saludos…)",
+        // "(Esta conversación parece ser entre el equipo…)", "no requiere
+        // respuesta de mi parte", etc. The customer doesn't need to see
+        // these — drop them on the host side as defense-in-depth.
+        // Stripped of surrounding parens/quotes first so the patterns match
+        // both "(Sin acción…)" and bare "Sin acción…".
+        const metaCandidate = text.replace(/^[\s("']+|[\s)"']+$/g, '').trim();
         const isMetaNoResponse =
           /^no\s+response\s+(needed|required|necessary)\.?$/i.test(text) ||
-          /^(I don'?t need to|no need to|nothing to)\s+respond/i.test(text);
+          /^(I don'?t need to|no need to|nothing to)\s+respond/i.test(text) ||
+          /^sin\s+acci[oó]n\b/i.test(metaCandidate) ||
+          /\bno\s+requiere\s+respuesta\b/i.test(metaCandidate) ||
+          /\bno\s+(necesito|hace\s+falta|hay\s+que)\s+responder\b/i.test(
+            metaCandidate,
+          ) ||
+          /\besta\s+conversaci[oó]n\s+(parece|es)\s+(entre|del?)\s+(el\s+)?equipo\b/i.test(
+            metaCandidate,
+          ) ||
+          /\bquedo\s+(disponible|al\s+pendiente)\s+si\s+necesitan\b/i.test(
+            metaCandidate,
+          ) ||
+          /\bdecid[ií]\s+no\s+(responder|contestar)\b/i.test(metaCandidate) ||
+          /\b(me\s+quedo|prefiero)\s+(callad[oa]|en\s+silencio)\b/i.test(
+            metaCandidate,
+          );
         logger.info(
           { group: group.name },
           `Agent output: ${raw.length} chars${isMetaNoResponse ? ' (filtered: no-response-needed)' : ''}`,
         );
-        if (text && !isMetaNoResponse) {
+        // Suppression checks (cheapest first):
+        //   a) paused-mid-run: pause was applied AFTER spawn; spawn-gate at
+        //      L462 can't catch this. Re-query DB; if any manual_mode=1 since
+        //      this run started, drop ALL remaining outputs.
+        //   b) post-MCP narration: an MCP outbound already landed in this
+        //      run AND the trailing text matches a narration pattern (3rd-
+        //      person reference to "cliente", internal tool name like Kommo,
+        //      "ya está en el chat" recap, etc). Narrow on purpose — anything
+        //      that doesn't match passes through, so legitimate follow-ups
+        //      like Luis Ordoñez's bank-details continuation after a PDF
+        //      send_document are not affected. See agentRunOutbound docs.
+        const startedAt = agentRunStartedAt[chatJid];
+        const pausedMidRun =
+          !!startedAt && hasManualModeSince(chatJid, startedAt);
+        const isPostMcp = (agentRunOutbound[chatJid] || 0) > 0;
+        const narrationMatch =
+          isPostMcp && text ? matchedNarrationPattern(text) : null;
+        if (text && !isMetaNoResponse && pausedMidRun) {
+          logger.info(
+            {
+              group: group.name,
+              chatJid,
+              reason: 'paused-mid-run',
+              preview: text.slice(0, 120),
+            },
+            'Agent output suppressed',
+          );
+        } else if (text && !isMetaNoResponse && narrationMatch) {
+          logger.info(
+            {
+              group: group.name,
+              chatJid,
+              reason: 'post-mcp-narration',
+              pattern: narrationMatch,
+              preview: text.slice(0, 200),
+            },
+            'Agent output suppressed',
+          );
+        } else if (text && !isMetaNoResponse) {
           if (isApiOutageError(text)) {
             await sendStandByImage(channel, chatJid, group.name, text);
           } else {
@@ -1718,16 +1961,51 @@ async function main(): Promise<void> {
       }
     },
     releaseCoexistence: async (jid) => {
-      const channel = findChannel(channels, jid);
-      if (!channel) {
-        throw new Error(`No channel owns JID: ${jid}`);
+      // Coexistence is a Formmy/WABA-specific concept (upstream bridge owns the
+      // manual_mode timer). The generic Channel interface intentionally does NOT
+      // know about it — native channels like Baileys, Telegram, Slack, Discord
+      // have no business with coexistence state. Resolve the Formmy channel by
+      // name and call its method directly.
+      const formmyChannel = channels.find(
+        (c): c is FormmyWhatsAppChannel => c.name === 'formmy-whatsapp',
+      );
+      if (!formmyChannel) {
+        throw new Error('Formmy channel not connected — cannot release pause');
       }
-      if (!channel.releaseCoexistence) {
-        throw new Error(
-          `Channel ${channel.name} does not support coexistence release`,
-        );
+      if (!formmyChannel.ownsJid(jid)) {
+        throw new Error(`JID ${jid} is not a Formmy/WABA JID`);
       }
-      await channel.releaseCoexistence(jid);
+      await formmyChannel.releaseCoexistence(jid);
+    },
+    setConversationTag: async (jid, action, label, color, comment) => {
+      // Conversation tags live on the Formmy side (ConvoTag embedded in
+      // Conversation). Same dispatch rationale as releaseCoexistence: WABA-only
+      // feature, generic Channel interface doesn't carry it.
+      const formmyChannel = channels.find(
+        (c): c is FormmyWhatsAppChannel => c.name === 'formmy-whatsapp',
+      );
+      if (!formmyChannel) {
+        throw new Error('Formmy channel not connected — cannot set tag');
+      }
+      if (!formmyChannel.ownsJid(jid)) {
+        throw new Error(`JID ${jid} is not a Formmy/WABA JID`);
+      }
+      await formmyChannel.setConversationTag(
+        jid,
+        action,
+        label,
+        color,
+        comment,
+      );
+    },
+    notifyMcpOutboundSent: (jid) => {
+      agentRunOutbound[jid] = (agentRunOutbound[jid] || 0) + 1;
+    },
+    forceEvaluationOnce: (jid) => {
+      forceEvaluationOnce(jid);
+    },
+    enqueueMessageCheck: (jid) => {
+      queue.enqueueMessageCheck(jid);
     },
     registeredGroups: () => registeredGroups,
     registerGroup,

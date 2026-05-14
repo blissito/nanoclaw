@@ -15,7 +15,7 @@ function mapHint(status: number): string | undefined {
 }
 
 async function request<T>(
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   pathname: string,
   body?: unknown,
   attempt = 0,
@@ -85,6 +85,7 @@ function safeJson(text: string): unknown {
 export const kommo = {
   get: <T>(pathname: string) => request<T>('GET', pathname),
   post: <T>(pathname: string, body: unknown) => request<T>('POST', pathname, body),
+  put: <T>(pathname: string, body: unknown) => request<T>('PUT', pathname, body),
   patch: <T>(pathname: string, body: unknown) => request<T>('PATCH', pathname, body),
   delete: <T>(pathname: string) => request<T>('DELETE', pathname),
 };

@@ -23,11 +23,18 @@ import path from 'path';
 
 import { FORMMY_PUBLIC_TEMPLATE, GROUPS_DIR } from '../config.js';
 import {
-  getFormmyGroupFolder,
+  clearChatPauseUntil,
   getFormmyIntegrationId,
+  isKnownIntegrationId,
   registerFormmyUserGroup,
+  setChatPauseUntil,
   setFormmyJidMapping,
 } from '../db.js';
+// clearChatPauseUntil + setChatPauseUntil are used by the inbound POST /message
+// handler (below), driven by Formmy's authoritative `paused_until` field on
+// each forwarded customer message. Do NOT call them from outbound /send
+// response parsing — that path was tried and abandoned: when the gate skips
+// inference, no /send happens, so the flag never clears (deadlock).
 import { logger } from '../logger.js';
 import { transcribeAudioBuffer } from '../transcription.js';
 import { Channel, NewMessage } from '../types.js';
@@ -120,6 +127,46 @@ function readNonEmptyFile(filePath: string, kind: string): Buffer {
 // but if Formmy ever changes format, replace any unsafe char with underscore.
 function sanitizeFolder(jid: string): string {
   return jid.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);
+}
+
+// Materialize a Formmy group folder on disk. Creates the directory, seeds
+// CLAUDE.md from groups/_training/formmy-public.md, and copies any
+// executable in groups/_training/bin/ into the group's bin/ with +x bits.
+// Idempotent — safe to call when the folder already has files. Failures
+// are warned (not thrown) so a missing training file doesn't block message
+// delivery; the group can still operate with an empty CLAUDE.md.
+function seedFormmyGroupFiles(folder: string): void {
+  const groupDir = path.join(GROUPS_DIR, folder);
+  fs.mkdirSync(groupDir, { recursive: true });
+  const trainingDir = path.join(GROUPS_DIR, '_training');
+  const trainingClaudeMd = path.join(trainingDir, 'formmy-public.md');
+  const targetClaudeMd = path.join(groupDir, 'CLAUDE.md');
+  try {
+    if (
+      fs.existsSync(trainingClaudeMd) &&
+      (!fs.existsSync(targetClaudeMd) || fs.statSync(targetClaudeMd).size === 0)
+    ) {
+      fs.copyFileSync(trainingClaudeMd, targetClaudeMd);
+    }
+    const trainingBin = path.join(trainingDir, 'bin');
+    if (fs.existsSync(trainingBin)) {
+      const targetBin = path.join(groupDir, 'bin');
+      fs.mkdirSync(targetBin, { recursive: true });
+      for (const f of fs.readdirSync(trainingBin)) {
+        const src = path.join(trainingBin, f);
+        const dst = path.join(targetBin, f);
+        if (!fs.existsSync(dst)) {
+          fs.copyFileSync(src, dst);
+          fs.chmodSync(dst, 0o755);
+        }
+      }
+    }
+  } catch (err) {
+    logger.warn(
+      { err, folder },
+      '[formmy-whatsapp] failed to seed CLAUDE.md/bin from training',
+    );
+  }
 }
 
 interface InboundMedia {
@@ -232,6 +279,7 @@ export class FormmyWhatsAppChannel implements Channel {
   private secret: string;
   private callbackUrl: string;
   private coexistenceReleaseUrl: string | null;
+  private tagUrl: string | null;
   private integrationId: string | null;
   private opts: ChannelOpts;
 
@@ -242,6 +290,7 @@ export class FormmyWhatsAppChannel implements Channel {
     callbackUrl: string,
     integrationId: string | null,
     coexistenceReleaseUrl: string | null,
+    tagUrl: string | null,
   ) {
     this.opts = opts;
     this.port = port;
@@ -249,6 +298,7 @@ export class FormmyWhatsAppChannel implements Channel {
     this.callbackUrl = callbackUrl;
     this.integrationId = integrationId;
     this.coexistenceReleaseUrl = coexistenceReleaseUrl;
+    this.tagUrl = tagUrl;
   }
 
   async connect(): Promise<void> {
@@ -264,13 +314,16 @@ export class FormmyWhatsAppChannel implements Channel {
         return;
       }
 
-      if (req.method !== 'POST' || req.url !== '/message') {
+      if (
+        req.method !== 'POST' ||
+        (req.url !== '/message' && req.url !== '/trigger-reply')
+      ) {
         res.writeHead(404);
         res.end('Not found');
         return;
       }
 
-      // Auth check
+      // Auth check (shared by /message and /trigger-reply — same Bearer secret)
       const auth = req.headers.authorization;
       if (auth !== `Bearer ${this.secret}`) {
         res.writeHead(401);
@@ -278,8 +331,86 @@ export class FormmyWhatsAppChannel implements Channel {
         return;
       }
 
+      // Operator-initiated wake-up: dashboard "pedir respuesta" button posts
+      // here so Sofi/agent gets a chance to react when the customer hasn't
+      // sent anything new but state has changed off-band (e.g. price loaded
+      // into the catalog DB). Mirrors the manual scheduled_tasks INSERT we
+      // used during the 2026-05-13 incident.
+      if (req.url === '/trigger-reply') {
+        try {
+          const body = await readBody(req);
+          const parsed = JSON.parse(body);
+          const { jid, integration_id, prompt } = parsed as {
+            jid?: string;
+            integration_id?: string;
+            prompt?: string;
+          };
+          if (!jid) {
+            res.writeHead(400);
+            res.end('Missing jid');
+            return;
+          }
+          const rawJid = jid.startsWith(JID_PREFIX)
+            ? jid
+            : `${JID_PREFIX}${jid}`;
+          const fullJid = canonicalizeJid(rawJid, integration_id);
+          const groups = this.opts.registeredGroups();
+          const group = groups[fullJid];
+          if (!group) {
+            res.writeHead(404);
+            res.end(`No registered group for jid ${fullJid}`);
+            return;
+          }
+
+          // Wake the agent through the SAME entry point as a real customer
+          // inbound. We synthesize a NewMessage that looks like the operator
+          // wrote in the chat from the Formmy dashboard. onMessage stores it
+          // and the message loop (POLL_INTERVAL=2s) picks it up and runs
+          // processGroupMessages, which gives the agent her full session
+          // memory + recent chat history + normal output filters (<internal>
+          // strip, isMetaNoResponse, narration). No scheduled_tasks, no
+          // bespoke auto-relay path, no scratchpad leakage.
+          const operatorPrompt =
+            typeof prompt === 'string' && prompt.trim().length > 0
+              ? prompt.trim()
+              : '[Operador desde dashboard] Activación de turno: revisa el hilo y decide si hay algo pendiente para el cliente. Si no hay nada que responder, no contestes.';
+          const nowIso = new Date().toISOString();
+          const syntheticMessage: NewMessage = {
+            id: `operator-nudge-${Date.now()}-${Math.random()
+              .toString(36)
+              .slice(2, 8)}`,
+            chat_jid: fullJid,
+            sender: 'operator@dashboard',
+            sender_name: 'Operador',
+            content: operatorPrompt,
+            timestamp: nowIso,
+            is_from_me: false,
+            is_bot_message: false,
+          };
+          this.opts.onMessage(fullJid, syntheticMessage);
+          logger.info(
+            { jid: fullJid, folder: group.folder, msgId: syntheticMessage.id },
+            '[formmy-whatsapp] Operator trigger-reply injected as inbound',
+          );
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              ok: true,
+              messageId: syntheticMessage.id,
+              folder: group.folder,
+            }),
+          );
+        } catch (err) {
+          logger.error({ err }, '[formmy-whatsapp] trigger-reply failed');
+          res.writeHead(500);
+          res.end('Internal error');
+        }
+        return;
+      }
+
       try {
         const body = await readBody(req);
+        const parsed = JSON.parse(body);
         const {
           jid,
           sender,
@@ -297,7 +428,24 @@ export class FormmyWhatsAppChannel implements Channel {
           manual_mode,
           is_from_me,
           container_config,
-        } = JSON.parse(body);
+          paused_until,
+        } = parsed;
+
+        // Diagnostic: surface upstream payloads that the destructuring above
+        // would silently drop — generic "[Unsupported" placeholders and any
+        // extra fields (`unhandled`, `messageStubType`) Formmy may already be
+        // shipping. Fires only on anomalies; lets us deduce the real WhatsApp
+        // type without round-tripping with the bridge team.
+        if (
+          (typeof content === 'string' && content.startsWith('[Unsupported')) ||
+          parsed.unhandled !== undefined ||
+          parsed.messageStubType !== undefined
+        ) {
+          logger.warn(
+            { payload: parsed },
+            '[formmy-whatsapp] non-standard payload from upstream',
+          );
+        }
 
         // Accept message if any signal-bearing field is present.
         // location/contacts/reaction/quoted/unhandled count even when text/media absent.
@@ -313,113 +461,85 @@ export class FormmyWhatsAppChannel implements Channel {
           return;
         }
 
-        const fullJid = jid.startsWith(JID_PREFIX)
-          ? jid
-          : `${JID_PREFIX}${jid}`;
+        // Canonicalize the JID. Formmy emits two formats today:
+        //   legacy → formmy_<phone>@s.whatsapp.net   (customer webhook path)
+        //   new    → formmy_<24hex_intId>_<phone>    (echo / coexistence path)
+        // Both refer to the same logical conversation, but the chat folder
+        // and conversation history live under the legacy key. Without this
+        // step, every Operador echo creates a phantom u_<hash> folder and
+        // the customer's Claude session never sees what the human said.
+        // We normalize to the legacy form when we can confirm the embedded
+        // integration_id is known (either matches the payload's
+        // `integration_id` or already lives in formmy_jid_mapping). If we
+        // can't confirm, we leave the JID untouched so we don't accidentally
+        // merge unrelated conversations.
+        const rawJid = jid.startsWith(JID_PREFIX) ? jid : `${JID_PREFIX}${jid}`;
+        const fullJid = canonicalizeJid(rawJid, integration_id);
 
-        // Resolve group via mapping table.
-        // Three modes (priority order):
+        // Resolve group. Two modes:
         //   1. Cache hit on JID → use directly.
-        //   2. Explicit `group_folder` from Formmy → respect (shared lobby /
-        //      multi-user agent). Update mapping if it changed.
-        //   3. No mapping yet → auto-provision a per-user folder named after
-        //      the JID itself (already globally unique). Each WABA end-user
-        //      gets isolated CLAUDE.md, attachments, IPC, .claude/ session.
-        //      Inherits FORMMY_PUBLIC_TEMPLATE — sandboxed profile, no global,
-        //      restricted MCP toolsets, granular tool allowlist.
+        //   2. Cache miss → auto-provision a per-user folder named after the
+        //      JID. Each WABA end-user gets isolated CLAUDE.md, attachments,
+        //      IPC, .claude/ session.
+        //
+        // We deliberately do NOT honor the `group_folder` field that the
+        // Formmy bridge has historically sent. Folder ownership is a
+        // NanoClaw-side concern; letting Formmy declare folder strings
+        // leaked our naming convention into the bridge contract and caused
+        // the 2026-05-13 incident where 32 chats got mapped to a phantom
+        // u_<hash> folder Formmy invented and silently dropped every
+        // message (no registered_groups row → "no registered group found").
+        // The `formmy_jid_mapping` row is still written so outbound can
+        // resolve integration_id, but its group_folder column is no longer
+        // authoritative for inbound routing — `getFormmyGroupFolder` is
+        // gone from this resolver.
+        if (group_folder) {
+          logger.warn(
+            { jid: fullJid, group_folder },
+            '[formmy-whatsapp] explicit group_folder from Formmy is deprecated and ignored — folder ownership stays NanoClaw-side',
+          );
+        }
+
         const groups = this.opts.registeredGroups();
         let group: import('../types.js').RegisteredGroup | undefined =
           groups[fullJid];
 
         if (!group) {
-          const existingFolder = getFormmyGroupFolder(fullJid);
-          let resolvedFolder: string;
-
-          if (group_folder) {
-            // Explicit override from Formmy (shared/lobby case).
-            resolvedFolder = group_folder;
-            if (existingFolder !== group_folder) {
-              setFormmyJidMapping(fullJid, group_folder, integration_id);
-              logger.info(
-                { jid: fullJid, from: existingFolder, to: group_folder },
-                '[formmy-whatsapp] JID mapped to explicit group_folder',
-              );
-            }
-          } else if (existingFolder) {
-            // Already mapped from a previous webhook.
-            resolvedFolder = existingFolder;
-          } else {
-            // New WABA user — auto-provision isolated folder = JID.
-            // sanitizeFolder is defensive; the JID format already matches the
-            // group-folder regex, so this is a no-op in practice.
-            //
-            // Template selection: per-tenant container_config from Formmy
-            // (Agent.containerConfig, forwarded by handleChannelMessage) wins
-            // when present and well-shaped. Else fall back to the hardcoded
-            // FORMMY_PUBLIC_TEMPLATE — every Formmy customer gets the safe
-            // default for their first integration, even without explicit
-            // per-Agent config. The shape check is best-effort; if Formmy
-            // sends garbage, NanoClaw still has a working default.
-            resolvedFolder = sanitizeFolder(fullJid);
-            const isValidConfig =
-              container_config &&
-              typeof container_config === 'object' &&
-              !Array.isArray(container_config);
-            const template = isValidConfig
-              ? (container_config as typeof FORMMY_PUBLIC_TEMPLATE)
-              : FORMMY_PUBLIC_TEMPLATE;
-            const created = registerFormmyUserGroup(
-              fullJid,
-              resolvedFolder,
-              sender_name || 'WhatsApp User',
-              template,
-            );
-            // Materialize the folder on disk so attachments/CLAUDE.md can land here.
-            const groupDir = path.join(GROUPS_DIR, resolvedFolder);
-            fs.mkdirSync(groupDir, { recursive: true });
-            // Seed CLAUDE.md + bin/ from training template if present and target empty.
-            const trainingDir = path.join(GROUPS_DIR, '_training');
-            const trainingClaudeMd = path.join(trainingDir, 'formmy-public.md');
-            const targetClaudeMd = path.join(groupDir, 'CLAUDE.md');
-            try {
-              if (
-                fs.existsSync(trainingClaudeMd) &&
-                (!fs.existsSync(targetClaudeMd) ||
-                  fs.statSync(targetClaudeMd).size === 0)
-              ) {
-                fs.copyFileSync(trainingClaudeMd, targetClaudeMd);
-              }
-              const trainingBin = path.join(trainingDir, 'bin');
-              if (fs.existsSync(trainingBin)) {
-                const targetBin = path.join(groupDir, 'bin');
-                fs.mkdirSync(targetBin, { recursive: true });
-                for (const f of fs.readdirSync(trainingBin)) {
-                  const src = path.join(trainingBin, f);
-                  const dst = path.join(targetBin, f);
-                  if (!fs.existsSync(dst)) {
-                    fs.copyFileSync(src, dst);
-                    fs.chmodSync(dst, 0o755);
-                  }
-                }
-              }
-            } catch (err) {
-              logger.warn(
-                { err, folder: resolvedFolder },
-                '[formmy-whatsapp] failed to seed CLAUDE.md/bin from training',
-              );
-            }
-            setFormmyJidMapping(fullJid, resolvedFolder, integration_id);
-            logger.info(
-              { jid: fullJid, folder: resolvedFolder, created },
-              '[formmy-whatsapp] Auto-provisioned per-user public group',
-            );
-          }
+          // sanitizeFolder is defensive; the JID format already matches the
+          // group-folder regex, so this is a no-op in practice.
+          //
+          // Template selection: per-tenant container_config from Formmy
+          // (Agent.containerConfig, forwarded by handleChannelMessage) wins
+          // when present and well-shaped. Else fall back to the hardcoded
+          // FORMMY_PUBLIC_TEMPLATE — every Formmy customer gets the safe
+          // default for their first integration, even without explicit
+          // per-Agent config.
+          const isValidConfig =
+            container_config &&
+            typeof container_config === 'object' &&
+            !Array.isArray(container_config);
+          const template = isValidConfig
+            ? (container_config as typeof FORMMY_PUBLIC_TEMPLATE)
+            : FORMMY_PUBLIC_TEMPLATE;
+          const resolvedFolder = sanitizeFolder(fullJid);
+          const created = registerFormmyUserGroup(
+            fullJid,
+            resolvedFolder,
+            sender_name || 'WhatsApp User',
+            template,
+          );
+          seedFormmyGroupFiles(resolvedFolder);
+          setFormmyJidMapping(fullJid, resolvedFolder, integration_id);
+          logger.info(
+            { jid: fullJid, folder: resolvedFolder, created },
+            '[formmy-whatsapp] Auto-provisioned per-user public group',
+          );
 
           group = Object.values(groups).find(
             (g) => g.folder === resolvedFolder,
           );
-          // Cache miss is fine — index.ts:processGroupMessages re-loads from DB
-          // when it can't find the JID in the in-memory cache.
+          // Cache miss is fine — index.ts:processGroupMessages re-loads from
+          // DB when it can't find the JID in the in-memory cache.
         }
 
         const groupFolder = group?.folder;
@@ -485,6 +605,23 @@ export class FormmyWhatsAppChannel implements Channel {
           CHANNEL_NAME,
           false,
         );
+
+        // Sync upstream pause state. Formmy is authoritative — it owns the
+        // operator-only handoff timer and knows on every inbound whether the
+        // bot should respond. We just mirror that into chats.paused_until so
+        // the spawn gate in src/index.ts can short-circuit before any LLM
+        // inference runs (saved ~$0.06+ per skipped run on sofi-0).
+        //
+        // Contract with Formmy webhook forward:
+        //   field absent     → backward compat, ignore (older Formmy)
+        //   typeof === string → active pause until that ISO timestamp
+        //   null             → no pause (operator unpaused or never paused);
+        //                      clear any stale flag we may have set earlier
+        if (typeof paused_until === 'string' && paused_until.length > 0) {
+          setChatPauseUntil(fullJid, paused_until);
+        } else if (paused_until === null) {
+          clearChatPauseUntil(fullJid);
+        }
 
         // Deliver message to NanoClaw message loop
         this.opts.onMessage(fullJid, message);
@@ -571,15 +708,22 @@ export class FormmyWhatsAppChannel implements Channel {
     });
   }
 
-  // Tentative — pending Formmy bridge confirmation that `type: 'audio'` is
-  // accepted upstream (Meta Cloud API supports audio/ogg voice notes). Until
-  // confirmed, this method posts and surfaces the bridge's error if any.
+  // Outbound voice note. The Formmy bridge accepts type:'audio' as of
+  // 2026-05-12 (uploads base64 to Meta /<PHONE_NUMBER_ID>/media then sends
+  // {type:'audio', audio:{id:<media_id>}}). The explicit
+  // `audio/ogg; codecs=opus` mime hint tells Formmy to render as a native
+  // PTT (push-to-talk) bubble; without it the typeFallback ships plain
+  // audio/ogg and WhatsApp shows a regular audio attachment instead of the
+  // voice-note bubble. ElevenLabs is configured to output opus_48000_64
+  // upstream (container/skills-public/voice/text-to-speech), so the file
+  // really is opus — no need to transcode.
   async sendAudio(jid: string, filePath: string): Promise<void> {
     const buffer = readNonEmptyFile(filePath, 'audio');
     await this.postToFormmy({
       phone_number: extractPhone(jid),
       integration_id: this.resolveIntegrationId(jid),
       type: 'audio',
+      mime_type: 'audio/ogg; codecs=opus',
       media_base64: buffer.toString('base64'),
     });
   }
@@ -625,6 +769,33 @@ export class FormmyWhatsAppChannel implements Channel {
       },
       this.coexistenceReleaseUrl,
     );
+  }
+
+  // Conversation tags (ConvoTag) on the Formmy side. The endpoint URL must be
+  // set explicitly via FORMMY_TAG_URL; if absent, this throws so the agent
+  // surfaces "feature not configured" to the user instead of silently dropping
+  // tags. Same Bearer secret as messaging endpoints.
+  async setConversationTag(
+    jid: string,
+    action: 'add' | 'remove',
+    label: string,
+    color?: string,
+    comment?: string,
+  ): Promise<void> {
+    if (!this.tagUrl) {
+      throw new Error('[formmy-whatsapp] FORMMY_TAG_URL not configured');
+    }
+    const payload: Record<string, unknown> = {
+      phone_number: extractPhone(jid),
+      integration_id: this.resolveIntegrationId(jid),
+      action,
+      label,
+    };
+    if (action === 'add') {
+      if (color !== undefined) payload.color = color;
+      if (comment !== undefined) payload.comment = comment;
+    }
+    await this.postToFormmy(payload, this.tagUrl);
   }
 
   isConnected(): boolean {
@@ -684,7 +855,21 @@ export class FormmyWhatsAppChannel implements Channel {
           { type: media.type, media_id: media.media_id, url_host: urlHost },
           '[formmy-whatsapp] fetching media via Formmy proxy URL',
         );
-        buffer = await downloadFile(media.url);
+        // The Formmy media proxy requires Bearer auth post-2026-05-12. Only
+        // forward our shared secret when the URL host matches the callback
+        // host so we don't leak it to arbitrary URLs from a forged payload.
+        const callbackHost = (() => {
+          try {
+            return new URL(this.callbackUrl).host;
+          } catch {
+            return null;
+          }
+        })();
+        const headers =
+          callbackHost && urlHost === callbackHost
+            ? { Authorization: `Bearer ${this.secret}` }
+            : undefined;
+        buffer = await downloadFile(media.url, headers);
         if (buffer.length === 0) {
           logger.warn(
             { type: media.type, media_id: media.media_id, url_host: urlHost },
@@ -938,6 +1123,35 @@ export class FormmyWhatsAppChannel implements Channel {
   }
 }
 
+/**
+ * Collapse the integration-id-prefixed JID variant onto the legacy form so
+ * customer messages and Operador echoes land in the same chat folder.
+ *
+ *   input  formmy_<24hex>_<phone>   (Formmy echo / coexistence path)
+ *   output formmy_<phone>@s.whatsapp.net   (legacy customer-webhook form)
+ *
+ * Only collapses when the integration_id is verifiably ours — either matches
+ * the integration_id from the payload, or is already mapped on this droplet.
+ * Unknown integrations are left untouched so a forged or cross-tenant payload
+ * can't merge into a real conversation. Legacy JIDs pass through unchanged.
+ */
+export function canonicalizeJid(
+  jid: string,
+  payloadIntegrationId: string | undefined,
+): string {
+  if (jid.endsWith('@s.whatsapp.net') || jid.endsWith('@c.us')) return jid;
+  const stripped = jid.replace(/^formmy_/, '');
+  const parts = stripped.split('_');
+  if (parts.length < 2 || !/^[a-f0-9]{24}$/.test(parts[0])) return jid;
+  const embeddedIntId = parts[0];
+  const phone = parts.slice(1).join('_');
+  const isOurs =
+    embeddedIntId === payloadIntegrationId ||
+    isKnownIntegrationId(embeddedIntId);
+  if (!isOurs) return jid;
+  return `formmy_${phone}@s.whatsapp.net`;
+}
+
 export function extractPhone(jid: string): string {
   // formmy_<integrationId>_<phone> → phone (also handles legacy formmy_<phone>)
   // Also strips the WhatsApp suffix so the value is a clean E.164 number;
@@ -964,19 +1178,34 @@ function readBody(req: http.IncomingMessage): Promise<string> {
   });
 }
 
-function downloadFile(url: string): Promise<Buffer> {
+function downloadFile(
+  url: string,
+  headers?: Record<string, string>,
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const transport = url.startsWith('https') ? https : http;
+    const opts = headers ? { headers } : {};
     transport
-      .get(url, (res) => {
-        // Follow redirects
+      .get(url, opts, (res) => {
+        // Follow redirects (preserving auth header for same-host redirects)
         if (
           res.statusCode &&
           res.statusCode >= 300 &&
           res.statusCode < 400 &&
           res.headers.location
         ) {
-          downloadFile(res.headers.location).then(resolve).catch(reject);
+          const sameHost = (() => {
+            try {
+              return (
+                new URL(res.headers.location, url).host === new URL(url).host
+              );
+            } catch {
+              return false;
+            }
+          })();
+          downloadFile(res.headers.location, sameHost ? headers : undefined)
+            .then(resolve)
+            .catch(reject);
           return;
         }
         if (res.statusCode && res.statusCode >= 400) {
@@ -1039,6 +1268,15 @@ registerChannel(CHANNEL_NAME, (opts: ChannelOpts) => {
   // tool returns a clear "not configured" error instead of silently failing.
   const coexistenceReleaseUrl =
     process.env.FORMMY_COEXISTENCE_RELEASE_URL || null;
+  // Optional: Formmy endpoint to add/remove conversation tags (ConvoTag). If
+  // FORMMY_TAG_URL is unset, derive it from FORMMY_CALLBACK_URL by swapping
+  // the trailing path segment (/send or /message) for /tag — same convention
+  // used by api.v1.integrations.whatsapp.tag.ts on the Formmy side.
+  const tagUrl =
+    process.env.FORMMY_TAG_URL ||
+    (callbackUrl
+      ? callbackUrl.replace(/\/(send|message)(\/?$)/, '/tag')
+      : null);
 
   if (!secret || !callbackUrl) {
     return null; // Credentials missing -- skip
@@ -1051,5 +1289,6 @@ registerChannel(CHANNEL_NAME, (opts: ChannelOpts) => {
     callbackUrl,
     integrationId,
     coexistenceReleaseUrl,
+    tagUrl,
   );
 });

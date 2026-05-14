@@ -53,6 +53,18 @@ export interface IpcDeps {
     name: string | undefined,
     address: string | undefined,
   ) => Promise<void>;
+  /**
+   * Signal that an outbound message/media was sent for this chat via the
+   * agent's MCP tools (send_message, send_image, etc.). The agent-run handler
+   * uses this to gate a narrow regex check on trailing text outputs Claude
+   * tends to emit ("Le envié al cliente la foto…", "Lead registrado en
+   * Kommo…"). The check fires only when an MCP outbound already landed AND
+   * the trailing text matches one of the narration patterns — anything that
+   * doesn't match the patterns is delivered as-is, so legitimate post-PDF
+   * follow-ups (bank details, invoice fields) survive.
+   * Idempotent — fire on every successful outbound.
+   */
+  notifyMcpOutboundSent?: (jid: string) => void;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -66,6 +78,25 @@ export interface IpcDeps {
   updateProfilePicture: (jid: string, filePath: string) => Promise<void>;
   updateGroupName: (jid: string, name: string) => Promise<void>;
   releaseCoexistence: (jid: string) => Promise<void>;
+  /**
+   * Mark a chat to bypass the coexistence (manual_mode) skip on its next
+   * processGroupMessages run. Used after `releaseCoexistence` to wake the
+   * agent so it reads the operator↔customer history and decides whether to
+   * follow up. The flag is consumed once; no synthetic message is injected.
+   */
+  forceEvaluationOnce?: (jid: string) => void;
+  /**
+   * Enqueue a single check of this chat through the GroupQueue. Same path the
+   * message loop uses on every tick; idempotent and serialized per-chat.
+   */
+  enqueueMessageCheck?: (jid: string) => void;
+  setConversationTag: (
+    jid: string,
+    action: 'add' | 'remove',
+    label: string,
+    color: string | undefined,
+    comment: string | undefined,
+  ) => Promise<void>;
   onTasksChanged: () => void;
   statusHeartbeat?: () => void;
   recoverPendingMessages?: () => void;
@@ -180,6 +211,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
                   await deps.sendMessage(data.chatJid, data.text);
+                  deps.notifyMcpOutboundSent?.(data.chatJid);
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC message sent',
@@ -267,6 +299,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     );
                     const bytes = fileSizeOrUndef(absPath);
                     await deps.sendAudio(data.chatJid, absPath);
+                    deps.notifyMcpOutboundSent?.(data.chatJid);
                     logger.info(
                       {
                         chatJid: data.chatJid,
@@ -321,6 +354,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       absPath,
                       data.caption || '',
                     );
+                    deps.notifyMcpOutboundSent?.(data.chatJid);
                     logger.info(
                       {
                         chatJid: data.chatJid,
@@ -372,6 +406,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     );
                     const bytes = fileSizeOrUndef(absPath);
                     await deps.sendSticker(data.chatJid, absPath);
+                    deps.notifyMcpOutboundSent?.(data.chatJid);
                     logger.info(
                       {
                         chatJid: data.chatJid,
@@ -424,6 +459,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       options,
                       selectableCount,
                     );
+                    deps.notifyMcpOutboundSent?.(data.chatJid);
                     logger.info(
                       {
                         chatJid: data.chatJid,
@@ -458,6 +494,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     typeof data.name === 'string' ? data.name : undefined,
                     typeof data.address === 'string' ? data.address : undefined,
                   );
+                  deps.notifyMcpOutboundSent?.(data.chatJid);
                   logger.info(
                     {
                       chatJid: data.chatJid,
@@ -512,6 +549,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       data.originalName || data.filename,
                       data.caption || '',
                     );
+                    deps.notifyMcpOutboundSent?.(data.chatJid);
                     logger.info(
                       {
                         chatJid: data.chatJid,
@@ -569,6 +607,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
               ) {
                 try {
                   await deps.releaseCoexistence(data.chatJid);
+                  // Wake the worker chat: bypass the manual_mode skip on the
+                  // next evaluation and enqueue it via the same queue the
+                  // message loop uses. Agent reads operator↔customer history
+                  // from formatMessages() XML and decides whether to follow
+                  // up. No synthetic message is injected.
+                  deps.forceEvaluationOnce?.(data.chatJid);
+                  deps.enqueueMessageCheck?.(data.chatJid);
                   logger.info(
                     { sourceGroup, chatJid: data.chatJid },
                     'Coexistence pause release requested via IPC',
@@ -577,6 +622,41 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   logger.warn(
                     { err, sourceGroup, chatJid: data.chatJid },
                     'Coexistence pause release failed',
+                  );
+                }
+              } else if (
+                data.type === 'set_conversation_tag' &&
+                data.chatJid &&
+                (data.action === 'add' || data.action === 'remove') &&
+                typeof data.label === 'string'
+              ) {
+                try {
+                  await deps.setConversationTag(
+                    data.chatJid,
+                    data.action,
+                    data.label,
+                    typeof data.color === 'string' ? data.color : undefined,
+                    typeof data.comment === 'string' ? data.comment : undefined,
+                  );
+                  logger.info(
+                    {
+                      sourceGroup,
+                      chatJid: data.chatJid,
+                      action: data.action,
+                      label: data.label,
+                    },
+                    'Conversation tag mutation requested via IPC',
+                  );
+                } catch (err) {
+                  logger.warn(
+                    {
+                      err,
+                      sourceGroup,
+                      chatJid: data.chatJid,
+                      action: data.action,
+                      label: data.label,
+                    },
+                    'Conversation tag mutation failed',
                   );
                 }
               } else if (data.type === 'track_video_gen') {
@@ -642,6 +722,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       absPath,
                       data.caption || '',
                     );
+                    deps.notifyMcpOutboundSent?.(data.chatJid);
                     logger.info(
                       {
                         chatJid: data.chatJid,

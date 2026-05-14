@@ -79,6 +79,7 @@ function makeChannel(port: number): FormmyWhatsAppChannel {
     `http://127.0.0.1:${port}/send`,
     'test-integration',
     null,
+    null,
   );
 }
 

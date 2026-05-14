@@ -139,10 +139,6 @@ export interface Channel {
   ): Promise<void>;
   // Optional: typing indicator. Channels that support it implement it.
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
-  // Optional: release a coexistence/human-takeover pause owned by an upstream
-  // bridge (e.g. Formmy/WABA's 30-min manual_mode timer). No-op for channels
-  // without external coexistence state.
-  releaseCoexistence?(jid: string): Promise<void>;
   // Optional: sync group/chat names from the platform.
   syncGroups?(force: boolean): Promise<void>;
   // Optional: get a group invite link.
