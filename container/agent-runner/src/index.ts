@@ -589,15 +589,25 @@ async function runQuery(
   }
 
   // LLMs miscompute weekday from an ISO date alone, so inject the host's
-  // current date + day name in es-MX as ground truth.
+  // current date + day name + time of day in es-MX as ground truth. The
+  // hour matters because the agent picks greetings ("buenos días" vs
+  // "buenas tardes" vs "buenas noches") from this — without it the model
+  // defaults to "buenas tardes" regardless of actual time.
+  const nowMx = new Date();
   const todayMx = new Intl.DateTimeFormat('es-MX', {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
     day: 'numeric',
     timeZone: 'America/Mexico_City',
-  }).format(new Date());
-  const dateNote = `\n\n## Fecha actual (host)\nHoy es **${todayMx}** (America/Mexico_City). Úsala como verdad absoluta para referencias a "hoy", "mañana", "ayer" y al día de la semana. No la recalcules a partir de la fecha ISO; si dudas, corre \`date\` en Bash.`;
+  }).format(nowMx);
+  const timeMx = new Intl.DateTimeFormat('es-MX', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'America/Mexico_City',
+  }).format(nowMx);
+  const dateNote = `\n\n## Fecha y hora actuales (host)\nHoy es **${todayMx}**, son las **${timeMx}** (America/Mexico_City). Úsalas como verdad absoluta para referencias a "hoy", "mañana", "ayer", al día de la semana y al saludo según la hora (buenos días <12:00, buenas tardes 12:00–18:59, buenas noches ≥19:00). No las recalcules a partir de la fecha ISO; si dudas, corre \`date\` en Bash.`;
   const systemAppend = globalClaudeMd ? globalClaudeMd + dateNote : dateNote;
 
   // Discover additional directories mounted at /workspace/extra/*

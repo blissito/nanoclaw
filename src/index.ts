@@ -202,7 +202,18 @@ function isApiOutageError(text: string): boolean {
     ) ||
     /adaptive thinking is not supported/i.test(text) ||
     /^\s*Connection error\.?\s*$/i.test(text) ||
-    /^\s*Bad Gateway\s*$/i.test(text)
+    /^\s*Bad Gateway\s*$/i.test(text) ||
+    // Anthropic API response artifacts leaking as chat text (defensive).
+    // Observed 2026-05-14 on sofi-0 after the coexistence stuck-skip fix:
+    // a chat with a bad image got API 400 "Could not process image" → the
+    // result.result string "API Error: 400 {...request_id:req_011Cb2h...}"
+    // somehow reached the user as just `"req_011Cb2hWujV..."}` (tail only).
+    // Root cause TBD. These guards catch any orphan Anthropic request_id
+    // pattern OR the JSON-tail fragment pattern, so the agent-runner output
+    // can never leak Anthropic API metadata to a customer chat.
+    /"request_id"\s*:\s*"req_[A-Za-z0-9]{15,}"/.test(text) ||
+    /^\s*"req_[A-Za-z0-9]{15,}"\s*}?\s*$/.test(text) ||
+    /Could not process image/i.test(text)
   );
 }
 
