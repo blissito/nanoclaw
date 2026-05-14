@@ -187,6 +187,7 @@ export class FormmyWhatsAppChannel implements Channel {
   private secret: string;
   private callbackUrl: string;
   private coexistenceReleaseUrl: string | null;
+  private tagUrl: string | null;
   private integrationId: string | null;
   private opts: ChannelOpts;
 
@@ -197,6 +198,7 @@ export class FormmyWhatsAppChannel implements Channel {
     callbackUrl: string,
     integrationId: string | null,
     coexistenceReleaseUrl: string | null,
+    tagUrl: string | null,
   ) {
     this.opts = opts;
     this.port = port;
@@ -204,6 +206,7 @@ export class FormmyWhatsAppChannel implements Channel {
     this.callbackUrl = callbackUrl;
     this.integrationId = integrationId;
     this.coexistenceReleaseUrl = coexistenceReleaseUrl;
+    this.tagUrl = tagUrl;
   }
 
   async connect(): Promise<void> {
@@ -642,6 +645,35 @@ export class FormmyWhatsAppChannel implements Channel {
       },
       this.coexistenceReleaseUrl,
     );
+  }
+
+  // Conversation tags (ConvoTag) on the Formmy side. The endpoint URL must be
+  // set explicitly via FORMMY_TAG_URL; if absent, this throws so the agent
+  // surfaces "feature not configured" to the user instead of silently dropping
+  // tags. Same Bearer secret as messaging endpoints.
+  async setConversationTag(
+    jid: string,
+    action: 'add' | 'remove',
+    label: string,
+    color?: string,
+    comment?: string,
+  ): Promise<void> {
+    if (!this.tagUrl) {
+      throw new Error(
+        '[formmy-whatsapp] FORMMY_TAG_URL not configured',
+      );
+    }
+    const payload: Record<string, unknown> = {
+      phone_number: extractPhone(jid),
+      integration_id: this.resolveIntegrationId(jid),
+      action,
+      label,
+    };
+    if (action === 'add') {
+      if (color !== undefined) payload.color = color;
+      if (comment !== undefined) payload.comment = comment;
+    }
+    await this.postToFormmy(payload, this.tagUrl);
   }
 
   isConnected(): boolean {
@@ -1084,6 +1116,13 @@ registerChannel(CHANNEL_NAME, (opts: ChannelOpts) => {
   // tool returns a clear "not configured" error instead of silently failing.
   const coexistenceReleaseUrl =
     process.env.FORMMY_COEXISTENCE_RELEASE_URL || null;
+  // Optional: Formmy endpoint to add/remove conversation tags (ConvoTag). If
+  // FORMMY_TAG_URL is unset, derive it from FORMMY_CALLBACK_URL by swapping
+  // the trailing path segment (/send or /message) for /tag — same convention
+  // used by api.v1.integrations.whatsapp.tag.ts on the Formmy side.
+  const tagUrl =
+    process.env.FORMMY_TAG_URL ||
+    (callbackUrl ? callbackUrl.replace(/\/(send|message)(\/?$)/, '/tag') : null);
 
   if (!secret || !callbackUrl) {
     return null; // Credentials missing -- skip
@@ -1096,5 +1135,6 @@ registerChannel(CHANNEL_NAME, (opts: ChannelOpts) => {
     callbackUrl,
     integrationId,
     coexistenceReleaseUrl,
+    tagUrl,
   );
 });

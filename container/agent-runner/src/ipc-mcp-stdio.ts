@@ -286,6 +286,70 @@ tool('messaging-public',
   },
 );
 
+tool('messaging-public',
+  'add_conversation_tag',
+  `Add a tag (etiqueta) to the current WABA conversation. Tags are visible to human operators in the Formmy panel and are typically used to mark workflow state (e.g. "Atendido" once you finished helping a user, "Seguimiento" if a follow-up is needed, or any custom label).
+
+Idempotent: re-adding an existing label is a no-op (case-insensitive). The tag is recorded as createdBy="nanoclaw-agent" so humans can distinguish it from operator-applied tags.
+
+Only available for WABA 1:1 chats routed through Formmy. No-op (with error in host logs) for non-WABA chats.`,
+  {
+    label: z.string().min(1).max(64).describe('Tag label (e.g. "Atendido", "Seguimiento", "VIP")'),
+    color: z.string().optional().describe('Optional color hex like "#22c55e". Defaults to a neutral green on the server side if omitted.'),
+    comment: z.string().optional().describe('Optional internal note about why the tag was applied (visible to operators in panel)'),
+  },
+  async (args) => {
+    const data = {
+      type: 'set_conversation_tag',
+      action: 'add' as const,
+      chatJid,
+      groupFolder,
+      label: args.label,
+      color: args.color,
+      comment: args.comment,
+      timestamp: new Date().toISOString(),
+    };
+    writeIpcFile(MESSAGES_DIR, data);
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Tag "${args.label}" queued for the current conversation. If Formmy is reachable, the chip will appear in the operator panel within a few seconds.`,
+        },
+      ],
+    };
+  },
+);
+
+tool('messaging-public',
+  'remove_conversation_tag',
+  `Remove a tag (etiqueta) from the current WABA conversation. Case-insensitive match against the label. No-op if the tag is not present.
+
+Be careful with this — you may be removing a tag set by a human operator. Prefer add_conversation_tag in most cases.`,
+  {
+    label: z.string().min(1).max(64).describe('Exact tag label to remove (case-insensitive match)'),
+  },
+  async (args) => {
+    const data = {
+      type: 'set_conversation_tag',
+      action: 'remove' as const,
+      chatJid,
+      groupFolder,
+      label: args.label,
+      timestamp: new Date().toISOString(),
+    };
+    writeIpcFile(MESSAGES_DIR, data);
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Removal of tag "${args.label}" queued for the current conversation.`,
+        },
+      ],
+    };
+  },
+);
+
 tool('messaging-admin',
   'update_profile_picture',
   'Change the group profile picture. Image should be square (640x640+ recommended).',

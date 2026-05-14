@@ -78,6 +78,13 @@ export interface IpcDeps {
   updateProfilePicture: (jid: string, filePath: string) => Promise<void>;
   updateGroupName: (jid: string, name: string) => Promise<void>;
   releaseCoexistence: (jid: string) => Promise<void>;
+  setConversationTag: (
+    jid: string,
+    action: 'add' | 'remove',
+    label: string,
+    color: string | undefined,
+    comment: string | undefined,
+  ) => Promise<void>;
   onTasksChanged: () => void;
   statusHeartbeat?: () => void;
   recoverPendingMessages?: () => void;
@@ -596,6 +603,41 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   logger.warn(
                     { err, sourceGroup, chatJid: data.chatJid },
                     'Coexistence pause release failed',
+                  );
+                }
+              } else if (
+                data.type === 'set_conversation_tag' &&
+                data.chatJid &&
+                (data.action === 'add' || data.action === 'remove') &&
+                typeof data.label === 'string'
+              ) {
+                try {
+                  await deps.setConversationTag(
+                    data.chatJid,
+                    data.action,
+                    data.label,
+                    typeof data.color === 'string' ? data.color : undefined,
+                    typeof data.comment === 'string' ? data.comment : undefined,
+                  );
+                  logger.info(
+                    {
+                      sourceGroup,
+                      chatJid: data.chatJid,
+                      action: data.action,
+                      label: data.label,
+                    },
+                    'Conversation tag mutation requested via IPC',
+                  );
+                } catch (err) {
+                  logger.warn(
+                    {
+                      err,
+                      sourceGroup,
+                      chatJid: data.chatJid,
+                      action: data.action,
+                      label: data.label,
+                    },
+                    'Conversation tag mutation failed',
                   );
                 }
               } else if (data.type === 'track_video_gen') {

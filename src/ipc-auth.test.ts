@@ -71,6 +71,7 @@ beforeEach(() => {
     updateProfilePicture: async () => {},
     updateGroupName: async () => {},
     releaseCoexistence: async () => {},
+    setConversationTag: async () => {},
     onTasksChanged: () => {},
   };
 });

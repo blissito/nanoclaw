@@ -1852,6 +1852,21 @@ async function main(): Promise<void> {
       }
       await formmyChannel.releaseCoexistence(jid);
     },
+    setConversationTag: async (jid, action, label, color, comment) => {
+      // Conversation tags live on the Formmy side (ConvoTag embedded in
+      // Conversation). Same dispatch rationale as releaseCoexistence: WABA-only
+      // feature, generic Channel interface doesn't carry it.
+      const formmyChannel = channels.find(
+        (c): c is FormmyWhatsAppChannel => c.name === 'formmy-whatsapp',
+      );
+      if (!formmyChannel) {
+        throw new Error('Formmy channel not connected — cannot set tag');
+      }
+      if (!formmyChannel.ownsJid(jid)) {
+        throw new Error(`JID ${jid} is not a Formmy/WABA JID`);
+      }
+      await formmyChannel.setConversationTag(jid, action, label, color, comment);
+    },
     notifyMcpOutboundSent: (jid) => {
       agentRunOutbound[jid] = (agentRunOutbound[jid] || 0) + 1;
     },
