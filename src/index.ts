@@ -757,10 +757,37 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           'i',
         );
         const text = cleaned.replace(prefixRe, '').trim();
-        // Filter out meta-responses where the agent says it won't respond
+        // Filter out meta-responses where the agent says it won't respond.
+        // The global CLAUDE.md tells agents to stay silent (wrap reasoning in
+        // <internal>), but they sometimes leak a parenthetical explanation
+        // anyway — observed in español on sofi-0 after the coexistence
+        // wake-up fix unstuck WABA chats: "(Sin acción — solo saludos…)",
+        // "(Esta conversación parece ser entre el equipo…)", "no requiere
+        // respuesta de mi parte", etc. The customer doesn't need to see
+        // these — drop them on the host side as defense-in-depth.
+        // Stripped of surrounding parens/quotes first so the patterns match
+        // both "(Sin acción…)" and bare "Sin acción…".
+        const metaCandidate = text
+          .replace(/^[\s("']+|[\s)"']+$/g, '')
+          .trim();
         const isMetaNoResponse =
           /^no\s+response\s+(needed|required|necessary)\.?$/i.test(text) ||
-          /^(I don'?t need to|no need to|nothing to)\s+respond/i.test(text);
+          /^(I don'?t need to|no need to|nothing to)\s+respond/i.test(text) ||
+          /^sin\s+acci[oó]n\b/i.test(metaCandidate) ||
+          /\bno\s+requiere\s+respuesta\b/i.test(metaCandidate) ||
+          /\bno\s+(necesito|hace\s+falta|hay\s+que)\s+responder\b/i.test(
+            metaCandidate,
+          ) ||
+          /\besta\s+conversaci[oó]n\s+(parece|es)\s+(entre|del?)\s+(el\s+)?equipo\b/i.test(
+            metaCandidate,
+          ) ||
+          /\bquedo\s+(disponible|al\s+pendiente)\s+si\s+necesitan\b/i.test(
+            metaCandidate,
+          ) ||
+          /\bdecid[ií]\s+no\s+(responder|contestar)\b/i.test(metaCandidate) ||
+          /\b(me\s+quedo|prefiero)\s+(callad[oa]|en\s+silencio)\b/i.test(
+            metaCandidate,
+          );
         logger.info(
           { group: group.name },
           `Agent output: ${raw.length} chars${isMetaNoResponse ? ' (filtered: no-response-needed)' : ''}`,
