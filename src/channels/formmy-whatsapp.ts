@@ -659,9 +659,7 @@ export class FormmyWhatsAppChannel implements Channel {
     comment?: string,
   ): Promise<void> {
     if (!this.tagUrl) {
-      throw new Error(
-        '[formmy-whatsapp] FORMMY_TAG_URL not configured',
-      );
+      throw new Error('[formmy-whatsapp] FORMMY_TAG_URL not configured');
     }
     const payload: Record<string, unknown> = {
       phone_number: extractPhone(jid),
@@ -1122,7 +1120,9 @@ registerChannel(CHANNEL_NAME, (opts: ChannelOpts) => {
   // used by api.v1.integrations.whatsapp.tag.ts on the Formmy side.
   const tagUrl =
     process.env.FORMMY_TAG_URL ||
-    (callbackUrl ? callbackUrl.replace(/\/(send|message)(\/?$)/, '/tag') : null);
+    (callbackUrl
+      ? callbackUrl.replace(/\/(send|message)(\/?$)/, '/tag')
+      : null);
 
   if (!secret || !callbackUrl) {
     return null; // Credentials missing -- skip

@@ -1865,7 +1865,13 @@ async function main(): Promise<void> {
       if (!formmyChannel.ownsJid(jid)) {
         throw new Error(`JID ${jid} is not a Formmy/WABA JID`);
       }
-      await formmyChannel.setConversationTag(jid, action, label, color, comment);
+      await formmyChannel.setConversationTag(
+        jid,
+        action,
+        label,
+        color,
+        comment,
+      );
     },
     notifyMcpOutboundSent: (jid) => {
       agentRunOutbound[jid] = (agentRunOutbound[jid] || 0) + 1;
