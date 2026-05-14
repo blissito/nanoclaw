@@ -65,6 +65,16 @@ export interface IpcDeps {
    * Idempotent — fire on every successful outbound.
    */
   notifyMcpOutboundSent?: (jid: string) => void;
+  /**
+   * Subset of notifyMcpOutboundSent: invoked ONLY when the outbound was a
+   * text message (IPC type==='message'). The host uses this counter to
+   * structurally drop trailing result.result text (closing summary /
+   * narration) when the model already delivered the real reply via
+   * send_text MCP tool in the same run. Media outbounds (document/image/
+   * audio/etc.) do NOT call this hook, so legitimate post-PDF follow-up
+   * text continues through.
+   */
+  notifyMcpOutboundText?: (jid: string) => void;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -212,6 +222,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 ) {
                   await deps.sendMessage(data.chatJid, data.text);
                   deps.notifyMcpOutboundSent?.(data.chatJid);
+                  deps.notifyMcpOutboundText?.(data.chatJid);
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC message sent',

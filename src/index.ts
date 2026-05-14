@@ -122,6 +122,13 @@ const agentRunStartedAt: Record<string, string> = {};
 // a send_document. The narrow rule trips only on third-person/internal-tool
 // markers that don't appear in legit customer-facing text.
 const agentRunOutbound: Record<string, number> = {};
+// Subset of agentRunOutbound: counts ONLY text outbounds (IPC type==='message').
+// When >0 in this run, the trailing result.result is structurally narration
+// (the model already sent its real reply via send_text MCP tool) and must
+// be dropped — no regex needed. Media outbounds (document/image/audio/etc.)
+// don't increment this counter, so legitimate post-PDF follow-up text
+// (e.g. bank details continuation) is preserved.
+const agentRunOutboundText: Record<string, number> = {};
 
 // Per-chat one-shot flag: when set, the next processGroupMessages run for that
 // chat will bypass the manual_mode skip (Phase 2 of coexistence handoff). The
@@ -735,6 +742,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Reset per-run MCP outbound counter so the narration filter only fires
   // for outbounds that landed in THIS run, not a previous one.
   agentRunOutbound[chatJid] = 0;
+  agentRunOutboundText[chatJid] = 0;
 
   const output = await runAgent(
     group,
@@ -813,9 +821,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         const startedAt = agentRunStartedAt[chatJid];
         const pausedMidRun =
           !!startedAt && hasManualModeSince(chatJid, startedAt);
-        const isPostMcp = (agentRunOutbound[chatJid] || 0) > 0;
-        const narrationMatch =
-          isPostMcp && text ? matchedNarrationPattern(text) : null;
+        const sentTextOutbound = (agentRunOutboundText[chatJid] || 0) > 0;
         if (text && !isMetaNoResponse && pausedMidRun) {
           logger.info(
             {
@@ -826,13 +832,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             },
             'Agent output suppressed',
           );
-        } else if (text && !isMetaNoResponse && narrationMatch) {
+        } else if (text && !isMetaNoResponse && sentTextOutbound) {
+          // Structural: send_text MCP tool already delivered the real reply
+          // in this run. Anything else the model emits as result.result is
+          // a closing summary / narration by definition. Drop without regex.
           logger.info(
             {
               group: group.name,
               chatJid,
-              reason: 'post-mcp-narration',
-              pattern: narrationMatch,
+              reason: 'post-text-outbound',
               preview: text.slice(0, 200),
             },
             'Agent output suppressed',
@@ -1956,6 +1964,9 @@ async function main(): Promise<void> {
     },
     notifyMcpOutboundSent: (jid) => {
       agentRunOutbound[jid] = (agentRunOutbound[jid] || 0) + 1;
+    },
+    notifyMcpOutboundText: (jid) => {
+      agentRunOutboundText[jid] = (agentRunOutboundText[jid] || 0) + 1;
     },
     forceEvaluationOnce: (jid) => {
       forceEvaluationOnce(jid);
