@@ -545,29 +545,28 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   );
   if (actionableMessages.length === 0) return true;
 
-  // The forceEval flag (set by clear_coexistence_pause IPC handler) bypasses
-  // the manual_mode AND freshness checks for one run, so the admin can
-  // explicitly release a chat regardless of staleness. Consume the flag once.
+  // Coexistence gate (consolidated). Spawn the agent only when there's a
+  // customer who is actually waiting: a customer message that is fresh,
+  // not paused by Meta coexistence, and not already answered by an
+  // operator/bot turn that came after it. Each rule maps to a real
+  // failure observed on sofi-0 on 2026-05-14 after the coexistence
+  // stuck-skip fix unblocked thousands of paused chats:
+  //   - no-customer:       chat had only operator activity since the
+  //                        last spawn → bot opened with "Buenos días X 😊"
+  //                        unprompted.
+  //   - manual_mode:       Meta marks the inbound while the owner is
+  //                        replying from the linked phone → bot races
+  //                        the operator.
+  //   - operator-replied:  operator/bot answered the customer's last
+  //                        input after it landed → re-evaluating just
+  //                        produces meta-narration ("Esta conversación
+  //                        ya está resuelta entre el Operador y X").
+  //   - stale:             customer's last input is hours/days old →
+  //                        re-engaging is intrusive.
+  // forceEval (set by clear_coexistence_pause) bypasses all four — admin
+  // explicit intent. Cursor advances on every skip so we don't re-scan
+  // these messages on subsequent ticks.
   const forceEval = forceNextEvaluation.delete(chatJid);
-
-  // Pending-customer guard: only spawn if there's a customer message that
-  // is (a) recent AND (b) more recent than the operator's last reply.
-  // Without this, the message loop spawns agents on conversations where
-  // the operator has clearly closed the loop. Observed 2026-05-14 on
-  // sofi-0 after the coexistence stuck-skip fix unstuck thousands of
-  // long-paused chats: Sofi would wake up on a chat from days ago where
-  // the customer's last input was "muchas gracias" and the operator had
-  // already replied with closing pleasantries, then dump a meta-comment
-  // analyzing the conversation ("Esta conversación ya está resuelta
-  // entre el Operador y X — no hay acción pendiente…"). Each such
-  // spurious turn cost ~$0.13 and broke the customer experience.
-  //
-  // Rule: skip when EITHER (1) latest customer msg is older than 1h, OR
-  // (2) operator's last reply post-dates the customer's last input
-  // (operator is handling — bot stays out). Bypass for operator-explicit
-  // paths via forceEval.
-  const STALE_RESPONSE_THRESHOLD_MS = 60 * 60 * 1000;
-  const latestMsg = actionableMessages[actionableMessages.length - 1];
   if (!forceEval) {
     const latestCustomerMsg = [...actionableMessages]
       .reverse()
@@ -575,71 +574,42 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     const latestOperatorMsg = [...actionableMessages]
       .reverse()
       .find((m) => m.is_from_me && !m.is_bot_message);
+    const latestMsg = actionableMessages[actionableMessages.length - 1];
+    const STALE_MS = 60 * 60 * 1000;
 
+    let skipReason: string | null = null;
+    let extra: Record<string, number> = {};
     if (!latestCustomerMsg) {
-      logger.info(
-        { group: group.name, chatJid },
-        'Skipped (no pending customer message — only operator/bot activity)',
+      skipReason = 'no pending customer message';
+    } else if (latestCustomerMsg.manual_mode === true) {
+      skipReason = 'human takeover active (manual_mode)';
+    } else if (
+      latestOperatorMsg &&
+      new Date(latestOperatorMsg.timestamp).getTime() >
+        new Date(latestCustomerMsg.timestamp).getTime()
+    ) {
+      skipReason = 'operator replied after customer';
+      extra.opLagMin = Math.round(
+        (new Date(latestOperatorMsg.timestamp).getTime() -
+          new Date(latestCustomerMsg.timestamp).getTime()) /
+          60000,
       );
-      lastAgentTimestamp[chatJid] = latestMsg.timestamp;
-      saveState();
-      return true;
-    }
-
-    const custAgeMs =
-      Date.now() - new Date(latestCustomerMsg.timestamp).getTime();
-    if (custAgeMs > STALE_RESPONSE_THRESHOLD_MS) {
-      logger.info(
-        {
-          group: group.name,
-          chatJid,
-          custAgeMin: Math.round(custAgeMs / 60000),
-        },
-        'Skipped (stale conversation — last customer message too old)',
-      );
-      lastAgentTimestamp[chatJid] = latestMsg.timestamp;
-      saveState();
-      return true;
-    }
-
-    if (latestOperatorMsg) {
-      const opTime = new Date(latestOperatorMsg.timestamp).getTime();
-      const custTime = new Date(latestCustomerMsg.timestamp).getTime();
-      if (opTime > custTime) {
-        logger.info(
-          {
-            group: group.name,
-            chatJid,
-            opLag: Math.round((opTime - custTime) / 60000),
-          },
-          'Skipped (operator replied after customer — bot stays out)',
-        );
-        lastAgentTimestamp[chatJid] = latestMsg.timestamp;
-        saveState();
-        return true;
+    } else {
+      const custAgeMs =
+        Date.now() - new Date(latestCustomerMsg.timestamp).getTime();
+      if (custAgeMs > STALE_MS) {
+        skipReason = 'last customer message too old';
+        extra.custAgeMin = Math.round(custAgeMs / 60000);
       }
     }
-  }
 
-  // Coexistence: skip response if the most recent CUSTOMER message is still
-  // under manual_mode (Formmy operator handoff). Looking at the latest
-  // customer-sent message — not `.some()` over the whole missed batch —
-  // ensures we recover when Formmy's 30-min timer expires: the next inbound
-  // arrives with manual_mode=false, older messages with manual_mode=true stay
-  // in history (formatMessages() XML — the agent reads them as context) but
-  // no longer block evaluation. Operator messages (is_from_me=true) are
-  // excluded because they're the human's replies, not "pending input" — what
-  // matters is whether the customer is still in the paused window.
-  if (!forceEval) {
-    const latestCustomerMsg = [...actionableMessages]
-      .reverse()
-      .find((m) => !m.is_from_me);
-    const hasManualMode = latestCustomerMsg?.manual_mode === true;
-    if (hasManualMode) {
+    if (skipReason) {
       logger.info(
-        { group: group.name, chatJid },
-        'Skipped (human takeover active — manual_mode)',
+        { group: group.name, chatJid, skipReason, ...extra },
+        'Skipped',
       );
+      lastAgentTimestamp[chatJid] = latestMsg.timestamp;
+      saveState();
       return true;
     }
   } else {
