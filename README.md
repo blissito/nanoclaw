@@ -3,285 +3,195 @@
 </p>
 
 <p align="center">
-  An AI assistant that runs agents securely in their own containers. Lightweight, built to be easily understood and completely customized for your needs. Based on <a href="https://github.com/qwibitai/nanoclaw">NanoClaw</a>.
+  <img src="https://img.shields.io/badge/WhatsApp-25D366?style=for-the-badge&logo=whatsapp&logoColor=white" alt="WhatsApp">
+  &nbsp;
+  <img src="https://img.shields.io/badge/Claude-D97757?style=for-the-badge&logo=anthropic&logoColor=white" alt="Claude Agent SDK">
+  &nbsp;
+  <img src="https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=node.js&logoColor=white" alt="Node.js 20+">
+  &nbsp;
+  <img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
 </p>
 
 <p align="center">
-  <a href="https://nanoclaw.dev">nanoclaw.dev</a>&nbsp; • &nbsp;
-  <a href="README_zh.md">中文</a>&nbsp; • &nbsp;
-  <a href="README_ja.md">日本語</a>&nbsp; • &nbsp;
-  <a href="https://discord.gg/VDdww8qS42"><img src="https://img.shields.io/discord/1470188214710046894?label=Discord&logo=discord&v=2" alt="Discord" valign="middle"></a>&nbsp; • &nbsp;
-  <a href="repo-tokens"><img src="repo-tokens/badge.svg" alt="34.9k tokens, 17% of context window" valign="middle"></a>
+  <strong>GhostyClaw</strong> — un fork de <a href="https://github.com/qwibitai/nanoclaw">NanoClaw</a> orientado a WhatsApp para despliegues reales en México.
+</p>
+
+<p align="center">
+  <img src="https://cdn.simpleicons.org/whatsapp/25D366" alt="WhatsApp" width="20" valign="middle">
+  &nbsp;Voz, imágenes, PDFs, reacciones, menciones — todo conectado a Claude.
 </p>
 
 ---
 
-<h2 align="center">🐳 Now Runs in Docker Sandboxes</h2>
-<p align="center">Every agent gets its own isolated container inside a micro VM.<br>Hypervisor-level isolation. Millisecond startup. No complex setup.</p>
+## Qué es GhostyClaw
 
-**macOS (Apple Silicon)**
+GhostyClaw es un fork productivo de [NanoClaw](https://github.com/qwibitai/nanoclaw). Conserva la filosofía del upstream (un solo proceso, agentes en contenedores aislados, skills en vez de features) pero está endurecido para uso real sobre WhatsApp en español de México, con clientes en producción.
+
+Si buscas la base genérica, ve al upstream. Este fork existe porque WhatsApp como canal principal —con voz, imágenes, documentos y multi-tenant— requiere piezas que el upstream no trae.
+
+## Divergencias con upstream
+
+Solo se documenta lo que **cambia o se añade** respecto a `qwibitai/nanoclaw`. Todo lo demás (arquitectura, skills, filosofía, setup) sigue idéntico al upstream — léelo allá.
+
+### Canal WhatsApp de primera clase
+
+<img src="https://cdn.simpleicons.org/whatsapp/25D366" alt="WhatsApp" width="16" valign="middle"> &nbsp;**WhatsApp es el canal principal**, no un add-on:
+
+- **Voz** — transcripción automática de notas de voz. OpenAI Whisper API por defecto; opción `/use-local-whisper` para correr `whisper.cpp` local en Apple Silicon (gratis, offline).
+- **Imágenes** — vision multimodal nativa de Claude sobre adjuntos de WhatsApp (`/add-image-vision`).
+- **PDFs** — extracción de texto vía `pdftotext` para adjuntos, URLs y archivos locales (`/add-pdf-reader`).
+- **Reacciones** — recibir, enviar, almacenar y buscar reacciones emoji (`/add-reactions`).
+- **Menciones reales** — `@<numero>` con JID en el array de mentions para que WhatsApp dispare notificación (no solo texto cosmético).
+- **Documentos salientes** — envío de PDFs y archivos con preview correcto en mobile (Baileys 7.x con `{ url }`, no Buffer).
+- **Conversaciones 1-a-1** — soporte para chats privados como "grupos individuales" (cada cliente tiene su `CLAUDE.md` y memoria propia).
+- **Modo shared-number** — el bot puede compartir cuenta WhatsApp con humanos sin spawning espurio (gate `ASSISTANT_HAS_OWN_NUMBER`).
+
+### Canales adicionales
+
+Mismo patrón que upstream pero ampliado:
+
+- `/add-whatsapp` — canal principal (Baileys, QR o pairing code)
+- `/add-telegram` — Telegram Bot API
+- `/add-telegram-swarm` — Agent Swarm con un bot por subagente
+- `/add-slack` — Slack via Socket Mode
+- `/add-discord` — Discord bot
+- `/add-gmail` — Gmail como tool o canal completo (OAuth GCP)
+- **Meta WABA directo** (roadmap) — webhook nativo a Meta Cloud API, sin proxy intermedio
+
+### MCP servers pre-instalados
+
+El upstream trae el MCP `nanoclaw` core. GhostyClaw añade un catálogo listo para activar por grupo via `container_config.mcpServers`:
+
+| Server | Propósito |
+|--------|-----------|
+| `easybits` | Almacenamiento de archivos, imágenes, documentos, websites, sandbox Firecracker |
+| `kommo` | CRM Kommo (leads, contactos, pipelines) |
+| `smatch` / `smatch-public` | Admin de clubes deportivos (MongoDB) |
+| `brightdata` | Web scraping y search |
+| `skydropx` | Envíos México (FedEx, DHL, Estafeta, J&T, Sendex) via OAuth2 |
+| `formmy` | Plataforma Formmy (agentes, documentos, integraciones) |
+| `ollama` | Modelos locales para tareas baratas |
+
+Skills correspondientes: `/add-easybits`, `/add-skydropx`, `/add-ollama-tool`, `/add-parallel`, etc.
+
+### Credential proxy con fallback
+
+`src/credential-proxy.ts` no existe en upstream. Permite:
+
+- **OAuth Max + API key fallback** — si el plan Max recibe 429, reintenta automáticamente con API key y modelo Sonnet compatible.
+- **Switch sin rebuild** — comentar/descomentar `CLAUDE_CODE_OAUTH_TOKEN` en `.env` y reiniciar.
+- **Agent Vault (WIP)** — políticas por grupo (rate limit, modelos permitidos, max input tokens), usage logging en ring buffer, endpoints `GET /nanoclaw/vault/usage` y `POST /nanoclaw/vault/policy`.
+
+### Deploy a producción
+
+Upstream asume instalación local. GhostyClaw incluye flujo completo para DigitalOcean:
+
+- **`scripts/prepare-snapshot.sh`** — crea snapshot sanitizado (sin creds, sin DB, sin sesiones) listo para clonar a nuevos clientes via `doctl`.
+- **`scripts/wa-reconnect.sh`** — re-pairing automatizado de WhatsApp con pairing code (default número MX, con manejo de rate limits de Meta).
+- **Multi-droplet** — soporte para varias instancias paralelas (`ghosty-0`, droplets de cliente).
+- **systemd service** — `com.nanoclaw.plist` (macOS launchd) y `nanoclaw.service` (Linux systemd).
+- **Auto-detección de auth mode** — el proxy detecta OAuth vs API key sin intervención manual.
+
+### Skills exclusivos del fork
+
+Adicionales a los del upstream:
+
+- `/add-image-vision` — multimodal sobre imágenes de WhatsApp
+- `/add-voice-transcription` — Whisper API para notas de voz
+- `/use-local-whisper` — switch a `whisper.cpp` local (Apple Silicon)
+- `/add-pdf-reader` — extracción de texto de PDFs
+- `/add-reactions` — reacciones emoji de WhatsApp
+- `/add-skydropx` — envíos México
+- `/add-easybits` — storage cloud
+- `/add-ollama-tool` — modelos locales
+- `/add-parallel` — Parallel AI integration
+- `/add-telegram-swarm` — multi-bot por subagente
+- `/add-compact` — comando manual `/compact` para sesiones largas
+- `/migrate-nanoclaw` — migración intent-based desde fork customizado a upstream limpio
+- `/update-nanoclaw` — bring updates upstream a instalación customizada sin perder cambios
+- `/x-integration` — X (Twitter): post, like, reply, retweet, quote
+
+### Sub-agentes deshabilitados por default
+
+El upstream permite el tool `Agent` para spawn de sub-agentes. En GhostyClaw está **removido** de `buildAllowedTools()` (en `container/agent-runner/src/index.ts`):
+
+- En droplets pequeños (2GB) saturan RAM (~100-150MB por sub-agente)
+- Los sub-agentes **no heredan MCP servers** del padre, así que pierden contexto crítico de DB/tools
+- Se puede reactivar por grupo via `container_config.allowedTools`
+
+Workaround: tareas programadas (`task-scheduler`) funcionan como sub-agentes asíncronos entre contenedores.
+
+### Español de México por default
+
+Prompts, mensajes de sistema y agentes asumen es-MX (tuteo, sin voseo). No hay configuración multi-locale como en upstream.
+
+## Setup
+
+Idéntico al upstream:
 
 ```bash
-curl -fsSL https://nanoclaw.dev/install-docker-sandboxes.sh | bash
-```
-
-**Windows (WSL)**
-
-```bash
-curl -fsSL https://nanoclaw.dev/install-docker-sandboxes-windows.sh | bash
-```
-
-> Currently supported on macOS (Apple Silicon) and Windows (x86). Linux support coming soon.
-
-<p align="center"><a href="https://nanoclaw.dev/blog/nanoclaw-docker-sandboxes">Read the announcement →</a>&nbsp; · &nbsp;<a href="docs/docker-sandboxes.md">Manual setup guide →</a></p>
-
----
-
-## Why I Built GhostyClaw
-
-[OpenClaw](https://github.com/openclaw/openclaw) is an impressive project, but I wouldn't have been able to sleep if I had given complex software I didn't understand full access to my life. OpenClaw has nearly half a million lines of code, 53 config files, and 70+ dependencies. Its security is at the application level (allowlists, pairing codes) rather than true OS-level isolation. Everything runs in one Node process with shared memory.
-
-GhostyClaw provides that same core functionality, but in a codebase small enough to understand: one process and a handful of files. Claude agents run in their own Linux containers with filesystem isolation, not merely behind permission checks.
-
-## Quick Start
-
-```bash
-gh repo fork qwibitai/nanoclaw --clone
+gh repo fork blissito/nanoclaw --clone
 cd nanoclaw
 claude
 ```
 
-<details>
-<summary>Without GitHub CLI</summary>
+Dentro de `claude`, ejecuta `/setup`. Luego `/add-whatsapp` para conectar el canal principal.
 
-1. Fork [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw) on GitHub (click the Fork button)
-2. `git clone https://github.com/<your-username>/nanoclaw.git`
-3. `cd nanoclaw`
-4. `claude`
+> El upstream apunta a `qwibitai/nanoclaw`. Este fork apunta a [`blissito/nanoclaw`](https://github.com/blissito/nanoclaw).
 
-</details>
+## Requisitos
 
-Then run `/setup`. Claude Code handles everything: dependencies, authentication, container setup and service configuration.
+Mismos que upstream:
 
-> **Note:** Commands prefixed with `/` (like `/setup`, `/add-whatsapp`) are [Claude Code skills](https://code.claude.com/docs/en/skills). Type them inside the `claude` CLI prompt, not in your regular terminal. If you don't have Claude Code installed, get it at [claude.com/product/claude-code](https://claude.com/product/claude-code).
-
-## Philosophy
-
-**Small enough to understand.** One process, a few source files and no microservices. If you want to understand the full GhostyClaw codebase, just ask Claude Code to walk you through it.
-
-**Secure by isolation.** Agents run in Linux containers (Apple Container on macOS, or Docker) and they can only see what's explicitly mounted. Bash access is safe because commands run inside the container, not on your host.
-
-**Built for the individual user.** GhostyClaw isn't a monolithic framework; it's software that fits each user's exact needs. Instead of becoming bloatware, GhostyClaw is designed to be bespoke. You make your own fork and have Claude Code modify it to match your needs.
-
-**Customization = code changes.** No configuration sprawl. Want different behavior? Modify the code. The codebase is small enough that it's safe to make changes.
-
-**AI-native.**
-
-- No installation wizard; Claude Code guides setup.
-- No monitoring dashboard; ask Claude what's happening.
-- No debugging tools; describe the problem and Claude fixes it.
-
-**Skills over features.** Instead of adding features (e.g. support for Telegram) to the codebase, contributors submit [claude code skills](https://code.claude.com/docs/en/skills) like `/add-telegram` that transform your fork. You end up with clean code that does exactly what you need.
-
-**Best harness, best model.** GhostyClaw runs on the Claude Agent SDK, which means you're running Claude Code directly. Claude Code is highly capable and its coding and problem-solving capabilities allow it to modify and expand GhostyClaw and tailor it to each user.
-
-## What It Supports
-
-- **Multi-channel messaging** - Talk to your assistant from WhatsApp, Telegram, Discord, Slack, or Gmail. Add channels with skills like `/add-whatsapp` or `/add-telegram`. Run one or many at the same time.
-- **Isolated group context** - Each group has its own `CLAUDE.md` memory, isolated filesystem, and runs in its own container sandbox with only that filesystem mounted to it.
-- **Main channel** - Your private channel (self-chat) for admin control; every group is completely isolated
-- **Scheduled tasks** - Recurring jobs that run Claude and can message you back
-- **Web access** - Search and fetch content from the Web
-- **Container isolation** - Agents are sandboxed in [Docker Sandboxes](https://nanoclaw.dev/blog/nanoclaw-docker-sandboxes) (micro VM isolation), Apple Container (macOS), or Docker (macOS/Linux)
-- **Agent Swarms** - Spin up teams of specialized agents that collaborate on complex tasks
-- **Optional integrations** - Add Gmail (`/add-gmail`) and more via skills
-
-## Usage
-
-Talk to your assistant with the trigger word (default: `@Andy`):
-
-```
-@Andy send an overview of the sales pipeline every weekday morning at 9am (has access to my Obsidian vault folder)
-@Andy review the git history for the past week each Friday and update the README if there's drift
-@Andy every Monday at 8am, compile news on AI developments from Hacker News and TechCrunch and message me a briefing
-```
-
-From the main channel (your self-chat), you can manage groups and tasks:
-
-```
-@Andy list all scheduled tasks across groups
-@Andy pause the Monday briefing task
-@Andy join the Family Chat group
-```
-
-## Customizing
-
-GhostyClaw doesn't use configuration files. To make changes, just tell Claude Code what you want:
-
-- "Change the trigger word to @Bob"
-- "Remember in the future to make responses shorter and more direct"
-- "Add a custom greeting when I say good morning"
-- "Store conversation summaries weekly"
-
-Or run `/customize` for guided changes.
-
-The codebase is small enough that Claude can safely modify it.
-
-## Contributing
-
-**Don't add features. Add skills.**
-
-If you want to add Telegram support, don't create a PR that adds Telegram to the core codebase. Instead, fork GhostyClaw, make the code changes on a branch, and open a PR. We'll create a `skill/telegram` branch from your PR that other users can merge into their fork.
-
-Users then run `/add-telegram` on their fork and get clean code that does exactly what they need, not a bloated system trying to support every use case.
-
-### RFS (Request for Skills)
-
-Skills we'd like to see:
-
-**Communication Channels**
-
-- `/add-signal` - Add Signal as a channel
-
-**Session Management**
-
-- `/clear` - Add a `/clear` command that compacts the conversation (summarizes context while preserving critical information in the same session). Requires figuring out how to trigger compaction programmatically via the Claude Agent SDK.
-
-## Requirements
-
-- macOS or Linux
+- macOS o Linux
 - Node.js 20+
 - [Claude Code](https://claude.ai/download)
-- [Apple Container](https://github.com/apple/container) (macOS) or [Docker](https://docker.com/products/docker-desktop) (macOS/Linux)
+- [Docker](https://docker.com/products/docker-desktop) o [Apple Container](https://github.com/apple/container)
 
-## Architecture
-
-```
-Channels --> SQLite --> Polling loop --> Container (Claude Agent SDK) --> Response
-```
-
-Single Node.js process. Channels are added via skills and self-register at startup — the orchestrator connects whichever ones have credentials present. Agents execute in isolated Linux containers with filesystem isolation. Only mounted directories are accessible. Per-group message queue with concurrency control. IPC via filesystem.
-
-For the full architecture details, see [docs/SPEC.md](docs/SPEC.md).
-
-Key files:
-
-- `src/index.ts` - Orchestrator: state, message loop, agent invocation
-- `src/channels/registry.ts` - Channel registry (self-registration at startup)
-- `src/ipc.ts` - IPC watcher and task processing
-- `src/router.ts` - Message formatting and outbound routing
-- `src/group-queue.ts` - Per-group queue with global concurrency limit
-- `src/container-runner.ts` - Spawns streaming agent containers
-- `src/task-scheduler.ts` - Runs scheduled tasks
-- `src/db.ts` - SQLite operations (messages, groups, sessions, state)
-- `groups/*/CLAUDE.md` - Per-group memory
-
-## FAQ
-
-**Why Docker?**
-
-Docker provides cross-platform support (macOS, Linux and even Windows via WSL2) and a mature ecosystem. On macOS, you can optionally switch to Apple Container via `/convert-to-apple-container` for a lighter-weight native runtime.
-
-**Can I run this on Linux?**
-
-Yes. Docker is the default runtime and works on both macOS and Linux. Just run `/setup`.
-
-**Is this secure?**
-
-Agents run in containers, not behind application-level permission checks. They can only access explicitly mounted directories. You should still review what you're running, but the codebase is small enough that you actually can. See [docs/SECURITY.md](docs/SECURITY.md) for the full security model.
-
-**Why no configuration files?**
-
-We don't want configuration sprawl. Every user should customize GhostyClaw so that the code does exactly what they want, rather than configuring a generic system. If you prefer having config files, you can tell Claude to add them.
-
-**Can I use third-party or open-source models?**
-
-Yes. GhostyClaw supports any Claude API-compatible model endpoint. Set these environment variables in your `.env` file:
+## Deploy manual a producción
 
 ```bash
-ANTHROPIC_BASE_URL=https://your-api-endpoint.com
-ANTHROPIC_AUTH_TOKEN=your-token-here
-```
-
-This allows you to use:
-
-- Local models via [Ollama](https://ollama.ai) with an API proxy
-- Open-source models hosted on [Together AI](https://together.ai), [Fireworks](https://fireworks.ai), etc.
-- Custom model deployments with Anthropic-compatible APIs
-
-Note: The model must support the Anthropic API format for best compatibility.
-
-**How do I debug issues?**
-
-Ask Claude Code. "Why isn't the scheduler running?" "What's in the recent logs?" "Why did this message not get a response?" That's the AI-native approach that underlies GhostyClaw.
-
-**Why isn't the setup working for me?**
-
-If you have issues, during setup, Claude will try to dynamically fix them. If that doesn't work, run `claude`, then run `/debug`. If Claude finds an issue that is likely affecting other users, open a PR to modify the setup SKILL.md.
-
-**What changes will be accepted into the codebase?**
-
-Only security fixes, bug fixes, and clear improvements will be accepted to the base configuration. That's all.
-
-Everything else (new capabilities, OS compatibility, hardware support, enhancements) should be contributed as skills.
-
-This keeps the base system minimal and lets every user customize their installation without inheriting features they don't want.
-
-## Manual Deploy
-
-For deploying code changes to the DigitalOcean production droplet:
-
-```bash
-# 1. Get the droplet IP
+# 1. Obtener IP del droplet
 doctl compute droplet list --format Name,PublicIPv4 --no-header | grep nanoclaw-prod
 
 # 2. SSH, pull, build, restart
 ssh root@<IP> "cd /home/nanoclaw/app && git pull && npm run build && systemctl restart nanoclaw"
 
-# 3. Verify
+# 3. Verificar
 ssh root@<IP> "systemctl status nanoclaw --no-pager | head -8"
 ```
 
-If a container is blocking the restart:
-
-```bash
-ssh root@<IP> "docker kill \$(docker ps -q); systemctl restart nanoclaw"
-```
-
-If you need a full reboot:
-
-```bash
-ssh root@<IP> "docker kill \$(docker ps -q) 2>/dev/null; systemctl stop nanoclaw; reboot"
-ssh root@134.199.239.173 "docker kill \$(docker ps -q) 2>/dev/null; systemctl stop nanoclaw; reboot"
-# Wait ~30s, then pull + build + verify
-```
-
-Container image rebuild (only needed for Dockerfile/apt/global npm changes):
+Rebuild del container (solo para cambios en `Dockerfile`, `apt` o `npm install -g` globales):
 
 ```bash
 ssh root@<IP> "cd /home/nanoclaw/app && ./container/build.sh"
 ```
 
-New env vars must be added manually (`.env` is gitignored):
+> Cambios en `container/agent-runner/src/*.ts` **requieren rebuild** aunque el código esté montado — la prueba de mtime del entrypoint falla en producción.
+
+Variables de entorno nuevas (`.env` está gitignored):
 
 ```bash
 ssh root@<IP> "echo 'NEW_VAR=value' >> /home/nanoclaw/app/.env && systemctl restart nanoclaw"
 ```
 
-After deploys that add/modify skills:
+Tras deploys que añadan o modifiquen skills:
 
 ```bash
 ssh root@<IP> "chown -R nanoclaw:nanoclaw /home/nanoclaw/app/data/sessions/"
 ```
 
-## Community
+## Documentación adicional
 
-Questions? Ideas? [Join the Discord](https://discord.gg/VDdww8qS42).
+- [docs/SPEC.md](docs/SPEC.md) — arquitectura completa
+- [docs/SECURITY.md](docs/SECURITY.md) — modelo de seguridad
+- [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) — decisiones de diseño
+- [docs/PUBLIC_AGENT_SURFACE.md](docs/PUBLIC_AGENT_SURFACE.md) — superficie pública del agente WABA
+- [CLAUDE.md](CLAUDE.md) — guía operativa para el repo
+- [CHANGELOG.md](CHANGELOG.md) — cambios y migraciones
 
-## Changelog
+Para todo lo no documentado aquí, aplica la documentación del upstream: [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw).
 
-See [CHANGELOG.md](CHANGELOG.md) for breaking changes and migration notes.
+## Licencia
 
-## License
-
-MIT
+MIT (heredada del upstream).
