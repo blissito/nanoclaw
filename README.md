@@ -35,28 +35,69 @@ Solo se documenta lo que **cambia o se añade** respecto a `qwibitai/nanoclaw`. 
 
 ### Canal WhatsApp de primera clase
 
-<img src="https://cdn.simpleicons.org/whatsapp/25D366" alt="WhatsApp" width="16" valign="middle"> &nbsp;**WhatsApp es el canal principal**, no un add-on:
+<img src="https://cdn.simpleicons.org/whatsapp/25D366" alt="WhatsApp" width="16" valign="middle"> &nbsp;**WhatsApp es el canal principal**, no un add-on. Todo lo siguiente ya viene encendido en producción.
+
+**Entrada — lo que el agente entiende:**
 
 - **Voz** — transcripción automática de notas de voz. OpenAI Whisper API por defecto; opción `/use-local-whisper` para correr `whisper.cpp` local en Apple Silicon (gratis, offline).
 - **Imágenes** — vision multimodal nativa de Claude sobre adjuntos de WhatsApp (`/add-image-vision`).
 - **PDFs** — extracción de texto vía `pdftotext` para adjuntos, URLs y archivos locales (`/add-pdf-reader`).
-- **Reacciones** — recibir, enviar, almacenar y buscar reacciones emoji (`/add-reactions`).
-- **Menciones reales** — `@<numero>` con JID en el array de mentions para que WhatsApp dispare notificación (no solo texto cosmético).
-- **Documentos salientes** — envío de PDFs y archivos con preview correcto en mobile (Baileys 7.x con `{ url }`, no Buffer).
-- **Conversaciones 1-a-1** — soporte para chats privados como "grupos individuales" (cada cliente tiene su `CLAUDE.md` y memoria propia).
+- **Reacciones** — emoji reactions parseadas como señales (`/add-reactions`).
+- **Conversaciones 1-a-1** — chats privados tratados como "grupos individuales", cada cliente con su `CLAUDE.md` y memoria aislada.
 - **Modo shared-number** — el bot puede compartir cuenta WhatsApp con humanos sin spawning espurio (gate `ASSISTANT_HAS_OWN_NUMBER`).
+
+**Salida — lo que el agente entrega:**
+
+- **Texto con menciones reales** — `@<numero>` con JID en el array `mentions` para que WhatsApp dispare la notificación (no texto cosmético).
+- **Notas de voz (TTS)** — el agente responde con audio real, voces es-MX vía ElevenLabs (Sofi usa la voz `regina` por default).
+- **Documentos** — PDFs y archivos con preview correcto en mobile (Baileys 7.x con `{ url }`, no Buffer).
+- **Imágenes y archivos generados al vuelo** — sube a EasyBits y entrega URLs firmadas o públicas directo al chat.
+- **Reacciones de salida** — el agente puede reaccionar a mensajes como confirmación rápida.
+
+**Capacidades encendidas que aparecen en el chat:**
+
+- **Búsqueda web y scraping** — BrightData MCP para investigar URLs, buscar y extraer contenido sin salir de WhatsApp.
+- **Sandbox de código** — ejecución aislada en microVMs Firecracker via EasyBits (`sandbox_create`, `sandbox_exec`, `sandbox_run_code`).
+- **Tareas programadas** — el agente agenda recordatorios, reportes recurrentes y briefings que llegan al chat por cron.
+- **Coexistencia bot-humano** — pausa automática cuando un operador humano responde en el mismo chat WABA (no se monta encima del humano).
+- **Fecha viva** — `currentDate` se refresca por turno via `UserPromptSubmit` hook; contenedores long-lived no "congelan" la fecha.
+- **Fallback de rate-limit transparente** — si el plan Max recibe 429, reintenta con API key + Sonnet sin que el usuario lo note.
+- **`/compact` desde chat de control** — compactación manual del contexto para sesiones largas sin perder el hilo.
+- **Filtro anti-meta-respuestas** — silencia leaks tipo "(Sin acción…)" para que el agente no rompa la inmersión.
+
+### WhatsApp Business API vía Formmy (canal productivo)
+
+Para despliegues de cliente sobre **WhatsApp Business API oficial** (no Baileys), GhostyClaw incluye el canal `formmy-whatsapp` (`src/channels/formmy-whatsapp.ts`). Diferencia clave con upstream: existe una ruta productiva sancionada por Meta, no solo Baileys (que es linked-device).
+
+```
+Cliente WhatsApp ↔ Meta Cloud API ↔ Formmy (formmy.app) ↔ NanoClaw ↔ Container Claude
+```
+
+- **Formmy actúa como solution provider** (gestiona tokens, número, plantillas en Meta Business Manager).
+- **NanoClaw recibe webhooks** de Formmy y responde por el mismo bridge — los mensajes fluyen vía HTTP, no via socket WhatsApp.
+- **Conversaciones 1:1** se llaman *WABA chats*, no "grupos". Cada chat tiene su propio `CLAUDE.md` y memoria aislada.
+- **Superficie pública del agente** está restringida vía `FORMMY_PUBLIC_TEMPLATE` y `skills-public/` para evitar fuga de tools internos a usuarios finales — ver [`docs/PUBLIC_AGENT_SURFACE.md`](docs/PUBLIC_AGENT_SURFACE.md).
+- **Sofi WABA** — agente público de demo activado siguiendo [`docs/SOFI_WABA_ACTIVATION.md`](docs/SOFI_WABA_ACTIVATION.md).
+
+Concerns conocidos: Formmy es SPOF para mensajería (si Formmy se cae, los chats WABA se interrumpen) y agrega ~200-400ms de latencia. El roadmap incluye un canal `meta-waba` directo que elimina al intermediario (NanoClaw ↔ Meta Cloud API), manteniendo a Formmy solo como gestor de credenciales.
+
+Documentación detallada:
+
+- [`docs/formmy-channel-integration.md`](docs/formmy-channel-integration.md) — arquitectura del canal
+- [`docs/formmy-nanoclaw-bridge.md`](docs/formmy-nanoclaw-bridge.md) — protocolo del bridge
 
 ### Canales adicionales
 
 Mismo patrón que upstream pero ampliado:
 
-- `/add-whatsapp` — canal principal (Baileys, QR o pairing code)
+- `/add-whatsapp` — Baileys (linked-device, QR o pairing code) — para uso personal o cuentas no-WABA
+- **`formmy-whatsapp`** — WABA oficial via Formmy bridge (productivo, ver arriba)
 - `/add-telegram` — Telegram Bot API
 - `/add-telegram-swarm` — Agent Swarm con un bot por subagente
 - `/add-slack` — Slack via Socket Mode
 - `/add-discord` — Discord bot
 - `/add-gmail` — Gmail como tool o canal completo (OAuth GCP)
-- **Meta WABA directo** (roadmap) — webhook nativo a Meta Cloud API, sin proxy intermedio
+- **Meta WABA directo** (roadmap) — webhook nativo a Meta Cloud API, sin Formmy en el path de mensajes
 
 ### MCP servers pre-instalados
 
