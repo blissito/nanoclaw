@@ -14,10 +14,13 @@ groups/*
 !groups/main/
 !groups/global/
 !groups/_training/
+!groups/whatsapp_siiqtec-cotizador/
 groups/main/*
 groups/global/*
+groups/whatsapp_siiqtec-cotizador/*
 !groups/main/CLAUDE.md
 !groups/global/CLAUDE.md
+!groups/whatsapp_siiqtec-cotizador/CLAUDE.md
 
 # Secrets
 *.keys.json
