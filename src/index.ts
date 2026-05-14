@@ -838,9 +838,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         // these — drop them on the host side as defense-in-depth.
         // Stripped of surrounding parens/quotes first so the patterns match
         // both "(Sin acción…)" and bare "Sin acción…".
-        const metaCandidate = text
-          .replace(/^[\s("']+|[\s)"']+$/g, '')
-          .trim();
+        const metaCandidate = text.replace(/^[\s("']+|[\s)"']+$/g, '').trim();
         const isMetaNoResponse =
           /^no\s+response\s+(needed|required|necessary)\.?$/i.test(text) ||
           /^(I don'?t need to|no need to|nothing to)\s+respond/i.test(text) ||
