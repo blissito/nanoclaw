@@ -588,6 +588,18 @@ async function runQuery(
     globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
   }
 
+  // LLMs miscompute weekday from an ISO date alone, so inject the host's
+  // current date + day name in es-MX as ground truth.
+  const todayMx = new Intl.DateTimeFormat('es-MX', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    timeZone: 'America/Mexico_City',
+  }).format(new Date());
+  const dateNote = `\n\n## Fecha actual (host)\nHoy es **${todayMx}** (America/Mexico_City). Úsala como verdad absoluta para referencias a "hoy", "mañana", "ayer" y al día de la semana. No la recalcules a partir de la fecha ISO; si dudas, corre \`date\` en Bash.`;
+  const systemAppend = globalClaudeMd ? globalClaudeMd + dateNote : dateNote;
+
   // Discover additional directories mounted at /workspace/extra/*
   // These are passed to the SDK so their CLAUDE.md files are loaded automatically
   const extraDirs: string[] = [];
@@ -612,7 +624,7 @@ async function runQuery(
       resume: sessionId,
       resumeSessionAt: resumeAt,
       systemPrompt: globalClaudeMd
-        ? { type: 'preset', preset: 'claude_code', append: globalClaudeMd }
+        ? { type: 'preset', preset: 'claude_code', append: systemAppend }
         : undefined,
       allowedTools: buildAllowedTools(containerInput, mcpServerPath),
       env: sdkEnv,
