@@ -545,6 +545,82 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   );
   if (actionableMessages.length === 0) return true;
 
+  // The forceEval flag (set by clear_coexistence_pause IPC handler) bypasses
+  // the manual_mode AND freshness checks for one run, so the admin can
+  // explicitly release a chat regardless of staleness. Consume the flag once.
+  const forceEval = forceNextEvaluation.delete(chatJid);
+
+  // Pending-customer guard: only spawn if there's a customer message that
+  // is (a) recent AND (b) more recent than the operator's last reply.
+  // Without this, the message loop spawns agents on conversations where
+  // the operator has clearly closed the loop. Observed 2026-05-14 on
+  // sofi-0 after the coexistence stuck-skip fix unstuck thousands of
+  // long-paused chats: Sofi would wake up on a chat from days ago where
+  // the customer's last input was "muchas gracias" and the operator had
+  // already replied with closing pleasantries, then dump a meta-comment
+  // analyzing the conversation ("Esta conversación ya está resuelta
+  // entre el Operador y X — no hay acción pendiente…"). Each such
+  // spurious turn cost ~$0.13 and broke the customer experience.
+  //
+  // Rule: skip when EITHER (1) latest customer msg is older than 1h, OR
+  // (2) operator's last reply post-dates the customer's last input
+  // (operator is handling — bot stays out). Bypass for operator-explicit
+  // paths via forceEval.
+  const STALE_RESPONSE_THRESHOLD_MS = 60 * 60 * 1000;
+  const latestMsg = actionableMessages[actionableMessages.length - 1];
+  if (!forceEval) {
+    const latestCustomerMsg = [...actionableMessages]
+      .reverse()
+      .find((m) => !m.is_from_me && !m.is_bot_message);
+    const latestOperatorMsg = [...actionableMessages]
+      .reverse()
+      .find((m) => m.is_from_me && !m.is_bot_message);
+
+    if (!latestCustomerMsg) {
+      logger.info(
+        { group: group.name, chatJid },
+        'Skipped (no pending customer message — only operator/bot activity)',
+      );
+      lastAgentTimestamp[chatJid] = latestMsg.timestamp;
+      saveState();
+      return true;
+    }
+
+    const custAgeMs =
+      Date.now() - new Date(latestCustomerMsg.timestamp).getTime();
+    if (custAgeMs > STALE_RESPONSE_THRESHOLD_MS) {
+      logger.info(
+        {
+          group: group.name,
+          chatJid,
+          custAgeMin: Math.round(custAgeMs / 60000),
+        },
+        'Skipped (stale conversation — last customer message too old)',
+      );
+      lastAgentTimestamp[chatJid] = latestMsg.timestamp;
+      saveState();
+      return true;
+    }
+
+    if (latestOperatorMsg) {
+      const opTime = new Date(latestOperatorMsg.timestamp).getTime();
+      const custTime = new Date(latestCustomerMsg.timestamp).getTime();
+      if (opTime > custTime) {
+        logger.info(
+          {
+            group: group.name,
+            chatJid,
+            opLag: Math.round((opTime - custTime) / 60000),
+          },
+          'Skipped (operator replied after customer — bot stays out)',
+        );
+        lastAgentTimestamp[chatJid] = latestMsg.timestamp;
+        saveState();
+        return true;
+      }
+    }
+  }
+
   // Coexistence: skip response if the most recent CUSTOMER message is still
   // under manual_mode (Formmy operator handoff). Looking at the latest
   // customer-sent message — not `.some()` over the whole missed batch —
@@ -554,11 +630,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // no longer block evaluation. Operator messages (is_from_me=true) are
   // excluded because they're the human's replies, not "pending input" — what
   // matters is whether the customer is still in the paused window.
-  //
-  // The forceEval flag (set by clear_coexistence_pause IPC handler) bypasses
-  // this check for one run, so the admin can explicitly release a chat even
-  // when no fresh customer message has arrived.
-  const forceEval = forceNextEvaluation.delete(chatJid);
   if (!forceEval) {
     const latestCustomerMsg = [...actionableMessages]
       .reverse()
