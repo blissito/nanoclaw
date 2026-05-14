@@ -78,6 +78,18 @@ export interface IpcDeps {
   updateProfilePicture: (jid: string, filePath: string) => Promise<void>;
   updateGroupName: (jid: string, name: string) => Promise<void>;
   releaseCoexistence: (jid: string) => Promise<void>;
+  /**
+   * Mark a chat to bypass the coexistence (manual_mode) skip on its next
+   * processGroupMessages run. Used after `releaseCoexistence` to wake the
+   * agent so it reads the operator↔customer history and decides whether to
+   * follow up. The flag is consumed once; no synthetic message is injected.
+   */
+  forceEvaluationOnce?: (jid: string) => void;
+  /**
+   * Enqueue a single check of this chat through the GroupQueue. Same path the
+   * message loop uses on every tick; idempotent and serialized per-chat.
+   */
+  enqueueMessageCheck?: (jid: string) => void;
   setConversationTag: (
     jid: string,
     action: 'add' | 'remove',
@@ -595,6 +607,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
               ) {
                 try {
                   await deps.releaseCoexistence(data.chatJid);
+                  // Wake the worker chat: bypass the manual_mode skip on the
+                  // next evaluation and enqueue it via the same queue the
+                  // message loop uses. Agent reads operator↔customer history
+                  // from formatMessages() XML and decides whether to follow
+                  // up. No synthetic message is injected.
+                  deps.forceEvaluationOnce?.(data.chatJid);
+                  deps.enqueueMessageCheck?.(data.chatJid);
                   logger.info(
                     { sourceGroup, chatJid: data.chatJid },
                     'Coexistence pause release requested via IPC',

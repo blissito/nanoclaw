@@ -127,6 +127,19 @@ const agentRunStartedAt: Record<string, string> = {};
 // markers that don't appear in legit customer-facing text.
 const agentRunOutbound: Record<string, number> = {};
 
+// Per-chat one-shot flag: when set, the next processGroupMessages run for that
+// chat will bypass the manual_mode skip (Phase 2 of coexistence handoff). The
+// flag is consumed (deleted) on read. Today the only writer is the
+// `clear_coexistence_pause` IPC handler — when the admin agent releases an
+// upstream pause, we want the worker chat to re-evaluate even if its pending
+// messages still carry stale manual_mode=true flags from the pre-release
+// webhooks. The agent then reads operator↔customer history (already in the
+// formatMessages() XML) and decides whether to follow up.
+const forceNextEvaluation = new Set<string>();
+export function forceEvaluationOnce(chatJid: string): void {
+  forceNextEvaluation.add(chatJid);
+}
+
 // Patterns that mark a `result.result` text as post-tool narration when an
 // MCP outbound already landed in the same run. Keep narrow — anything that
 // is even ambiguously customer-facing should NOT match.
@@ -521,14 +534,37 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   );
   if (actionableMessages.length === 0) return true;
 
-  // Coexistence: skip response if human agent has taken over (Formmy manual_mode)
-  const hasManualMode = actionableMessages.some((m) => m.manual_mode);
-  if (hasManualMode) {
+  // Coexistence: skip response if the most recent CUSTOMER message is still
+  // under manual_mode (Formmy operator handoff). Looking at the latest
+  // customer-sent message — not `.some()` over the whole missed batch —
+  // ensures we recover when Formmy's 30-min timer expires: the next inbound
+  // arrives with manual_mode=false, older messages with manual_mode=true stay
+  // in history (formatMessages() XML — the agent reads them as context) but
+  // no longer block evaluation. Operator messages (is_from_me=true) are
+  // excluded because they're the human's replies, not "pending input" — what
+  // matters is whether the customer is still in the paused window.
+  //
+  // The forceEval flag (set by clear_coexistence_pause IPC handler) bypasses
+  // this check for one run, so the admin can explicitly release a chat even
+  // when no fresh customer message has arrived.
+  const forceEval = forceNextEvaluation.delete(chatJid);
+  if (!forceEval) {
+    const latestCustomerMsg = [...actionableMessages]
+      .reverse()
+      .find((m) => !m.is_from_me);
+    const hasManualMode = latestCustomerMsg?.manual_mode === true;
+    if (hasManualMode) {
+      logger.info(
+        { group: group.name, chatJid },
+        'Skipped (human takeover active — manual_mode)',
+      );
+      return true;
+    }
+  } else {
     logger.info(
       { group: group.name, chatJid },
-      'Skipped (human takeover active — manual_mode)',
+      'Force-evaluating chat (coexistence release)',
     );
-    return true;
   }
 
   // Upstream pause gate: Formmy is authoritative about operator handoff and
@@ -1875,6 +1911,12 @@ async function main(): Promise<void> {
     },
     notifyMcpOutboundSent: (jid) => {
       agentRunOutbound[jid] = (agentRunOutbound[jid] || 0) + 1;
+    },
+    forceEvaluationOnce: (jid) => {
+      forceEvaluationOnce(jid);
+    },
+    enqueueMessageCheck: (jid) => {
+      queue.enqueueMessageCheck(jid);
     },
     registeredGroups: () => registeredGroups,
     registerGroup,
