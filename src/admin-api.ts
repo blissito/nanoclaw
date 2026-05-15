@@ -673,6 +673,29 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    // GET /chat/ready
+    // Readiness probe for the web chat endpoint. Returns 200 {ready:true}
+    // only when both prerequisites are met:
+    //   1. Docker daemon responds to `docker info`
+    //   2. The agent container image (nanoclaw-agent:latest) exists locally
+    // The wrapper builds the agent image in background on first boot (~5min);
+    // until then, /chat would fail with "image not found". Easybits polls
+    // this endpoint and only transitions Agent.status="building" → "running"
+    // when ready, so the UI input stays disabled while we boot.
+    if (method === 'GET' && parts[0] === 'chat' && parts[1] === 'ready' && parts.length === 2) {
+      try {
+        await execFileAsync('docker', ['info', '--format', '{{.ServerVersion}}'], { timeout: 3000 });
+      } catch (err) {
+        return send(res, 200, { ready: false, reason: 'docker_not_ready' });
+      }
+      try {
+        await execFileAsync('docker', ['image', 'inspect', 'nanoclaw-agent:latest'], { timeout: 3000 });
+      } catch (err) {
+        return send(res, 200, { ready: false, reason: 'agent_image_building' });
+      }
+      return send(res, 200, { ready: true });
+    }
+
     // POST /chat
     // SSE chat endpoint for the ghosty.studio web widget (consumed via the
     // sandbox-host proxy /v1/sandbox/{id}/agent/message). Auth: Bearer
@@ -692,8 +715,10 @@ const server = http.createServer(async (req, res) => {
     // chunks, scheduled for v2.
     if (method === 'POST' && parts[0] === 'chat' && parts.length === 1) {
       const body = await readBody(req).catch(() => null);
-      const content = typeof body?.content === 'string' ? body.content.trim() : '';
-      if (!content) return send(res, 400, { error: 'content (string) required' });
+      const content =
+        typeof body?.content === 'string' ? body.content.trim() : '';
+      if (!content)
+        return send(res, 400, { error: 'content (string) required' });
 
       const WEB_FOLDER = 'web';
       const WEB_JID = 'web@chat.local';
@@ -708,13 +733,14 @@ const server = http.createServer(async (req, res) => {
         };
         setRegisteredGroup(WEB_JID, skeleton);
         group = getRegisteredGroupByFolder(WEB_FOLDER);
-        if (!group) return send(res, 500, { error: 'failed to create web group' });
+        if (!group)
+          return send(res, 500, { error: 'failed to create web group' });
       }
 
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache, no-transform',
-        'Connection': 'keep-alive',
+        Connection: 'keep-alive',
         'X-Accel-Buffering': 'no',
       });
       const writeEvent = (data: unknown) =>
@@ -724,7 +750,8 @@ const server = http.createServer(async (req, res) => {
       writeEvent({ type: 'ping' });
 
       try {
-        const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : undefined;
+        const sessionId =
+          typeof body?.sessionId === 'string' ? body.sessionId : undefined;
         const result = await runContainerAgent(
           group,
           {
@@ -741,9 +768,15 @@ const server = http.createServer(async (req, res) => {
         } else {
           writeEvent({ type: 'chunk', value: result.result ?? '' });
         }
-        writeEvent({ type: 'done', sessionId: result.newSessionId ?? sessionId });
+        writeEvent({
+          type: 'done',
+          sessionId: result.newSessionId ?? sessionId,
+        });
       } catch (err) {
-        writeEvent({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+        writeEvent({
+          type: 'error',
+          message: err instanceof Error ? err.message : String(err),
+        });
       }
       res.end();
       return;
