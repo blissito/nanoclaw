@@ -683,7 +683,8 @@ const server = http.createServer(async (req, res) => {
           const fm = md.match(/^---\r?\n([\s\S]*?)\r?\n---/);
           if (fm) {
             const descMatch = fm[1].match(/^description:\s*(.+)$/m);
-            if (descMatch) description = descMatch[1].trim().replace(/^["']|["']$/g, '');
+            if (descMatch)
+              description = descMatch[1].trim().replace(/^["']|["']$/g, '');
           }
           let files: string[] = [];
           let sizeBytes = 0;
