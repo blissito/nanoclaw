@@ -143,20 +143,15 @@ export class WhatsAppChannel implements Channel {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
-        // Write QR data to file so external scripts can display it
+        // Write QR data to file so external scripts can display it.
+        // In managed Firecracker deployments (ghosty.studio) the QR is read
+        // out of the volume by the control plane and rendered for the user
+        // to scan. We DO NOT exit when unpaired — the daemon stays up so
+        // other channels (admin-api /chat) keep serving while the user
+        // completes pairing async.
         const qrFile = path.join(STORE_DIR, 'qr-code.txt');
         fs.writeFileSync(qrFile, qr);
-        logger.info('WhatsApp QR code written to store/qr-code.txt');
-
-        if (!phoneNumber && !process.env.WHATSAPP_RECONNECT_MODE) {
-          const msg =
-            'WhatsApp authentication required. Run /setup in Claude Code.';
-          logger.error(msg);
-          exec(
-            `osascript -e 'display notification "${msg}" with title "NanoClaw" sound name "Basso"'`,
-          );
-          setTimeout(() => process.exit(1), 1000);
-        }
+        logger.info('WhatsApp QR code written to store/qr-code.txt — scan it to pair');
       }
 
       if (connection === 'close') {
