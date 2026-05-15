@@ -635,6 +635,84 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    // GET /admin/skills
+    // Lista los skills instalados en .claude/skills/ del primer grupo
+    // registrado (single-agent VMs ghostyclaw). Parsea frontmatter mínimo
+    // de SKILL.md (name, description). Source of truth para la UI.
+    if (
+      method === 'GET' &&
+      parts[0] === 'admin' &&
+      parts[1] === 'skills' &&
+      parts.length === 2
+    ) {
+      const dataDir = process.env.NANOCLAW_DATA_DIR ?? path.resolve('data');
+      const skills: Array<{
+        name: string;
+        description: string;
+        files: string[];
+        sizeBytes: number;
+        uploadedAt: string;
+      }> = [];
+      const groups = Object.entries(getAllRegisteredGroups());
+      for (const [, group] of groups) {
+        const skillsDir = path.join(
+          dataDir,
+          'sessions',
+          group.folder,
+          '.claude',
+          'skills',
+        );
+        if (!fs.existsSync(skillsDir)) continue;
+        for (const name of fs.readdirSync(skillsDir)) {
+          const skillDir = path.join(skillsDir, name);
+          let st: fs.Stats;
+          try {
+            st = fs.statSync(skillDir);
+          } catch {
+            continue;
+          }
+          if (!st.isDirectory()) continue;
+          const mdPath = path.join(skillDir, 'SKILL.md');
+          let description = '';
+          let md = '';
+          try {
+            md = fs.readFileSync(mdPath, 'utf8');
+          } catch {
+            continue;
+          }
+          const fm = md.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+          if (fm) {
+            const descMatch = fm[1].match(/^description:\s*(.+)$/m);
+            if (descMatch) description = descMatch[1].trim().replace(/^["']|["']$/g, '');
+          }
+          let files: string[] = [];
+          let sizeBytes = 0;
+          try {
+            files = fs.readdirSync(skillDir);
+            for (const f of files) {
+              try {
+                sizeBytes += fs.statSync(path.join(skillDir, f)).size;
+              } catch {
+                /* ignore */
+              }
+            }
+          } catch {
+            /* ignore */
+          }
+          skills.push({
+            name,
+            description,
+            files,
+            sizeBytes,
+            uploadedAt: st.mtime.toISOString(),
+          });
+        }
+        // Solo el primer grupo — ghostyclaw VMs son single-agent.
+        break;
+      }
+      return send(res, 200, { skills });
+    }
+
     // POST /admin/skills/install
     // Body: { name: string, path: string, files: string[] }
     //
