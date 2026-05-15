@@ -681,7 +681,10 @@ const server = http.createServer(async (req, res) => {
           fs.cpSync(srcPath, dstDir, { recursive: true });
           copied.push(group.folder);
         } catch (err: any) {
-          failed.push({ folder: group.folder, error: String(err).slice(0, 200) });
+          failed.push({
+            folder: group.folder,
+            error: String(err).slice(0, 200),
+          });
         }
       }
       // Cleanup source — el skill ahora vive en cada `.claude/skills/<name>/`.
