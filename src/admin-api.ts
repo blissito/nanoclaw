@@ -30,6 +30,7 @@ import {
   deleteMessagesByChatJid,
   getRegisteredGroupByFolder,
   storeMessageDirect,
+  updateChatName,
 } from './db.js';
 
 const execFileAsync = promisify(execFile);
@@ -936,7 +937,14 @@ const server = http.createServer(async (req, res) => {
       // Persist el user message ahora — el bot message se inserta cuando
       // el container responde (en el onOutput callback más abajo). Misma tabla
       // que usa el flujo WhatsApp; chat_jid = WEB_JID los agrupa para activity.
+      // El INSERT de messages tiene FK → chats.jid, así que upserteamos el chat
+      // padre primero (idempotente vía ON CONFLICT en updateChatName).
       const userTimestamp = new Date().toISOString();
+      try {
+        updateChatName(WEB_JID, 'Web Chat');
+      } catch (err) {
+        console.error('[admin-api /chat] upsert chat row failed', err);
+      }
       try {
         storeMessageDirect({
           id: `web-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -1001,7 +1009,10 @@ const server = http.createServer(async (req, res) => {
                     is_bot_message: true,
                   });
                 } catch (err) {
-                  console.error('[admin-api /chat] store bot message failed', err);
+                  console.error(
+                    '[admin-api /chat] store bot message failed',
+                    err,
+                  );
                 }
               }
               writeEvent({
