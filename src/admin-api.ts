@@ -29,6 +29,7 @@ import {
   deleteSession,
   deleteMessagesByChatJid,
   getRegisteredGroupByFolder,
+  storeMessageDirect,
 } from './db.js';
 
 const execFileAsync = promisify(execFile);
@@ -932,6 +933,25 @@ const server = http.createServer(async (req, res) => {
       const writeEvent = (data: unknown) =>
         res.write(`data: ${JSON.stringify(data)}\n\n`);
 
+      // Persist el user message ahora — el bot message se inserta cuando
+      // el container responde (en el onOutput callback más abajo). Misma tabla
+      // que usa el flujo WhatsApp; chat_jid = WEB_JID los agrupa para activity.
+      const userTimestamp = new Date().toISOString();
+      try {
+        storeMessageDirect({
+          id: `web-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          chat_jid: WEB_JID,
+          sender: 'web-user',
+          sender_name: 'Usuario',
+          content,
+          timestamp: userTimestamp,
+          is_from_me: false,
+          is_bot_message: false,
+        });
+      } catch (err) {
+        console.error('[admin-api /chat] store user message failed', err);
+      }
+
       // Keep-alive so the proxy doesn't time out while runContainerAgent boots.
       writeEvent({ type: 'ping' });
 
@@ -967,6 +987,22 @@ const server = http.createServer(async (req, res) => {
                 });
               } else if (output.result) {
                 writeEvent({ type: 'chunk', value: output.result });
+                // Persist bot reply para que la pestaña Conversaciones lo
+                // muestre. Si error, no persistimos — evita ruido.
+                try {
+                  storeMessageDirect({
+                    id: `web-bot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                    chat_jid: WEB_JID,
+                    sender: 'agent',
+                    sender_name: 'Agente',
+                    content: output.result,
+                    timestamp: new Date().toISOString(),
+                    is_from_me: true,
+                    is_bot_message: true,
+                  });
+                } catch (err) {
+                  console.error('[admin-api /chat] store bot message failed', err);
+                }
               }
               writeEvent({
                 type: 'done',
