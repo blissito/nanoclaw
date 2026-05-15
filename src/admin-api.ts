@@ -28,11 +28,13 @@ import {
   deleteRegisteredGroup,
   deleteSession,
   deleteMessagesByChatJid,
+  getRegisteredGroupByFolder,
 } from './db.js';
 
 const execFileAsync = promisify(execFile);
 import type { RegisteredGroup, ContainerConfig } from './types.js';
 import { CREDENTIAL_PROXY_PORT } from './config.js';
+import { runContainerAgent } from './container-runner.js';
 
 const TOKEN = process.env.NANOCLAW_ADMIN_TOKEN;
 const PORT = Number(process.env.NANOCLAW_ADMIN_PORT ?? 8787);
@@ -669,6 +671,82 @@ const server = http.createServer(async (req, res) => {
         cleaned: cleaned.length,
         details: cleaned,
       });
+    }
+
+    // POST /chat
+    // SSE chat endpoint for the ghosty.studio web widget (consumed via the
+    // sandbox-host proxy /v1/sandbox/{id}/agent/message). Auth: Bearer
+    // NANOCLAW_ADMIN_TOKEN (same as the rest of admin-api).
+    //
+    // Body: { content: string, sessionId?: string }
+    // Stream: SSE events `{type:"chunk",value:"..."}` then `{type:"done"}`.
+    //
+    // The web channel maps to a single shared virtual group with folder
+    // "web". Per-conversation isolation comes from `sessionId` (Claude SDK
+    // resume), not from per-user groups — keeps the channel model symmetrical
+    // with Slack/WhatsApp (1 channel = 1 group, N sessions per group).
+    //
+    // No token-by-token streaming in v1: ContainerOutput is batch (status +
+    // result at end). We emit the full reply as one chunk then `done`. True
+    // token streaming requires container-runner to expose intermediate stdout
+    // chunks, scheduled for v2.
+    if (method === 'POST' && parts[0] === 'chat' && parts.length === 1) {
+      const body = await readBody(req).catch(() => null);
+      const content = typeof body?.content === 'string' ? body.content.trim() : '';
+      if (!content) return send(res, 400, { error: 'content (string) required' });
+
+      const WEB_FOLDER = 'web';
+      const WEB_JID = 'web@chat.local';
+      let group = getRegisteredGroupByFolder(WEB_FOLDER);
+      if (!group) {
+        const skeleton: RegisteredGroup = {
+          name: 'Web Chat',
+          folder: WEB_FOLDER,
+          trigger: '',
+          added_at: new Date().toISOString(),
+          requiresTrigger: false,
+        };
+        setRegisteredGroup(WEB_JID, skeleton);
+        group = getRegisteredGroupByFolder(WEB_FOLDER);
+        if (!group) return send(res, 500, { error: 'failed to create web group' });
+      }
+
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      });
+      const writeEvent = (data: unknown) =>
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+      // Keep-alive so the proxy doesn't time out while runContainerAgent boots.
+      writeEvent({ type: 'ping' });
+
+      try {
+        const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : undefined;
+        const result = await runContainerAgent(
+          group,
+          {
+            prompt: content,
+            sessionId,
+            groupFolder: group.folder,
+            chatJid: WEB_JID,
+            isMain: false,
+          },
+          () => {},
+        );
+        if (result.status === 'error') {
+          writeEvent({ type: 'error', message: result.error ?? 'agent error' });
+        } else {
+          writeEvent({ type: 'chunk', value: result.result ?? '' });
+        }
+        writeEvent({ type: 'done', sessionId: result.newSessionId ?? sessionId });
+      } catch (err) {
+        writeEvent({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+      }
+      res.end();
+      return;
     }
 
     return send(res, 404, { error: 'route_not_found' });
