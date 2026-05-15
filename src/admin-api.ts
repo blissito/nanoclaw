@@ -682,14 +682,27 @@ const server = http.createServer(async (req, res) => {
     // until then, /chat would fail with "image not found". Easybits polls
     // this endpoint and only transitions Agent.status="building" → "running"
     // when ready, so the UI input stays disabled while we boot.
-    if (method === 'GET' && parts[0] === 'chat' && parts[1] === 'ready' && parts.length === 2) {
+    if (
+      method === 'GET' &&
+      parts[0] === 'chat' &&
+      parts[1] === 'ready' &&
+      parts.length === 2
+    ) {
       try {
-        await execFileAsync('docker', ['info', '--format', '{{.ServerVersion}}'], { timeout: 3000 });
+        await execFileAsync(
+          'docker',
+          ['info', '--format', '{{.ServerVersion}}'],
+          { timeout: 3000 },
+        );
       } catch (err) {
         return send(res, 200, { ready: false, reason: 'docker_not_ready' });
       }
       try {
-        await execFileAsync('docker', ['image', 'inspect', 'nanoclaw-agent:latest'], { timeout: 3000 });
+        await execFileAsync(
+          'docker',
+          ['image', 'inspect', 'nanoclaw-agent:latest'],
+          { timeout: 3000 },
+        );
       } catch (err) {
         return send(res, 200, { ready: false, reason: 'agent_image_building' });
       }
@@ -715,8 +728,26 @@ const server = http.createServer(async (req, res) => {
     // chunks, scheduled for v2.
     if (method === 'POST' && parts[0] === 'chat' && parts.length === 1) {
       const body = await readBody(req).catch(() => null);
-      const content =
-        typeof body?.content === 'string' ? body.content.trim() : '';
+      // Accept both shapes:
+      //   - Simple: { content: string, sessionId?: string }
+      //   - OpenAI-compatible: { messages: [{role,content}], stream, user }
+      // The ghosty.studio embed widget posts the OpenAI shape (de-facto
+      // standard for chat completion endpoints, so the same widget can talk
+      // to any compatible proxy). Extract last user message as the prompt.
+      let content = '';
+      let sessionId: string | undefined;
+      if (typeof body?.content === 'string') {
+        content = body.content.trim();
+        sessionId =
+          typeof body?.sessionId === 'string' ? body.sessionId : undefined;
+      } else if (Array.isArray(body?.messages)) {
+        const userMsgs = body.messages.filter(
+          (m: { role?: string; content?: string }) =>
+            m?.role === 'user' && typeof m?.content === 'string',
+        );
+        content = (userMsgs[userMsgs.length - 1]?.content ?? '').trim();
+        sessionId = typeof body?.user === 'string' ? body.user : undefined;
+      }
       if (!content)
         return send(res, 400, { error: 'content (string) required' });
 
@@ -750,8 +781,6 @@ const server = http.createServer(async (req, res) => {
       writeEvent({ type: 'ping' });
 
       try {
-        const sessionId =
-          typeof body?.sessionId === 'string' ? body.sessionId : undefined;
         const result = await runContainerAgent(
           group,
           {
