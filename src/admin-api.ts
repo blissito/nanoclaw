@@ -34,7 +34,10 @@ import {
 const execFileAsync = promisify(execFile);
 import type { RegisteredGroup, ContainerConfig } from './types.js';
 import { CREDENTIAL_PROXY_PORT } from './config.js';
-import { runContainerAgent } from './container-runner.js';
+import {
+  runContainerAgent,
+  type ContainerOutput,
+} from './container-runner.js';
 
 const TOKEN = process.env.NANOCLAW_ADMIN_TOKEN;
 const PORT = Number(process.env.NANOCLAW_ADMIN_PORT ?? 8787);
@@ -787,8 +790,16 @@ const server = http.createServer(async (req, res) => {
       // Keep-alive so the proxy doesn't time out while runContainerAgent boots.
       writeEvent({ type: 'ping' });
 
+      // The agent container stays alive between turns for IPC (MCPs + claude
+      // CLI hot-cache), so the runContainerAgent promise won't resolve until
+      // the container exits. For web chat we want to emit SSE + close as soon
+      // as the first result arrives — use the onOutput callback to stream
+      // and a manual kill of the container after we've got our result.
+      let firstResultEmitted = false;
+      let lastResult: ContainerOutput | null = null;
+      let containerName = '';
       try {
-        const result = await runContainerAgent(
+        await runContainerAgent(
           group,
           {
             prompt: content,
@@ -797,24 +808,62 @@ const server = http.createServer(async (req, res) => {
             chatJid: WEB_JID,
             isMain: false,
           },
-          () => {},
+          (_proc, name) => {
+            containerName = name;
+          },
+          async (output: ContainerOutput) => {
+            lastResult = output;
+            if (!firstResultEmitted) {
+              firstResultEmitted = true;
+              if (output.status === 'error') {
+                writeEvent({
+                  type: 'error',
+                  message: output.error ?? 'agent error',
+                });
+              } else if (output.result) {
+                writeEvent({ type: 'chunk', value: output.result });
+              }
+              writeEvent({
+                type: 'done',
+                sessionId: output.newSessionId ?? sessionId,
+              });
+              res.end();
+              // Don't await container exit — kill it so the promise resolves
+              // and we don't pile up zombie containers. The next turn will
+              // spawn a fresh one (we lose IPC hot-cache, but for web that's
+              // OK — different sessions are typical).
+              try {
+                if (containerName) {
+                  await execFileAsync('docker', ['kill', containerName]);
+                }
+              } catch {
+                // best effort
+              }
+            }
+          },
         );
-        if (result.status === 'error') {
-          writeEvent({ type: 'error', message: result.error ?? 'agent error' });
-        } else {
-          writeEvent({ type: 'chunk', value: result.result ?? '' });
+        // Fallthrough: if onOutput never fired (no streaming output at all),
+        // emit a failure event so the widget doesn't hang.
+        if (!firstResultEmitted) {
+          writeEvent({
+            type: 'error',
+            message: 'agent produced no output',
+          });
+          writeEvent({
+            type: 'done',
+            sessionId: (lastResult as ContainerOutput | null)?.newSessionId ?? sessionId,
+          });
+          res.end();
         }
-        writeEvent({
-          type: 'done',
-          sessionId: result.newSessionId ?? sessionId,
-        });
       } catch (err) {
-        writeEvent({
-          type: 'error',
-          message: err instanceof Error ? err.message : String(err),
-        });
+        if (!firstResultEmitted) {
+          writeEvent({
+            type: 'error',
+            message: err instanceof Error ? err.message : String(err),
+          });
+          res.end();
+        }
       }
-      res.end();
       return;
     }
 
