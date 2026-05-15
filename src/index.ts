@@ -1567,8 +1567,13 @@ async function main(): Promise<void> {
     );
   }
   if (channels.length === 0) {
-    logger.fatal('No channels connected');
-    process.exit(1);
+    // Web-only mode: no inbound channels (WhatsApp/Slack/Telegram) configured,
+    // but the admin-api /chat endpoint still serves messages from the
+    // ghosty.studio web widget. Container-runner, credential-proxy and
+    // group-queue all keep running below — only inbound polling is missing.
+    logger.warn(
+      'No inbound channels configured — running in web-only mode (admin-api /chat is the only entry point).',
+    );
   }
   const CHANNEL_BOOT_GRACE_MS = 10_000;
   await Promise.race([
