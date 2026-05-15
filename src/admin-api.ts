@@ -748,6 +748,13 @@ const server = http.createServer(async (req, res) => {
         content = (userMsgs[userMsgs.length - 1]?.content ?? '').trim();
         sessionId = typeof body?.user === 'string' ? body.user : undefined;
       }
+      // Claude Code's --resume requires a UUID-format session ID. The widget
+      // sends user="default" (non-UUID) → drop it so runContainerAgent skips
+      // --resume and starts a fresh session (it'll generate a real UUID and
+      // return it in newSessionId for subsequent turns to use).
+      const UUID_RE =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (sessionId && !UUID_RE.test(sessionId)) sessionId = undefined;
       if (!content)
         return send(res, 400, { error: 'content (string) required' });
 
