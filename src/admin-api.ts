@@ -34,10 +34,7 @@ import {
 const execFileAsync = promisify(execFile);
 import type { RegisteredGroup, ContainerConfig } from './types.js';
 import { CREDENTIAL_PROXY_PORT } from './config.js';
-import {
-  runContainerAgent,
-  type ContainerOutput,
-} from './container-runner.js';
+import { runContainerAgent, type ContainerOutput } from './container-runner.js';
 
 const TOKEN = process.env.NANOCLAW_ADMIN_TOKEN;
 const PORT = Number(process.env.NANOCLAW_ADMIN_PORT ?? 8787);
@@ -638,6 +635,72 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    // POST /admin/skills/install
+    // Body: { name: string, path: string, files: string[] }
+    //
+    // EasyBits ya escribió SKILL.md + assets en `path` (e.g. /skills/<name>/)
+    // vía sandbox-agent. Aquí los mudamos al path canónico de Claude para
+    // cada grupo registrado: <DATA_DIR>/sessions/<folder>/.claude/skills/<name>/.
+    // El siguiente query() del SDK los descubre — no hace falta hot-reload.
+    if (
+      method === 'POST' &&
+      parts[0] === 'admin' &&
+      parts[1] === 'skills' &&
+      parts[2] === 'install' &&
+      parts.length === 3
+    ) {
+      const body = await readBody(req);
+      const name = typeof body.name === 'string' ? body.name.trim() : '';
+      const srcPath = typeof body.path === 'string' ? body.path : '';
+      const files = Array.isArray(body.files) ? body.files : [];
+      if (!name || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) {
+        return send(res, 400, { error: 'invalid_name' });
+      }
+      if (!srcPath.startsWith('/skills/')) {
+        return send(res, 400, { error: 'invalid_source_path' });
+      }
+      if (!fs.existsSync(srcPath)) {
+        return send(res, 404, { error: 'source_dir_missing', detail: srcPath });
+      }
+      const dataDir = process.env.NANOCLAW_DATA_DIR ?? path.resolve('data');
+      const groups = Object.entries(getAllRegisteredGroups());
+      const copied: string[] = [];
+      const failed: Array<{ folder: string; error: string }> = [];
+      for (const [, group] of groups) {
+        const dstDir = path.join(
+          dataDir,
+          'sessions',
+          group.folder,
+          '.claude',
+          'skills',
+          name,
+        );
+        try {
+          fs.rmSync(dstDir, { recursive: true, force: true });
+          fs.mkdirSync(path.dirname(dstDir), { recursive: true });
+          fs.cpSync(srcPath, dstDir, { recursive: true });
+          copied.push(group.folder);
+        } catch (err: any) {
+          failed.push({ folder: group.folder, error: String(err).slice(0, 200) });
+        }
+      }
+      // Cleanup source — el skill ahora vive en cada `.claude/skills/<name>/`.
+      // Si no había grupos registrados (VM recién booteada sin agente activo),
+      // el cleanup deja `/skills/` listo para el próximo install y no rompe nada.
+      try {
+        fs.rmSync(srcPath, { recursive: true, force: true });
+      } catch {
+        // best-effort; el siguiente install sobrescribe.
+      }
+      return send(res, 200, {
+        ok: true,
+        name,
+        copied_to: copied,
+        files,
+        failed: failed.length > 0 ? failed : undefined,
+      });
+    }
+
     // POST /admin/integration/:id/cleanup
     // Tear down every formmy_<jid> group registered against this integration_id:
     // kill containers, drop SQLite rows (registered_groups, sessions, messages,
@@ -851,7 +914,8 @@ const server = http.createServer(async (req, res) => {
           });
           writeEvent({
             type: 'done',
-            sessionId: (lastResult as ContainerOutput | null)?.newSessionId ?? sessionId,
+            sessionId:
+              (lastResult as ContainerOutput | null)?.newSessionId ?? sessionId,
           });
           res.end();
         }

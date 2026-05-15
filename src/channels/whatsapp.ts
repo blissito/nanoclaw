@@ -151,7 +151,9 @@ export class WhatsAppChannel implements Channel {
         // completes pairing async.
         const qrFile = path.join(STORE_DIR, 'qr-code.txt');
         fs.writeFileSync(qrFile, qr);
-        logger.info('WhatsApp QR code written to store/qr-code.txt — scan it to pair');
+        logger.info(
+          'WhatsApp QR code written to store/qr-code.txt — scan it to pair',
+        );
       }
 
       if (connection === 'close') {
