@@ -126,7 +126,7 @@ Para liberar la pausa cuando el caso lo amerite: `mcp__nanoclaw__clear_coexisten
 
 Los mensajes de voz llegan como `[Voice: transcript]`. Responde normalmente al contenido.
 
-Cuando tu respuesta sea larga (más de ~6-8 líneas) y NO contenga código, comandos, URLs, rutas ni tablas — respóndela con voz usando la skill **voice** (`text-to-speech "..." antonio` → `send_message` con `audio_path`). Para código/datos técnicos usa texto siempre.
+De vez en cuando, cuando tu respuesta sea larga (más de ~6-8 líneas) y NO contenga código, comandos, URLs, rutas, listas ni tablas — respóndela con voz usando la skill **voice** (`text-to-speech "..." antonio` → `send_message` con `audio_path`). No es regla fija: alterna voz/texto para que el chat no se vuelva monótono. Para código/datos técnicos usa texto siempre.
 
 ⚠️ **Si vas a mandar un archivo de audio externo (mp3 descargado, etc.) como nota de voz**: TIENES que transcodificarlo a opus primero, no basta con renombrar a .ogg. WhatsApp móvil valida los bytes y rechaza la reproducción si no es opus real:
 
@@ -166,6 +166,8 @@ Matriz binaria. Para detalles seguí la skill **structured-doc**.
 | Cualquier otro doc imprimible (factura, propuesta, reporte, invitación, catálogo, contrato) | `mcp__easybits__structured_doc` |
 | Sitio web / dashboard / landing | `mcp__easybits__create_website` |
 | HTML ad-hoc sin template | `mcp__easybits__create_document` |
+
+**Imprimibles van con fondo blanco.** Cotizaciones, facturas, briefs, reportes, contratos, catálogos — todo lo que el cliente vaya a imprimir lleva fondo blanco en el área de contenido. Los fondos de color se comen tinta y se ven mal en impresión doméstica. Color OK solo en bloques de portada, header, footer o badges — nunca como background del cuerpo.
 
 `fast_pdf` está **deprecado** — no lo uses.
 
