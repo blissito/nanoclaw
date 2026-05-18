@@ -214,6 +214,45 @@ describe('pause_task authorization', () => {
     );
     expect(getTaskById('task-main')!.status).toBe('active');
   });
+
+  // Regression: agent inside a running container called pause_task with its
+  // own taskId, leaving the row permanently paused and silently killing
+  // operator-initiated /trigger-reply runs (incident 2026-05-14, Emap chat
+  // on sofi-0). Host must refuse the self-pause.
+  it('refuses pause_task when the task is currently running in the same group', async () => {
+    const { _setTaskRunningForTest } = await import('./task-scheduler.js');
+    _setTaskRunningForTest('task-other', true);
+    try {
+      await processTaskIpc(
+        { type: 'pause_task', taskId: 'task-other' },
+        'other-group',
+        false,
+        deps,
+      );
+      expect(getTaskById('task-other')!.status).toBe('active');
+    } finally {
+      _setTaskRunningForTest('task-other', false);
+    }
+  });
+
+  // Sanity counterpart: a main/admin group pausing another group's running
+  // task is still allowed — it's the same-group self-pause we forbid, not
+  // pause_task in general.
+  it('main group can still pause a running task in another group', async () => {
+    const { _setTaskRunningForTest } = await import('./task-scheduler.js');
+    _setTaskRunningForTest('task-other', true);
+    try {
+      await processTaskIpc(
+        { type: 'pause_task', taskId: 'task-other' },
+        'main',
+        true,
+        deps,
+      );
+      expect(getTaskById('task-other')!.status).toBe('paused');
+    } finally {
+      _setTaskRunningForTest('task-other', false);
+    }
+  });
 });
 
 // --- resume_task authorization ---

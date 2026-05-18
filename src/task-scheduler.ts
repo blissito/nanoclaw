@@ -86,11 +86,36 @@ export interface SchedulerDependencies {
   }) => void;
 }
 
+// Task IDs whose runTask invocation is currently in flight (between the
+// pre-spawn validation and updateTaskAfterRun). Used by ipc.ts to refuse
+// pause_task IPCs that ask to cancel the same task the running container is
+// executing — without that guard the agent can silently kill its own
+// operator-initiated trigger-reply run. Set membership is process-local; if
+// the host crashes mid-run the set is gone, but so is the runner that would
+// pause it, so there's nothing to protect.
+const runningTaskIds = new Set<string>();
+
+export function isTaskRunning(taskId: string): boolean {
+  return runningTaskIds.has(taskId);
+}
+
+// Test-only helper: lets ipc tests simulate a task being mid-run without
+// having to spin up runContainerAgent and friends. Prefixed `_` to flag
+// test surface, mirroring db.ts's `_initTestDatabase`.
+export function _setTaskRunningForTest(
+  taskId: string,
+  running: boolean,
+): void {
+  if (running) runningTaskIds.add(taskId);
+  else runningTaskIds.delete(taskId);
+}
+
 async function runTask(
   task: ScheduledTask,
   deps: SchedulerDependencies,
 ): Promise<void> {
   const startTime = Date.now();
+  runningTaskIds.add(task.id);
   let groupDir: string;
   try {
     groupDir = resolveGroupFolderPath(task.group_folder);
@@ -110,6 +135,7 @@ async function runTask(
       result: null,
       error,
     });
+    runningTaskIds.delete(task.id);
     return;
   }
   fs.mkdirSync(groupDir, { recursive: true });
@@ -137,6 +163,7 @@ async function runTask(
       result: null,
       error: `Group not found: ${task.group_folder}`,
     });
+    runningTaskIds.delete(task.id);
     return;
   }
 
@@ -264,6 +291,7 @@ async function runTask(
       ? result.slice(0, 200)
       : 'Completed';
   updateTaskAfterRun(task.id, nextRun, resultSummary);
+  runningTaskIds.delete(task.id);
 }
 
 let schedulerRunning = false;

@@ -20,6 +20,7 @@ import {
 } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
+import { isTaskRunning } from './task-scheduler.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
@@ -949,6 +950,20 @@ export async function processTaskIpc(
       if (data.taskId) {
         const task = getTaskById(data.taskId);
         if (task && (isMain || task.group_folder === sourceGroup)) {
+          // Refuse self-pause: an agent must not cancel the task that spawned
+          // it. Without this guard the model can call pause_task with its own
+          // taskId mid-run, leaving the row status='paused' / last_run='' and
+          // silently killing operator-initiated /trigger-reply requests.
+          if (
+            isTaskRunning(data.taskId) &&
+            task.group_folder === sourceGroup
+          ) {
+            logger.warn(
+              { taskId: data.taskId, sourceGroup },
+              'Refused pause_task: agent tried to pause its own in-flight task',
+            );
+            break;
+          }
           updateTask(data.taskId, { status: 'paused' });
           logger.info(
             { taskId: data.taskId, sourceGroup },
