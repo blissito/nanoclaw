@@ -494,8 +494,11 @@ function buildEnvFile(
   // Formmy MCP needs the bridge secret to call /api/v1/agents/conversations.
   // The host side stores it as FORMMY_CHANNEL_SECRET; alias to NANOCLAW_WEBHOOK_SECRET
   // which is what @formmy.app/mcp-server reads (single source of truth in .env).
-  const formmyBridgeSecret = readEnvFile(['FORMMY_CHANNEL_SECRET']).FORMMY_CHANNEL_SECRET;
-  if (formmyBridgeSecret) envLines.push(`NANOCLAW_WEBHOOK_SECRET=${formmyBridgeSecret}`);
+  const formmyBridgeSecret = readEnvFile([
+    'FORMMY_CHANNEL_SECRET',
+  ]).FORMMY_CHANNEL_SECRET;
+  if (formmyBridgeSecret)
+    envLines.push(`NANOCLAW_WEBHOOK_SECRET=${formmyBridgeSecret}`);
 
   // Canva MCP needs to call ghosty.studio for OAuth + permits.
   // Reuses NANOCLAW_ADMIN_TOKEN (same Bearer that admin-api / usage-reporter use).
