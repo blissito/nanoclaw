@@ -370,6 +370,12 @@ export class FormmyWhatsAppChannel implements Channel {
           };
           this.opts.onMessage(fullJid, syntheticMessage);
           recordInbound(fullJid, 'operator_dashboard');
+          // Bypass the 2s message-loop poll: kick processGroupMessages now.
+          // GroupQueue serializes per-JID, so if a container is already alive
+          // this is a no-op; otherwise it spawns immediately. The synthetic
+          // message is already in messages.db (storeMessage is sync), so
+          // getMessagesSince inside processGroupMessages will pick it up.
+          this.opts.enqueueMessageCheck?.(fullJid);
           logger.info(
             { jid: fullJid, folder: group.folder, msgId: syntheticMessage.id },
             '[formmy-whatsapp] Operator trigger-reply injected as inbound',
