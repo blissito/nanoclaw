@@ -37,6 +37,7 @@ export interface ContainerConfig {
   env?: Record<string, string>; // Per-group env var overrides (e.g. SMATCH_CLUB_ID). Overrides values from .env for this container only.
   stickerTrigger?: boolean; // Whether stickers count as trigger (default: true). Set false to ignore stickers.
   profile?: 'public' | 'admin'; // 'public' isolates the container: no global mount, restricted skills/agents. Default 'admin'.
+  settleMs?: number; // Debounce window: wait this many ms after last customer msg before responding, to batch fragmented input. Undefined = off. Recommended 3000-5000 for B2C WABA chats.
 }
 
 export interface RegisteredGroup {

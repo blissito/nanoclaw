@@ -140,6 +140,13 @@ export function forceEvaluationOnce(chatJid: string): void {
   forceNextEvaluation.add(chatJid);
 }
 
+// Per-chat settle-window state: chatJid -> epoch ms at which this chat
+// should be re-enqueued. Set when the settle gate trips (recent customer
+// message, group.containerConfig.settleMs configured). Polled in the main
+// message loop (~2s cadence) and drained when due. Deleted on entry to
+// processGroupMessages so a re-fired run can re-evaluate from scratch.
+const settleUntil = new Map<string, number>();
+
 // Patterns that mark a `result.result` text as post-tool narration when an
 // MCP outbound already landed in the same run. Keep narrow — anything that
 // is even ambiguously customer-facing should NOT match.
@@ -376,6 +383,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
   if (!group) return true;
 
+  // We are processing this chat now — any pending settle deadline is moot.
+  settleUntil.delete(chatJid);
+
   const channel = findChannel(channels, chatJid);
   if (!channel) {
     logger.warn({ chatJid }, 'No channel owns JID, skipping messages');
@@ -611,6 +621,26 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       lastAgentTimestamp[chatJid] = latestMsg.timestamp;
       saveState();
       return true;
+    }
+
+    // Settle window: if the customer's most recent message is younger than
+    // settleMs, hold the turn so fragmented messages get batched. The main
+    // message loop polls settleUntil every tick and re-enqueues when due.
+    // Cursor is intentionally NOT advanced — getMessagesSince re-emits the
+    // same batch on the next run (plus anything that arrived meanwhile).
+    const settleMs = group.containerConfig?.settleMs;
+    if (settleMs && settleMs > 0 && latestCustomerMsg) {
+      const ageMs =
+        Date.now() - new Date(latestCustomerMsg.timestamp).getTime();
+      if (ageMs < settleMs) {
+        const waitMs = settleMs - ageMs;
+        settleUntil.set(chatJid, Date.now() + waitMs);
+        logger.info(
+          { group: group.name, chatJid, ageMs, waitMs },
+          'Settle window: waiting for more customer messages',
+        );
+        return true;
+      }
     }
   } else {
     logger.info(
@@ -1179,6 +1209,20 @@ async function startMessageLoop(): Promise<void> {
 
   while (true) {
     try {
+      // Drain expired settle-window deadlines: snapshot first to avoid
+      // mutating the map while iterating, then re-enqueue each due chat.
+      if (settleUntil.size > 0) {
+        const now = Date.now();
+        const due: string[] = [];
+        for (const [jid, dueAt] of settleUntil) {
+          if (now >= dueAt) due.push(jid);
+        }
+        for (const jid of due) {
+          settleUntil.delete(jid);
+          queue.enqueueMessageCheck(jid);
+        }
+      }
+
       const jids = [...Object.keys(registeredGroups), ...getAllFormmyJids()];
       const { messages, newTimestamp } = getNewMessages(
         jids,
