@@ -616,6 +616,47 @@ export class FormmyWhatsAppChannel implements Channel {
     });
   }
 
+  // Outbound video. WABA Cloud API accepts mp4 / 3gpp up to 16MB. Formmy
+  // bridge uploads the base64 payload to Meta /<PHONE_NUMBER_ID>/media and
+  // references the resulting media_id in the outbound message. Explicit
+  // mime_type matches the sendAudio convention for upstream type-routing.
+  async sendVideo(
+    jid: string,
+    filePath: string,
+    caption: string,
+  ): Promise<void> {
+    const buffer = readNonEmptyFile(filePath, 'video');
+    await this.postToFormmy({
+      phone_number: extractPhone(jid),
+      integration_id: this.resolveIntegrationId(jid),
+      type: 'video',
+      mime_type: 'video/mp4',
+      media_base64: buffer.toString('base64'),
+      caption,
+    });
+  }
+
+  // Outbound location. WABA spec wraps lat/lng/name/address in a `location`
+  // object; we pass scalars flat per the existing Formmy convention and let
+  // the bridge re-shape upstream.
+  async sendLocation(
+    jid: string,
+    latitude: number,
+    longitude: number,
+    name?: string,
+    address?: string,
+  ): Promise<void> {
+    await this.postToFormmy({
+      phone_number: extractPhone(jid),
+      integration_id: this.resolveIntegrationId(jid),
+      type: 'location',
+      latitude,
+      longitude,
+      name,
+      address,
+    });
+  }
+
   // Tentative — pending Formmy bridge confirmation that `type: 'reaction'`
   // is accepted upstream (Meta Cloud API supports message reactions).
   async sendReaction(
