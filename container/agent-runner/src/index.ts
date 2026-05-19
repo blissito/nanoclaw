@@ -447,6 +447,16 @@ function getAllMcpServers(containerInput: ContainerInput, mcpServerPath: string)
         SKYDROPX_BASE_URL: process.env.SKYDROPX_BASE_URL || 'https://pro.skydropx.com',
       },
     },
+    formmy: {
+      command: 'npx',
+      args: ['-y', '@formmy.app/mcp-server@0.2.0'],
+      env: {
+        FORMMY_API_URL: process.env.FORMMY_API_URL || 'https://formmy.app',
+        // NANOCLAW_WEBHOOK_SECRET is aliased from FORMMY_CHANNEL_SECRET in
+        // src/container-runner.ts buildEnvFile() — single source of truth in .env.
+        NANOCLAW_WEBHOOK_SECRET: process.env.NANOCLAW_WEBHOOK_SECRET || '',
+      },
+    },
   };
 }
 
