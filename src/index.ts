@@ -1551,6 +1551,11 @@ async function main(): Promise<void> {
       isGroup?: boolean,
     ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
     registeredGroups: () => registeredGroups,
+    // Sync wake-up for channels that need to spawn processGroupMessages
+    // immediately after writing a synthetic inbound (e.g. /trigger-reply),
+    // without waiting for the 2s message-loop poll. Same reference IPC opts
+    // already uses below.
+    enqueueMessageCheck: (jid: string) => queue.enqueueMessageCheck(jid),
   };
 
   // Initialize status tracker (uses channels via callbacks, channels don't need to be connected yet)
