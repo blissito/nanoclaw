@@ -102,10 +102,7 @@ export function isTaskRunning(taskId: string): boolean {
 // Test-only helper: lets ipc tests simulate a task being mid-run without
 // having to spin up runContainerAgent and friends. Prefixed `_` to flag
 // test surface, mirroring db.ts's `_initTestDatabase`.
-export function _setTaskRunningForTest(
-  taskId: string,
-  running: boolean,
-): void {
+export function _setTaskRunningForTest(taskId: string, running: boolean): void {
   if (running) runningTaskIds.add(taskId);
   else runningTaskIds.delete(taskId);
 }

@@ -537,7 +537,10 @@ export class FormmyWhatsAppChannel implements Channel {
     // Split on \n\n so Formmy receives discrete bubble payloads. Their parser
     // truncated the first chunk to "00 PM." (incident 2026-05-18, Katya) when
     // we POSTed multi-paragraph text and let them split server-side.
-    const paragraphs = text.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
+    const paragraphs = text
+      .split(/\n{2,}/)
+      .map((s) => s.trim())
+      .filter(Boolean);
     if (paragraphs.length === 0) return;
     const phone = extractPhone(jid);
     const integrationId = this.resolveIntegrationId(jid);

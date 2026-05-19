@@ -954,10 +954,7 @@ export async function processTaskIpc(
           // it. Without this guard the model can call pause_task with its own
           // taskId mid-run, leaving the row status='paused' / last_run='' and
           // silently killing operator-initiated /trigger-reply requests.
-          if (
-            isTaskRunning(data.taskId) &&
-            task.group_folder === sourceGroup
-          ) {
+          if (isTaskRunning(data.taskId) && task.group_folder === sourceGroup) {
             logger.warn(
               { taskId: data.taskId, sourceGroup },
               'Refused pause_task: agent tried to pause its own in-flight task',
