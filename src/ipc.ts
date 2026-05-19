@@ -15,6 +15,7 @@ import {
   createTask,
   deleteTask,
   getTaskById,
+  storeMessageDirect,
   trackImageGeneration,
   updateTask,
 } from './db.js';
@@ -153,6 +154,41 @@ function fileSizeOrUndef(p: string): number | undefined {
     return fs.statSync(p).size;
   } catch {
     return undefined;
+  }
+}
+
+// Persist an audit row for outbound media. Without this, messages.db only
+// reflects inbound + text outbound; image/document/audio/video/sticker sent
+// by the agent are invisible to history queries (incident 2026-05-18: Sofi
+// claimed to have sent a photo, DB only showed her text — looked like
+// hallucination until session.jsonl confirmed the send). Marker mirrors the
+// inbound format from whatsapp.ts (`[image: attachments/...]`).
+function recordOutboundMedia(
+  chatJid: string,
+  type: 'image' | 'document' | 'audio' | 'video' | 'sticker',
+  filename: string,
+  subdir: string | undefined,
+  caption: string | undefined,
+): void {
+  try {
+    const subPart = subdir ? `${subdir}/` : 'attachments/';
+    const marker = `[${type}: ${subPart}${filename}]`;
+    const content = caption ? `${caption}\n\n${marker}` : marker;
+    storeMessageDirect({
+      id: `bot-media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      chat_jid: chatJid,
+      sender: 'agent',
+      sender_name: 'Agente',
+      content,
+      timestamp: new Date().toISOString(),
+      is_from_me: true,
+      is_bot_message: true,
+    });
+  } catch (err) {
+    logger.warn(
+      { err, chatJid, type, filename },
+      'storeMessageDirect failed for outbound media',
+    );
   }
 }
 
@@ -301,6 +337,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     const bytes = fileSizeOrUndef(absPath);
                     await deps.sendAudio(data.chatJid, absPath);
                     deps.notifyMcpOutboundSent?.(data.chatJid);
+                    recordOutboundMedia(
+                      data.chatJid,
+                      'audio',
+                      data.filename,
+                      subdir,
+                      undefined,
+                    );
                     logger.info(
                       {
                         chatJid: data.chatJid,
@@ -356,6 +399,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       data.caption || '',
                     );
                     deps.notifyMcpOutboundSent?.(data.chatJid);
+                    recordOutboundMedia(
+                      data.chatJid,
+                      'video',
+                      data.filename,
+                      subdir,
+                      data.caption,
+                    );
                     logger.info(
                       {
                         chatJid: data.chatJid,
@@ -408,6 +458,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     const bytes = fileSizeOrUndef(absPath);
                     await deps.sendSticker(data.chatJid, absPath);
                     deps.notifyMcpOutboundSent?.(data.chatJid);
+                    recordOutboundMedia(
+                      data.chatJid,
+                      'sticker',
+                      data.filename,
+                      subdir,
+                      undefined,
+                    );
                     logger.info(
                       {
                         chatJid: data.chatJid,
@@ -551,6 +608,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       data.caption || '',
                     );
                     deps.notifyMcpOutboundSent?.(data.chatJid);
+                    recordOutboundMedia(
+                      data.chatJid,
+                      'document',
+                      data.originalName || data.filename,
+                      subdir,
+                      data.caption,
+                    );
                     logger.info(
                       {
                         chatJid: data.chatJid,
@@ -724,6 +788,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       data.caption || '',
                     );
                     deps.notifyMcpOutboundSent?.(data.chatJid);
+                    recordOutboundMedia(
+                      data.chatJid,
+                      'image',
+                      data.filename,
+                      subdir,
+                      data.caption,
+                    );
                     logger.info(
                       {
                         chatJid: data.chatJid,
