@@ -164,6 +164,10 @@ const NARRATION_PATTERNS: readonly RegExp[] = [
   /\bya qued[ée] a?\s*esperar\b/i,
   /\bya está.{0,30}\ben el chat\b/i,
   /\bnota de voz (ya\s+)?enviad[oa]\b/i,
+  /\bTodo listo\.\s+(Le\s+)?(mand[éó]|envi[éó]|compart[íi])\b/i,
+  /\b(muev[oa]|movi[ée])\s+el\s+lead\b/i,
+  /\bregistr[éo]\s+el\s+lead\b/i,
+  /\b(cotizaci[oó]n|pdf|nota\s+de\s+voz|audio)\s+(ya\s+)?enviad[ao]\b/i,
 ];
 
 function matchedNarrationPattern(text: string): string | null {
@@ -813,9 +817,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         const startedAt = agentRunStartedAt[chatJid];
         const pausedMidRun =
           !!startedAt && hasManualModeSince(chatJid, startedAt);
+        // isPostMcp kept for log context only — the gate produced a race with
+        // the host IPC watcher (incident 2026-05-18, Sofi/Katya: narration emitted
+        // before host processed PDF+audio IPC files, so counter was still 0 and
+        // filter skipped). Current pattern list is specific enough to evaluate
+        // unconditionally.
         const isPostMcp = (agentRunOutbound[chatJid] || 0) > 0;
-        const narrationMatch =
-          isPostMcp && text ? matchedNarrationPattern(text) : null;
+        const narrationMatch = text ? matchedNarrationPattern(text) : null;
         if (text && !isMetaNoResponse && pausedMidRun) {
           logger.info(
             {

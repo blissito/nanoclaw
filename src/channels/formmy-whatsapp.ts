@@ -534,12 +534,21 @@ export class FormmyWhatsAppChannel implements Channel {
   }
 
   async sendMessage(jid: string, text: string): Promise<void> {
-    await this.postToFormmy({
-      phone_number: extractPhone(jid),
-      integration_id: this.resolveIntegrationId(jid),
-      type: 'text',
-      text,
-    });
+    // Split on \n\n so Formmy receives discrete bubble payloads. Their parser
+    // truncated the first chunk to "00 PM." (incident 2026-05-18, Katya) when
+    // we POSTed multi-paragraph text and let them split server-side.
+    const paragraphs = text.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
+    if (paragraphs.length === 0) return;
+    const phone = extractPhone(jid);
+    const integrationId = this.resolveIntegrationId(jid);
+    for (const p of paragraphs) {
+      await this.postToFormmy({
+        phone_number: phone,
+        integration_id: integrationId,
+        type: 'text',
+        text: p,
+      });
+    }
   }
 
   async sendImage(
