@@ -140,6 +140,18 @@ function createSchema(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_reactions_reactor ON reactions(reactor_jid);
     CREATE INDEX IF NOT EXISTS idx_reactions_emoji ON reactions(emoji);
     CREATE INDEX IF NOT EXISTS idx_reactions_timestamp ON reactions(timestamp);
+
+    CREATE TABLE IF NOT EXISTS conversations (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      chat_jid TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      last_activity_at TEXT NOT NULL,
+      closed_at TEXT,
+      resolution_status TEXT,
+      first_bot_reply_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_conv_agent_activity ON conversations(agent_id, last_activity_at DESC);
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -260,6 +272,9 @@ export function initDatabase(): void {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
   db = new Database(dbPath);
+  db.pragma('journal_mode = WAL');
+  db.pragma('synchronous = NORMAL');
+  db.pragma('busy_timeout = 5000');
   createSchema(db);
 
   // Migrate from JSON files if they exist
@@ -1324,4 +1339,334 @@ export function deleteFormmyJidMapping(jid: string): void {
 export function deleteMessagesByChatJid(chatJid: string): number {
   const r = db.prepare('DELETE FROM messages WHERE chat_jid = ?').run(chatJid);
   return r.changes;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Conversations — lightweight conversation lifecycle for dashboard telemetry.*/
+/* See docs/PUBLIC_AGENT_SURFACE.md if it exists, or plan in                   */
+/* ~/.claude/plans/distributed-napping-neumann.md.                            */
+/* -------------------------------------------------------------------------- */
+
+export type ResolutionStatus =
+  | 'resolved_by_bot'
+  | 'resolved_manual'
+  | 'handed_off'
+  | 'abandoned';
+
+export interface ConversationRow {
+  id: string;
+  agent_id: string;
+  chat_jid: string;
+  started_at: string;
+  last_activity_at: string;
+  closed_at: string | null;
+  resolution_status: ResolutionStatus | null;
+  first_bot_reply_at: string | null;
+}
+
+const CONV_REOPEN_WINDOW_MS = 30 * 60 * 1000; // 30 min
+
+function generateConversationId(): string {
+  // ulid-ish: timestamp (base36) + random. Good enough for our scale.
+  return `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * Return id of an open conversation for (agentId, chatJid). Reuses the most
+ * recent open row if last_activity_at < 30 min ago; otherwise opens a new one.
+ * Also bumps last_activity_at to now.
+ */
+export function getOrOpenConversation(
+  agentId: string,
+  chatJid: string,
+): string {
+  const now = new Date().toISOString();
+  const existing = db
+    .prepare(
+      `SELECT id, last_activity_at FROM conversations
+       WHERE agent_id = ? AND chat_jid = ? AND closed_at IS NULL
+       ORDER BY last_activity_at DESC LIMIT 1`,
+    )
+    .get(agentId, chatJid) as
+    | { id: string; last_activity_at: string }
+    | undefined;
+
+  if (existing) {
+    const ageMs = Date.now() - Date.parse(existing.last_activity_at);
+    if (ageMs < CONV_REOPEN_WINDOW_MS) {
+      db.prepare(
+        `UPDATE conversations SET last_activity_at = ? WHERE id = ?`,
+      ).run(now, existing.id);
+      return existing.id;
+    }
+    // Idle too long — auto-close as abandoned and open a fresh one.
+    db.prepare(
+      `UPDATE conversations SET closed_at = ?, resolution_status = 'abandoned' WHERE id = ?`,
+    ).run(now, existing.id);
+  }
+
+  const id = generateConversationId();
+  db.prepare(
+    `INSERT INTO conversations (id, agent_id, chat_jid, started_at, last_activity_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(id, agentId, chatJid, now, now);
+  return id;
+}
+
+/** Bump last_activity_at without conditional logic. Used when we already have an id. */
+export function touchConversation(id: string): void {
+  db.prepare(
+    `UPDATE conversations SET last_activity_at = ? WHERE id = ?`,
+  ).run(new Date().toISOString(), id);
+}
+
+/** Set first_bot_reply_at only if it's still NULL. Idempotent. */
+export function markFirstBotReply(id: string, ts?: string): void {
+  db.prepare(
+    `UPDATE conversations SET first_bot_reply_at = ?
+     WHERE id = ? AND first_bot_reply_at IS NULL`,
+  ).run(ts || new Date().toISOString(), id);
+}
+
+/** Close a conversation. No-op if already closed. */
+export function closeConversation(
+  id: string,
+  status: ResolutionStatus,
+): void {
+  db.prepare(
+    `UPDATE conversations SET closed_at = ?, resolution_status = ?
+     WHERE id = ? AND closed_at IS NULL`,
+  ).run(new Date().toISOString(), status, id);
+}
+
+/**
+ * Find the most recent open conversation for a chat across all agents. Used by
+ * outbound hooks where we don't know the agent_id directly (the channel knows
+ * the jid; the conversation row knows the agent).
+ */
+export function findOpenConversationByChatJid(
+  chatJid: string,
+): { id: string; agent_id: string } | null {
+  const row = db
+    .prepare(
+      `SELECT id, agent_id FROM conversations
+       WHERE chat_jid = ? AND closed_at IS NULL
+       ORDER BY last_activity_at DESC LIMIT 1`,
+    )
+    .get(chatJid) as { id: string; agent_id: string } | undefined;
+  return row || null;
+}
+
+export interface ConversationListItem extends ConversationRow {
+  turn_count: number;
+  total_cost_usd: number;
+}
+
+/**
+ * List conversations for an agent. Joins usage_logs for turn count + cost.
+ * `status` filter: 'open' = closed_at IS NULL, 'closed' = NOT NULL, 'all' = no filter.
+ * Cursor pagination via `before` (= last row's id) is intentionally omitted in v1;
+ * `limit` caps the response and consumers can re-poll.
+ */
+export function listConversations(
+  agentId: string,
+  opts: { status?: 'open' | 'closed' | 'all'; limit?: number } = {},
+): ConversationListItem[] {
+  const status = opts.status || 'all';
+  const limit = Math.min(opts.limit || 50, 500);
+  const where =
+    status === 'open'
+      ? 'AND c.closed_at IS NULL'
+      : status === 'closed'
+        ? 'AND c.closed_at IS NOT NULL'
+        : '';
+  return db
+    .prepare(
+      `SELECT c.*,
+              COALESCE((SELECT SUM(num_turns) FROM usage_logs u
+                        WHERE u.group_folder = c.agent_id
+                          AND u.chat_jid = c.chat_jid
+                          AND u.created_at >= c.started_at
+                          AND (c.closed_at IS NULL OR u.created_at <= c.closed_at)
+                       ), 0) AS turn_count,
+              COALESCE((SELECT SUM(total_cost_usd) FROM usage_logs u
+                        WHERE u.group_folder = c.agent_id
+                          AND u.chat_jid = c.chat_jid
+                          AND u.created_at >= c.started_at
+                          AND (c.closed_at IS NULL OR u.created_at <= c.closed_at)
+                       ), 0) AS total_cost_usd
+       FROM conversations c
+       WHERE c.agent_id = ? ${where}
+       ORDER BY c.last_activity_at DESC
+       LIMIT ?`,
+    )
+    .all(agentId, limit) as ConversationListItem[];
+}
+
+export function getConversation(id: string): ConversationListItem | null {
+  const row = db
+    .prepare(
+      `SELECT c.*,
+              COALESCE((SELECT SUM(num_turns) FROM usage_logs u
+                        WHERE u.group_folder = c.agent_id
+                          AND u.chat_jid = c.chat_jid
+                          AND u.created_at >= c.started_at
+                          AND (c.closed_at IS NULL OR u.created_at <= c.closed_at)
+                       ), 0) AS turn_count,
+              COALESCE((SELECT SUM(total_cost_usd) FROM usage_logs u
+                        WHERE u.group_folder = c.agent_id
+                          AND u.chat_jid = c.chat_jid
+                          AND u.created_at >= c.started_at
+                          AND (c.closed_at IS NULL OR u.created_at <= c.closed_at)
+                       ), 0) AS total_cost_usd
+       FROM conversations c WHERE c.id = ?`,
+    )
+    .get(id) as ConversationListItem | undefined;
+  return row || null;
+}
+
+export function setConversationResolution(
+  id: string,
+  status: ResolutionStatus,
+): ConversationListItem | null {
+  const existing = db
+    .prepare(`SELECT closed_at FROM conversations WHERE id = ?`)
+    .get(id) as { closed_at: string | null } | undefined;
+  if (!existing) return null;
+  const now = new Date().toISOString();
+  // If already closed, only update the status label; don't shift closed_at.
+  if (existing.closed_at) {
+    db.prepare(
+      `UPDATE conversations SET resolution_status = ? WHERE id = ?`,
+    ).run(status, id);
+  } else {
+    db.prepare(
+      `UPDATE conversations SET closed_at = ?, resolution_status = ? WHERE id = ?`,
+    ).run(now, status, id);
+  }
+  return getConversation(id);
+}
+
+export interface AgentMetrics {
+  window: { start: string; end: string };
+  totals: {
+    conversations: number;
+    conversationsClosed: number;
+    turns: number;
+    costUsd: number;
+    inputTokens: number;
+    outputTokens: number;
+  };
+  rates: {
+    containmentRate: number;
+    escalationRate: number;
+    errorRate: number;
+  };
+  latency: {
+    firstResponseP50Ms: number | null;
+    firstResponseP95Ms: number | null;
+    resolutionP50Ms: number | null;
+    resolutionP95Ms: number | null;
+  };
+  cost: {
+    costPerTurn: number | null;
+    costPerResolved: number | null;
+  };
+}
+
+function percentile(sorted: number[], p: number): number | null {
+  if (sorted.length === 0) return null;
+  const idx = Math.min(
+    sorted.length - 1,
+    Math.floor((p / 100) * sorted.length),
+  );
+  return sorted[idx];
+}
+
+export function computeAgentMetrics(
+  agentId: string,
+  windowHours: number,
+): AgentMetrics {
+  const end = new Date();
+  const start = new Date(end.getTime() - windowHours * 3600 * 1000);
+  const startIso = start.toISOString();
+  const endIso = end.toISOString();
+
+  const convs = db
+    .prepare(
+      `SELECT started_at, closed_at, resolution_status, first_bot_reply_at
+       FROM conversations
+       WHERE agent_id = ? AND last_activity_at >= ?`,
+    )
+    .all(agentId, startIso) as Array<{
+    started_at: string;
+    closed_at: string | null;
+    resolution_status: ResolutionStatus | null;
+    first_bot_reply_at: string | null;
+  }>;
+
+  const usage = db
+    .prepare(
+      `SELECT COALESCE(SUM(num_turns),0) AS turns,
+              COALESCE(SUM(total_cost_usd),0) AS cost,
+              COALESCE(SUM(input_tokens),0) AS in_tok,
+              COALESCE(SUM(output_tokens),0) AS out_tok
+       FROM usage_logs
+       WHERE group_folder = ? AND created_at >= ?`,
+    )
+    .get(agentId, startIso) as {
+    turns: number;
+    cost: number;
+    in_tok: number;
+    out_tok: number;
+  };
+
+  const closed = convs.filter((c) => c.closed_at);
+  const resolvedByBot = convs.filter(
+    (c) => c.resolution_status === 'resolved_by_bot',
+  );
+  const handedOff = convs.filter((c) => c.resolution_status === 'handed_off');
+  const closedNoReply = closed.filter((c) => !c.first_bot_reply_at);
+
+  const frtSamples = convs
+    .filter((c) => c.first_bot_reply_at)
+    .map((c) => Date.parse(c.first_bot_reply_at!) - Date.parse(c.started_at))
+    .filter((n) => Number.isFinite(n) && n >= 0)
+    .sort((a, b) => a - b);
+
+  const resolutionSamples = closed
+    .map((c) => Date.parse(c.closed_at!) - Date.parse(c.started_at))
+    .filter((n) => Number.isFinite(n) && n >= 0)
+    .sort((a, b) => a - b);
+
+  return {
+    window: { start: startIso, end: endIso },
+    totals: {
+      conversations: convs.length,
+      conversationsClosed: closed.length,
+      turns: usage.turns,
+      costUsd: usage.cost,
+      inputTokens: usage.in_tok,
+      outputTokens: usage.out_tok,
+    },
+    rates: {
+      containmentRate: closed.length
+        ? resolvedByBot.length / closed.length
+        : 0,
+      escalationRate: convs.length ? handedOff.length / convs.length : 0,
+      errorRate: closed.length ? closedNoReply.length / closed.length : 0,
+    },
+    latency: {
+      firstResponseP50Ms: percentile(frtSamples, 50),
+      firstResponseP95Ms: percentile(frtSamples, 95),
+      resolutionP50Ms: percentile(resolutionSamples, 50),
+      resolutionP95Ms: percentile(resolutionSamples, 95),
+    },
+    cost: {
+      costPerTurn: usage.turns ? usage.cost / usage.turns : null,
+      costPerResolved: resolvedByBot.length
+        ? usage.cost / resolvedByBot.length
+        : null,
+    },
+  };
 }

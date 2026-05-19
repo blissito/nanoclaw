@@ -87,6 +87,7 @@ import { parseImageReferences } from './image.js';
 import { recordPublicInputTokens } from './public-rate-limit.js';
 import { StatusTracker } from './status-tracker.js';
 import { logger } from './logger.js';
+import { recordAgentInvocation } from './metrics.js';
 import { initUsageReporter, reportTurnUsage } from './usage-reporter.js';
 
 // Re-export for backwards compatibility during refactor
@@ -973,6 +974,23 @@ async function runAgent(
   imageAttachments: Array<{ relativePath: string; mediaType: string }>,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error' | 'fatal'> {
+  // Métricas: timing de la invocación completa. Reportamos en TODOS los paths
+  // de salida (return/throw) via wrapper interno para no manchar la lógica.
+  const __metricsStart = Date.now();
+  let __metricsStatus: 'success' | 'error' | 'fatal' = 'error';
+  const __recordMetrics = () => {
+    try {
+      recordAgentInvocation(
+        chatJid,
+        group.folder,
+        Date.now() - __metricsStart,
+        __metricsStatus,
+      );
+    } catch {
+      // Métrica no debe romper el flujo. Silenciamos.
+    }
+  };
+
   const isMain = group.isMain === true;
   const sessionId = sessions[group.folder];
 
@@ -1055,6 +1073,8 @@ async function runAgent(
           { group: group.name, error: output.error },
           'Fatal container error, skipping retry',
         );
+        __metricsStatus = 'fatal';
+        __recordMetrics();
         return 'fatal';
       }
 
@@ -1110,6 +1130,8 @@ async function runAgent(
             { group: group.name, error: freshOutput.error },
             'Container agent error on fresh session retry',
           );
+          __metricsStatus = 'error';
+          __recordMetrics();
           return 'error';
         }
 
@@ -1117,6 +1139,8 @@ async function runAgent(
           { group: group.name, newSessionId: freshOutput.newSessionId },
           'Fresh session retry succeeded',
         );
+        __metricsStatus = 'success';
+        __recordMetrics();
         return 'success';
       }
 
@@ -1124,12 +1148,18 @@ async function runAgent(
         { group: group.name, error: output.error },
         'Container agent error',
       );
+      __metricsStatus = 'error';
+      __recordMetrics();
       return 'error';
     }
 
+    __metricsStatus = 'success';
+    __recordMetrics();
     return 'success';
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
+    __metricsStatus = 'error';
+    __recordMetrics();
     return 'error';
   }
 }
