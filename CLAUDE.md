@@ -133,6 +133,30 @@ Crucially, the trigger check (`src/index.ts`) only honors the `is_from_me` bypas
 ```
 Without that gate, a sibling on the same WA account would silently spawn the agent on every message they sent — observed in production on smatch-rulo-waba where a group member shared the bot's LID and was triggering containers without `@trigger`. In shared mode, every sender (including bot's account siblings) must use `@trigger` or be in the sender allowlist.
 
+## Message Settling Window (batching de fragmentos)
+
+Cuando un cliente manda mensajes en fragmentos cortos seguidos ("Disculpe, en referencia me marca 8300370" → 3s → "Esta bien?"), el host por default los procesa en turnos separados — dos invocaciones del agente, dos burbujas. Para chats donde el cliente fragmenta típicamente (WABA B2C, atención conversacional), se puede activar una ventana de espera por chat.
+
+**Cómo funciona:** si el mensaje más reciente del cliente (no del bot, no del operador) es más fresco que `settleMs`, el host deja el turno en espera y lo re-encola cuando se cumple la ventana. Cualquier mensaje nuevo del cliente reinicia la cuenta. El drain vive **dentro** del message loop principal (ya corre cada ~2s) — sin `setInterval`/`setTimeout` adicionales.
+
+**Configuración (opt-in por chat):**
+```sql
+UPDATE registered_groups
+SET container_config = json_set(container_config, '$.settleMs', 4000)
+WHERE folder = 'whatsapp_<chat>';
+```
+Después `systemctl restart nanoclaw` — el cache de `container_config` en memoria no se refresca solo (ver `feedback_container_config_cache` en memoria).
+
+**Valores típicos:** 3000-5000ms para WABA B2C. >8000 hace que el cliente perciba al bot lento; <2000 batchea poco. Default = undefined (off, comportamiento idéntico al anterior).
+
+**Interacción con coexistencia operador-cliente:**
+- Operador escribiendo desde dashboard **NO** extiende la ventana — activa el gate preexistente `operator replied after customer` que skipea totalmente (cursor avanza). Settle window está dentro del bloque `if (!forceEval)` después del skipReason check.
+- `forceEvaluation` (release de pausa de coexistencia) bypassea la ventana — admin intent gana.
+
+**Logs:** `journalctl -u nanoclaw -f | grep "Settle window"` muestra `ageMs=X waitMs=Y` cuando dispara. Si no aparece nada, o no hay chats con `settleMs` configurado, o el mensaje ya pasó la ventana al primer tick.
+
+**Por qué no typing_on/typing_off:** Meta WhatsApp Cloud API no emite eventos de typing inbound al webhook — solo `messages`, `statuses`, `errors`. Para Formmy WABA channel (sofi-0) el patrón typing-aware es físicamente imposible. Baileys sí emite `presence.update` con `composing/paused` pero requiere bookkeeping per-JID y los usuarios con privacidad oculta dejan al bot esperando eternamente. Settle window temporal cubre TODOS los canales sin esa fragilidad.
+
 ## Adding MCP Servers
 
 Per-group MCP servers give agents domain-specific tools. Each group's `container_config.mcpServers` array controls which servers are available (the `nanoclaw` server is always included automatically).
