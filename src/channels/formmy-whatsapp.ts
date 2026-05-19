@@ -21,14 +21,26 @@ import http from 'http';
 import https from 'https';
 import path from 'path';
 
-import { FORMMY_PUBLIC_TEMPLATE, GROUPS_DIR } from '../config.js';
+import {
+  ASSISTANT_NAME,
+  FORMMY_PUBLIC_TEMPLATE,
+  GROUPS_DIR,
+} from '../config.js';
 import {
   clearChatPauseUntil,
+  closeConversation,
+  findOpenConversationByChatJid,
+  getFormmyGroupFolder,
   getFormmyIntegrationId,
+  getOrOpenConversation,
+  getRegisteredGroupByFolder,
   isKnownIntegrationId,
+  markFirstBotReply,
   registerFormmyUserGroup,
   setChatPauseUntil,
   setFormmyJidMapping,
+  storeMessageDirect,
+  touchConversation,
 } from '../db.js';
 // clearChatPauseUntil + setChatPauseUntil are used by the inbound POST /message
 // handler (below), driven by Formmy's authoritative `paused_until` field on
@@ -36,6 +48,12 @@ import {
 // response parsing — that path was tried and abandoned: when the gate skips
 // inference, no /send happens, so the flag never clears (deadlock).
 import { logger } from '../logger.js';
+import {
+  recordInbound,
+  recordOutbound,
+  recordOutboundFailure,
+  snapshotMetrics,
+} from '../metrics.js';
 import { Channel, NewMessage } from '../types.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 
@@ -222,6 +240,16 @@ export class FormmyWhatsAppChannel implements Channel {
         return;
       }
 
+      // Métricas: lectura pública (sin auth) para que el operador pueda
+      // hacer `curl :3940/metrics` desde el droplet sin pasar el bearer.
+      // Si te preocupa el leak interno, mueve detrás del Bearer check abajo.
+      if (req.method === 'GET' && req.url === '/metrics') {
+        const snap = snapshotMetrics();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(snap, null, 2));
+        return;
+      }
+
       if (
         req.method !== 'POST' ||
         (req.url !== '/message' && req.url !== '/trigger-reply')
@@ -263,7 +291,52 @@ export class FormmyWhatsAppChannel implements Channel {
             : `${JID_PREFIX}${jid}`;
           const fullJid = canonicalizeJid(rawJid, integration_id);
           const groups = this.opts.registeredGroups();
-          const group = groups[fullJid];
+          // Resolución resiliente del grupo. Caso real (2026-05-18):
+          // tras restart de NanoClaw el in-memory cache pierde grupos pero
+          // formmy_jid_mapping + registered_groups siguen en SQLite. El
+          // botón "Pedir respuesta" del dashboard devolvía 404 aunque la
+          // conversación existía. Repetimos la cascada de /message:
+          //   1. cache exacto por JID
+          //   2. fallback por formmy_jid_mapping → folder → registered_groups
+          //   3. fallback final: auto-provision con template público (mismo
+          //      patrón que /message para inbounds desconocidos)
+          let group: import('../types.js').RegisteredGroup | undefined =
+            groups[fullJid];
+          if (!group) {
+            const mappedFolder = getFormmyGroupFolder(fullJid);
+            if (mappedFolder) {
+              const dbGroup = getRegisteredGroupByFolder(mappedFolder);
+              if (dbGroup) {
+                group = dbGroup;
+                logger.info(
+                  { jid: fullJid, folder: mappedFolder },
+                  '[formmy-whatsapp] trigger-reply resolved via formmy_jid_mapping (cache miss)',
+                );
+              }
+            }
+          }
+          if (!group) {
+            // Auto-provision como último recurso (paridad con /message).
+            const resolvedFolder = sanitizeFolder(fullJid);
+            registerFormmyUserGroup(
+              fullJid,
+              resolvedFolder,
+              'WhatsApp User',
+              FORMMY_PUBLIC_TEMPLATE,
+            );
+            seedFormmyGroupFiles(resolvedFolder);
+            setFormmyJidMapping(fullJid, resolvedFolder, integration_id);
+            const refreshed = this.opts.registeredGroups();
+            group = Object.values(refreshed).find(
+              (g) => g.folder === resolvedFolder,
+            );
+            if (group) {
+              logger.warn(
+                { jid: fullJid, folder: resolvedFolder },
+                '[formmy-whatsapp] trigger-reply auto-provisioned group (no prior mapping)',
+              );
+            }
+          }
           if (!group) {
             res.writeHead(404);
             res.end(`No registered group for jid ${fullJid}`);
@@ -281,7 +354,7 @@ export class FormmyWhatsAppChannel implements Channel {
           const operatorPrompt =
             typeof prompt === 'string' && prompt.trim().length > 0
               ? prompt.trim()
-              : '[Operador desde dashboard] Activación de turno: revisa el hilo y decide si hay algo pendiente para el cliente. Si no hay nada que responder, no contestes.';
+              : '[Operador desde dashboard] Revisa si dejaste algo prometido sin entregar (cotización, búsqueda, dato). Si lo encuentras, complétalo. Si no, no respondas.';
           const nowIso = new Date().toISOString();
           const syntheticMessage: NewMessage = {
             id: `operator-nudge-${Date.now()}-${Math.random()
@@ -296,6 +369,7 @@ export class FormmyWhatsAppChannel implements Channel {
             is_bot_message: false,
           };
           this.opts.onMessage(fullJid, syntheticMessage);
+          recordInbound(fullJid, 'operator_dashboard');
           logger.info(
             { jid: fullJid, folder: group.folder, msgId: syntheticMessage.id },
             '[formmy-whatsapp] Operator trigger-reply injected as inbound',
@@ -502,6 +576,11 @@ export class FormmyWhatsAppChannel implements Channel {
         // Deliver message to NanoClaw message loop
         this.opts.onMessage(fullJid, message);
 
+        // Métricas: clasificamos el inbound por origen aparente.
+        // `is_from_me=true` es echo del cel del operador (coexistencia WABA).
+        // El resto cae como `user` por default.
+        recordInbound(fullJid, message.is_from_me ? 'echo' : 'user');
+
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true, id: message.id }));
       } catch (err) {
@@ -551,6 +630,23 @@ export class FormmyWhatsAppChannel implements Channel {
         type: 'text',
         text: p,
       });
+      try {
+        storeMessageDirect({
+          id: `bot-text-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          chat_jid: jid,
+          sender: 'agent',
+          sender_name: ASSISTANT_NAME,
+          content: p,
+          timestamp: new Date().toISOString(),
+          is_from_me: true,
+          is_bot_message: true,
+        });
+      } catch (err) {
+        logger.warn(
+          { err, jid },
+          'storeMessageDirect failed for outbound text',
+        );
+      }
     }
   }
 
@@ -880,11 +976,30 @@ export class FormmyWhatsAppChannel implements Channel {
     const data = JSON.stringify(payload);
     const url = new URL(endpointUrl);
     const isHttps = url.protocol === 'https:';
+    // Métricas: extraemos jid/type/folder del payload para clasificar.
+    // El payload de outbound siempre lleva `jid` (a quién va) y `type`
+    // (text/image/document/...). `group_folder` viene del agente o se
+    // resuelve via formmy_jid_mapping aguas arriba.
+    const metricJid =
+      typeof payload.jid === 'string' ? (payload.jid as string) : 'unknown';
+    const metricType =
+      typeof payload.type === 'string' ? (payload.type as string) : 'unknown';
+    const metricFolder =
+      typeof payload.group_folder === 'string'
+        ? (payload.group_folder as string)
+        : 'unknown';
+    const startedAt = Date.now();
 
     let lastError: Error | null = null;
     for (let attempt = 1; attempt <= FORMMY_POST_MAX_ATTEMPTS; attempt++) {
       try {
         await this.attemptPostToFormmy(url, isHttps, data, payload.type);
+        recordOutbound(
+          metricJid,
+          metricType,
+          metricFolder,
+          Date.now() - startedAt,
+        );
         return;
       } catch (err) {
         lastError = err as Error;
@@ -913,6 +1028,12 @@ export class FormmyWhatsAppChannel implements Channel {
         attempts: FORMMY_POST_MAX_ATTEMPTS,
       },
       '[formmy-whatsapp] Callback failed after all retries',
+    );
+    recordOutboundFailure(
+      metricJid,
+      metricType,
+      metricFolder,
+      lastError?.message?.slice(0, 200) ?? 'unknown',
     );
     throw lastError ?? new Error('postToFormmy failed');
   }
