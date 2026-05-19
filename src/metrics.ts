@@ -13,7 +13,17 @@
  */
 import { logger } from './logger.js';
 
-type OutboundType = 'text' | 'image' | 'document' | 'audio' | 'video' | 'sticker' | 'location' | 'reaction' | 'tag' | string;
+type OutboundType =
+  | 'text'
+  | 'image'
+  | 'document'
+  | 'audio'
+  | 'video'
+  | 'sticker'
+  | 'location'
+  | 'reaction'
+  | 'tag'
+  | string;
 
 interface LatencyTrack {
   count: number;
@@ -94,7 +104,10 @@ function trackLatency(track: LatencyTrack, ms: number): void {
 
 function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return 0;
-  const idx = Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length));
+  const idx = Math.min(
+    sorted.length - 1,
+    Math.floor((p / 100) * sorted.length),
+  );
   return sorted[idx];
 }
 
@@ -197,7 +210,10 @@ export function recordOutboundFailure(
  *   - `operator_dashboard` when sender is `operator@dashboard` (trigger-reply)
  *   - `user` for the regular customer inbound case
  */
-export function recordInbound(jid: string, origin: 'user' | 'echo' | 'operator_dashboard' | 'unknown'): void {
+export function recordInbound(
+  jid: string,
+  origin: 'user' | 'echo' | 'operator_dashboard' | 'unknown',
+): void {
   const i = counters.inbound;
   i.total += 1;
   i.byOrigin[origin] = (i.byOrigin[origin] || 0) + 1;
@@ -211,7 +227,9 @@ export function recordInbound(jid: string, origin: 'user' | 'echo' | 'operator_d
 export function snapshotMetrics() {
   return {
     startedAt: counters.startedAt,
-    uptimeSec: Math.round((Date.now() - new Date(counters.startedAt).getTime()) / 1000),
+    uptimeSec: Math.round(
+      (Date.now() - new Date(counters.startedAt).getTime()) / 1000,
+    ),
     agentInvocations: {
       total: counters.agentInvocations.total,
       success: counters.agentInvocations.success,

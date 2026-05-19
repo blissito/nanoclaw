@@ -1415,9 +1415,10 @@ export function getOrOpenConversation(
 
 /** Bump last_activity_at without conditional logic. Used when we already have an id. */
 export function touchConversation(id: string): void {
-  db.prepare(
-    `UPDATE conversations SET last_activity_at = ? WHERE id = ?`,
-  ).run(new Date().toISOString(), id);
+  db.prepare(`UPDATE conversations SET last_activity_at = ? WHERE id = ?`).run(
+    new Date().toISOString(),
+    id,
+  );
 }
 
 /** Set first_bot_reply_at only if it's still NULL. Idempotent. */
@@ -1429,10 +1430,7 @@ export function markFirstBotReply(id: string, ts?: string): void {
 }
 
 /** Close a conversation. No-op if already closed. */
-export function closeConversation(
-  id: string,
-  status: ResolutionStatus,
-): void {
+export function closeConversation(id: string, status: ResolutionStatus): void {
   db.prepare(
     `UPDATE conversations SET closed_at = ?, resolution_status = ?
      WHERE id = ? AND closed_at IS NULL`,
@@ -1650,9 +1648,7 @@ export function computeAgentMetrics(
       outputTokens: usage.out_tok,
     },
     rates: {
-      containmentRate: closed.length
-        ? resolvedByBot.length / closed.length
-        : 0,
+      containmentRate: closed.length ? resolvedByBot.length / closed.length : 0,
       escalationRate: convs.length ? handedOff.length / convs.length : 0,
       errorRate: closed.length ? closedNoReply.length / closed.length : 0,
     },
