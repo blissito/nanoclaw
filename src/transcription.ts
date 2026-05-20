@@ -52,6 +52,13 @@ async function whisperAvailable(): Promise<{
   }
 }
 
+// Whisper auto-detects language by default, which on short or accented
+// Spanish audio often misfires to English and hallucinates. Force a language
+// (default Spanish; override per-deployment with WHISPER_LANG).
+function transcriptionLanguage(): string {
+  return readEnvFile(['WHISPER_LANG']).WHISPER_LANG || 'es';
+}
+
 async function transcribeWithWhisper(
   audioBuffer: Buffer,
 ): Promise<string | null> {
@@ -85,6 +92,8 @@ async function transcribeWithWhisper(
       whisper.model,
       '-f',
       wavPath,
+      '-l',
+      transcriptionLanguage(),
       '--no-timestamps',
       '-nt',
     ]);
@@ -133,6 +142,7 @@ async function transcribeWithOpenAI(
     const transcription = await openai.audio.transcriptions.create({
       file: file,
       model: config.model,
+      language: transcriptionLanguage(),
       response_format: 'text',
     });
 
