@@ -21,6 +21,12 @@ const VALID_UNITS = new Set(['PZA', 'GARRAFA', 'KG', 'LT', 'CAJA', 'BOLSA', 'PAR
 const LOGO_URL = 'https://easybits-public.fly.storage.tigris.dev/69e19ed033ef9abb7cd5a54b/90R';
 const BANK_LOGO_URL = 'https://easybits-public.fly.storage.tigris.dev/69e19ed033ef9abb7cd5a54b/eHr';
 
+// Product photos display at 40px but the PDF engine embeds the full-res source, bloating large
+// quotes to 5-9MB and timing out the container. weserv returns a ~1-3KB thumbnail instead.
+function thumbUrl(url: string): string {
+  return `https://images.weserv.nl/?url=${encodeURIComponent(url)}&w=96&h=96&fit=contain&output=jpg&q=72`;
+}
+
 export type QuoteInput = {
   folio: string;
   fecha?: string;
@@ -179,7 +185,7 @@ function renderItemRow(
   amount: number,
 ): string {
   const imgCell = item.imagen_url
-    ? `<img src="${escapeHtml(item.imagen_url)}" class="w-10 h-10 object-contain" />`
+    ? `<img src="${escapeHtml(thumbUrl(item.imagen_url))}" class="w-10 h-10 object-contain" />`
     : `<div class="w-10 h-10 bg-gray-100 rounded flex items-center justify-center"><span class="text-gray-300" style="font-size:8px">S/I</span></div>`;
   return `        <tr class="border-b border-gray-200 align-middle">
           <td class="py-1.5 px-2">${imgCell}<p class="text-gray-400 text-center" style="font-size:7px">${escapeHtml(item.sku)}</p></td>
