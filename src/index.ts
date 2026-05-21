@@ -243,16 +243,17 @@ async function sendStandByImage(
 
   if (channel.sendImage && fs.existsSync(STANDBY_IMAGE_PATH)) {
     try {
-      await channel.sendImage(chatJid, STANDBY_IMAGE_PATH, '');
+      await channel.sendImage(
+        chatJid,
+        STANDBY_IMAGE_PATH,
+        'Continuamos con atención personalizada',
+      );
       return;
     } catch (err) {
       logger.warn({ err, chatJid }, 'sendImage failed, falling back to text');
     }
   }
-  await channel.sendMessage(
-    chatJid,
-    '_Dificultades técnicas. Vuelve a intentar en unos minutos._',
-  );
+  await channel.sendMessage(chatJid, 'Continuamos con atención personalizada');
 }
 
 function loadState(): void {
