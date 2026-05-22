@@ -228,6 +228,19 @@ Prerequisites: `doctl auth init` and SSH access to prod.
 
 After deploying the clean snapshot, the client fills `.env` from `.env.template`, runs `./container/build.sh`, and starts the service.
 
+### Clean install (when the snapshot disk exceeds the target plan)
+
+A snapshot inherits the source droplet's **allocated disk** as its restore floor — not its used data. A droplet that was resized up (e.g. `sofi-0` grew to a 160GB disk on `s-4vcpu-8gb`) yields a snapshot that can only restore to plans with ≥ that disk (cheapest ~$48/mo). To stand up a low-cost sister instance ($12 / `s-1vcpu-2gb` / 50GB), do a **clean install** instead of cloning:
+
+1. Create a plain Ubuntu 24.04 droplet on the target plan.
+2. `apt` install Node 22 (NodeSource) + Docker (get.docker.com) + `sqlite3 build-essential python3 rsync psmisc`.
+3. Create the `nanoclaw` user (add to the `docker` group); `rsync` the repo (exclude `.git node_modules store data logs .env groups`).
+4. `npm ci && npm run build`, then `./container/build.sh`.
+5. Replicate from a known-good droplet: the systemd unit (`/etc/systemd/system/nanoclaw.service`), `~/.config/nanoclaw/mount-allowlist.json`, and `.env` (copy shared keys; override per-instance `ASSISTANT_NAME` / `WHATSAPP_PHONE_NUMBER` / `MAX_CONCURRENT_CONTAINERS`).
+6. Pair WhatsApp (pairing-code flow). **Confirm the link by polling `store/auth/creds.json` for a populated `account`/`platform` — NOT `registered`, which Baileys sets optimistically when it *generates* the code (false positive).** Then register the main group and restart.
+
+`tania` (team Sofi, sister of `sofi-0`) was built this way on 2026-05-22.
+
 ## Parallel Sub-agents (Agent tool)
 
 **Status: disabled.** Not supported on current droplet sizes until we test on bigger instances. The `Agent` tool is removed from the default `buildAllowedTools()` list in `container/agent-runner/src/index.ts`.
