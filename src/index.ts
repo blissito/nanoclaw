@@ -765,10 +765,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         const cleaned = raw
           .replace(/<internal>[\s\S]*?<\/internal>/g, '')
           .trim();
-        // Strip self-prefix the agent may add (e.g. "Ghosty: hello" → "hello")
+        // Strip self-prefix the agent may add (e.g. "Ghosty: hello" → "hello").
+        // Escape regex metacharacters first: Formmy/WABA chats register with
+        // trigger_pattern ".*", which unescaped turned this into a greedy
+        // `^(?:name|.*):` that ate the whole first line up to its last colon —
+        // so any reply with a clock time ("...las 10:30 AM, ...") got truncated
+        // to "30 AM, ...". This delivery path runs for every channel, so the
+        // trigger must be treated as a literal here, not as a pattern.
+        const escapeRe = (s: string) =>
+          s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const triggerName = group.trigger.replace(/^@/, '');
         const prefixRe = new RegExp(
-          `^(?:${ASSISTANT_NAME}|${triggerName}):\\s*`,
+          `^(?:${escapeRe(ASSISTANT_NAME)}|${escapeRe(triggerName)}):\\s*`,
           'i',
         );
         const text = cleaned.replace(prefixRe, '').trim();
