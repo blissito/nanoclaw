@@ -149,7 +149,10 @@ export class WhatsAppChannel implements Channel {
             /* ok */
           }
         } catch (err) {
-          logger.error({ err }, 'Failed to request pairing code (admin control)');
+          logger.error(
+            { err },
+            'Failed to request pairing code (admin control)',
+          );
           fs.writeFileSync(
             path.join(STORE_DIR, 'pairing-error.txt'),
             String((err as Error)?.message ?? err),
@@ -157,28 +160,34 @@ export class WhatsAppChannel implements Channel {
         }
       } else if (req.action === 'unlink') {
         logger.info('WhatsApp unlink requested via admin control');
+        // logout() triggers a 'close' with reason 401 → the connection.update
+        // handler wipes creds + reconnects (fresh QR). No process.exit: under
+        // Restart=on-failure that would take admin-api down for good. If logout
+        // fails (socket not open), wipe + reconnect directly.
         try {
           await this.sock.logout();
         } catch (err) {
-          logger.warn({ err }, 'sock.logout() failed — clearing creds anyway');
-        }
-        for (const f of [
-          'auth',
-          'qr-code.txt',
-          'pairing-code.txt',
-          'pairing-error.txt',
-        ]) {
+          logger.warn(
+            { err },
+            'sock.logout() failed — wiping creds + reconnecting directly',
+          );
           try {
-            fs.rmSync(path.join(STORE_DIR, f), { recursive: true, force: true });
+            fs.rmSync(path.join(STORE_DIR, 'auth'), {
+              recursive: true,
+              force: true,
+            });
+          } catch {
+            /* ok */
+          }
+          this.scheduleReconnect(1);
+        }
+        for (const f of ['pairing-code.txt', 'pairing-error.txt']) {
+          try {
+            fs.unlinkSync(path.join(STORE_DIR, f));
           } catch {
             /* ok */
           }
         }
-        // Exit so the supervisor (systemd / start-runtime.sh) restarts the
-        // daemon fresh: it boots unpaired and immediately emits a new QR.
-        logger.info('Exiting after unlink — supervisor restarts unpaired');
-        clearInterval(timer);
-        setTimeout(() => process.exit(0), 500);
       }
     }, 1500);
     // Don't keep the event loop alive solely for this watcher.
@@ -261,8 +270,35 @@ export class WhatsAppChannel implements Channel {
         if (shouldReconnect) {
           this.scheduleReconnect(1);
         } else {
-          logger.info('Logged out. Run /setup to re-authenticate.');
-          process.exit(0);
+          // loggedOut (401): the stored creds are dead (failed pairing, or the
+          // user unlinked from their phone). Do NOT process.exit — in managed
+          // Firecracker deployments the unit is Restart=on-failure, so exit(0)
+          // takes admin-api down with us and never comes back. Wipe the dead
+          // creds + pairing artifacts and reconnect → fresh QR so the user can
+          // re-pair without operator intervention.
+          logger.info(
+            'Logged out — wiping creds and reconnecting for fresh pairing',
+          );
+          try {
+            fs.rmSync(path.join(STORE_DIR, 'auth'), {
+              recursive: true,
+              force: true,
+            });
+          } catch {
+            /* ok */
+          }
+          for (const f of [
+            'qr-code.txt',
+            'pairing-code.txt',
+            'pairing-error.txt',
+          ]) {
+            try {
+              fs.unlinkSync(path.join(STORE_DIR, f));
+            } catch {
+              /* ok */
+            }
+          }
+          this.scheduleReconnect(1);
         }
       } else if (connection === 'open') {
         this.connected = true;
@@ -271,7 +307,11 @@ export class WhatsAppChannel implements Channel {
         // Pairing artifacts are stale once connected — clear them so the
         // control plane (ghosty.studio admin-api) reads a clean "linked"
         // state instead of a leftover QR/code.
-        for (const f of ['qr-code.txt', 'pairing-code.txt', 'pairing-error.txt']) {
+        for (const f of [
+          'qr-code.txt',
+          'pairing-code.txt',
+          'pairing-error.txt',
+        ]) {
           try {
             fs.unlinkSync(path.join(STORE_DIR, f));
           } catch {
