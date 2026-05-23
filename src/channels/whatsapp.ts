@@ -85,6 +85,7 @@ export class WhatsAppChannel implements Channel {
   > = [];
   private flushing = false;
   private groupSyncTimerStarted = false;
+  private controlWatcherStarted = false;
 
   private opts: WhatsAppChannelOpts;
 
@@ -96,6 +97,92 @@ export class WhatsAppChannel implements Channel {
     return new Promise<void>((resolve, reject) => {
       this.connectInternal(resolve).catch(reject);
     });
+  }
+
+  // Poll ./store/wa-control.json for control requests from the admin-api
+  // process. The request file is consumed (deleted) before acting so a request
+  // fires exactly once. Started once; survives socket reconnects because it
+  // dereferences this.sock lazily at fire time.
+  private startControlWatcher(): void {
+    if (this.controlWatcherStarted) return;
+    this.controlWatcherStarted = true;
+    const controlFile = path.join(STORE_DIR, 'wa-control.json');
+
+    const timer = setInterval(async () => {
+      let raw: string;
+      try {
+        raw = fs.readFileSync(controlFile, 'utf-8');
+      } catch {
+        return; // no pending request
+      }
+      // Consume the request first so a slow handler can't double-fire it.
+      try {
+        fs.unlinkSync(controlFile);
+      } catch {
+        /* ok */
+      }
+
+      let req: { action?: string; phone?: string };
+      try {
+        req = JSON.parse(raw) as { action?: string; phone?: string };
+      } catch {
+        logger.warn({ raw }, 'wa-control.json was not valid JSON — ignoring');
+        return;
+      }
+
+      if (req.action === 'request-pairing') {
+        const phone = (req.phone ?? '').replace(/[^0-9]/g, '');
+        if (!phone) {
+          fs.writeFileSync(
+            path.join(STORE_DIR, 'pairing-error.txt'),
+            'missing_or_invalid_phone',
+          );
+          return;
+        }
+        try {
+          const code = await this.sock.requestPairingCode(phone);
+          logger.info({ code }, 'Pairing code requested via admin control');
+          fs.writeFileSync(path.join(STORE_DIR, 'pairing-code.txt'), code);
+          try {
+            fs.unlinkSync(path.join(STORE_DIR, 'pairing-error.txt'));
+          } catch {
+            /* ok */
+          }
+        } catch (err) {
+          logger.error({ err }, 'Failed to request pairing code (admin control)');
+          fs.writeFileSync(
+            path.join(STORE_DIR, 'pairing-error.txt'),
+            String((err as Error)?.message ?? err),
+          );
+        }
+      } else if (req.action === 'unlink') {
+        logger.info('WhatsApp unlink requested via admin control');
+        try {
+          await this.sock.logout();
+        } catch (err) {
+          logger.warn({ err }, 'sock.logout() failed — clearing creds anyway');
+        }
+        for (const f of [
+          'auth',
+          'qr-code.txt',
+          'pairing-code.txt',
+          'pairing-error.txt',
+        ]) {
+          try {
+            fs.rmSync(path.join(STORE_DIR, f), { recursive: true, force: true });
+          } catch {
+            /* ok */
+          }
+        }
+        // Exit so the supervisor (systemd / start-runtime.sh) restarts the
+        // daemon fresh: it boots unpaired and immediately emits a new QR.
+        logger.info('Exiting after unlink — supervisor restarts unpaired');
+        clearInterval(timer);
+        setTimeout(() => process.exit(0), 500);
+      }
+    }, 1500);
+    // Don't keep the event loop alive solely for this watcher.
+    timer.unref?.();
   }
 
   private async connectInternal(onFirstOpen?: () => void): Promise<void> {
@@ -181,6 +268,17 @@ export class WhatsAppChannel implements Channel {
         this.connected = true;
         logger.info('Connected to WhatsApp');
 
+        // Pairing artifacts are stale once connected — clear them so the
+        // control plane (ghosty.studio admin-api) reads a clean "linked"
+        // state instead of a leftover QR/code.
+        for (const f of ['qr-code.txt', 'pairing-code.txt', 'pairing-error.txt']) {
+          try {
+            fs.unlinkSync(path.join(STORE_DIR, f));
+          } catch {
+            /* not present — fine */
+          }
+        }
+
         // Announce availability so WhatsApp relays subsequent presence updates (typing indicators)
         this.sock.sendPresenceUpdate('available').catch((err) => {
           logger.warn({ err }, 'Failed to send presence update');
@@ -224,6 +322,13 @@ export class WhatsAppChannel implements Channel {
     });
 
     this.sock.ev.on('creds.update', saveCreds);
+
+    // Watch for control requests written by the admin-api process (separate
+    // process, shares ./store via the volume mount). Only the daemon holds the
+    // live Baileys socket, so pairing-code requests and unlink must round-trip
+    // through here. QR pairing needs nothing — the qr-code.txt written above is
+    // read directly by the control plane.
+    this.startControlWatcher();
 
     this.sock.ev.on('messages.upsert', async ({ messages }) => {
       for (const msg of messages) {

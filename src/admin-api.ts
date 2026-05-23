@@ -35,7 +35,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 import type { RegisteredGroup, ContainerConfig } from './types.js';
-import { CREDENTIAL_PROXY_PORT } from './config.js';
+import { CREDENTIAL_PROXY_PORT, STORE_DIR } from './config.js';
 import { runContainerAgent, type ContainerOutput } from './container-runner.js';
 
 const TOKEN = process.env.NANOCLAW_ADMIN_TOKEN;
@@ -209,6 +209,56 @@ function writeClaudeMd(folder: string, content: string) {
 const STORE_DB_PATH =
   process.env.NANOCLAW_STORE_DB ?? path.resolve('store/messages.db');
 
+// ─── WhatsApp (Baileys) pairing ────────────────────────────────────
+// The daemon (separate process) owns the live Baileys socket and writes
+// pairing artifacts into STORE_DIR: qr-code.txt (refreshed ~20s while
+// unpaired), pairing-code.txt, pairing-error.txt, and auth/creds.json on
+// success. We only read those here; for pairing-code requests and unlink we
+// drop a wa-control.json the daemon's channel watcher consumes.
+const WA_CONTROL_FILE = path.join(STORE_DIR, 'wa-control.json');
+
+function readFileFresh(file: string, maxAgeMs: number): string | null {
+  try {
+    const st = fs.statSync(file);
+    if (Date.now() - st.mtimeMs > maxAgeMs) return null;
+    const s = fs.readFileSync(file, 'utf8').trim();
+    return s || null;
+  } catch {
+    return null;
+  }
+}
+
+function whatsappStatus() {
+  // Linked wins regardless of stale QR/code files left on disk.
+  try {
+    const creds = JSON.parse(
+      fs.readFileSync(path.join(STORE_DIR, 'auth', 'creds.json'), 'utf8'),
+    );
+    if (creds?.me?.id) {
+      const phone = String(creds.me.id).split(':')[0].split('@')[0];
+      return {
+        state: 'linked' as const,
+        phone,
+        name: creds.me.name ?? null,
+      };
+    }
+  } catch {
+    /* not linked yet */
+  }
+
+  const error = readFileFresh(
+    path.join(STORE_DIR, 'pairing-error.txt'),
+    5 * 60_000,
+  );
+  // Pairing codes expire ~60s; give a small grace window.
+  const code = readFileFresh(path.join(STORE_DIR, 'pairing-code.txt'), 90_000);
+  if (code) return { state: 'pairing_code' as const, code, error };
+  // QR is rewritten ~every 20s while unpaired; 60s covers reconnect gaps.
+  const qr = readFileFresh(path.join(STORE_DIR, 'qr-code.txt'), 60_000);
+  if (qr) return { state: 'qr' as const, qr, error };
+  return { state: 'connecting' as const, error };
+}
+
 function activityFor(jid: string) {
   let db: any;
   try {
@@ -365,6 +415,65 @@ const server = http.createServer(async (req, res) => {
       const b = crypto.createHash('sha256').update(expected, 'utf8').digest();
       const match = a.length === b.length && crypto.timingSafeEqual(a, b);
       return send(res, 200, { match });
+    }
+
+    // GET /admin/whatsapp/status
+    // Control plane (ghosty.studio) polls this to drive the pairing UI.
+    if (
+      method === 'GET' &&
+      parts[0] === 'admin' &&
+      parts[1] === 'whatsapp' &&
+      parts[2] === 'status' &&
+      parts.length === 3
+    ) {
+      return send(res, 200, whatsappStatus());
+    }
+
+    // POST /admin/whatsapp/link  body: { method: 'qr' | 'pairing-code', phone? }
+    // QR needs no action — the daemon already emits qr-code.txt while unpaired,
+    // so we just echo current status. pairing-code is handed to the daemon via
+    // wa-control.json (only it holds the live socket to requestPairingCode).
+    if (
+      method === 'POST' &&
+      parts[0] === 'admin' &&
+      parts[1] === 'whatsapp' &&
+      parts[2] === 'link' &&
+      parts.length === 3
+    ) {
+      const body = await readBody(req);
+      const linkMethod =
+        body.method === 'pairing-code' ? 'pairing-code' : 'qr';
+      try {
+        fs.unlinkSync(path.join(STORE_DIR, 'pairing-error.txt'));
+      } catch {
+        /* none — fine */
+      }
+      if (linkMethod === 'pairing-code') {
+        const phone = String(body.phone ?? '').replace(/[^0-9]/g, '');
+        if (phone.length < 8) {
+          return send(res, 400, { error: 'invalid_phone' });
+        }
+        fs.writeFileSync(
+          WA_CONTROL_FILE,
+          JSON.stringify({ action: 'request-pairing', phone }),
+        );
+        return send(res, 202, { ok: true, method: 'pairing-code' });
+      }
+      return send(res, 200, { ok: true, method: 'qr', ...whatsappStatus() });
+    }
+
+    // POST /admin/whatsapp/unlink
+    // Hands an unlink request to the daemon: it calls sock.logout(), wipes
+    // auth, and exits so the supervisor restarts it unpaired (fresh QR).
+    if (
+      method === 'POST' &&
+      parts[0] === 'admin' &&
+      parts[1] === 'whatsapp' &&
+      parts[2] === 'unlink' &&
+      parts.length === 3
+    ) {
+      fs.writeFileSync(WA_CONTROL_FILE, JSON.stringify({ action: 'unlink' }));
+      return send(res, 202, { ok: true });
     }
 
     // GET /admin/agents
