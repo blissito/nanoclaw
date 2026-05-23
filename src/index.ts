@@ -833,7 +833,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         // filter skipped). Current pattern list is specific enough to evaluate
         // unconditionally.
         const isPostMcp = (agentRunOutbound[chatJid] || 0) > 0;
-        const narrationMatch = text ? matchedNarrationPattern(text) : null;
+        // Narration suppression is for WABA / customer-facing chats only. Admin
+        // and internal Baileys groups (e.g. the cotizador admin chat with the
+        // operator) legitimately discuss pipeline column names like "Cotización
+        // enviada" that would otherwise false-positive the pattern and swallow a
+        // real answer (incident 2026-05-23: tania created the Kommo pipeline but
+        // its confirmation to the operator was suppressed).
+        const isPublicChat =
+          group.containerConfig?.profile === 'public' ||
+          chatJid.startsWith('formmy_');
+        const narrationMatch =
+          isPublicChat && text ? matchedNarrationPattern(text) : null;
         if (text && !isMetaNoResponse && pausedMidRun) {
           logger.info(
             {
