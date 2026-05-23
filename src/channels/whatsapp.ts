@@ -1077,7 +1077,10 @@ export class WhatsAppChannel implements Channel {
     // Baileys sends { url } via an internal createReadStream; a missing file's
     // async ENOENT escapes the try/catch → uncaughtException → process.exit(1).
     if (!fs.existsSync(filePath)) {
-      logger.warn({ jid, filePath, filename }, 'Document file not found, dropping send');
+      logger.warn(
+        { jid, filePath, filename },
+        'Document file not found, dropping send',
+      );
       return;
     }
     try {
