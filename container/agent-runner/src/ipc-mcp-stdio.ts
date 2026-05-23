@@ -32,6 +32,11 @@ const GROUP_DIR = '/workspace/group';
 /** Ensure a file is inside /workspace/group/ so the host can access it via the mount. */
 function ensureInGroupDir(filePath: string): string {
   const resolved = path.resolve(filePath);
+  if (!fs.existsSync(resolved)) {
+    throw new Error(
+      `File not found: ${filePath}. Do not claim it was sent — tell the user the file is unavailable.`,
+    );
+  }
   if (resolved.startsWith(GROUP_DIR + '/')) return resolved;
   const dest = path.join(GROUP_DIR, path.basename(resolved));
   fs.copyFileSync(resolved, dest);
