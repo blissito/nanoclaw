@@ -229,12 +229,16 @@ function readFileFresh(file: string, maxAgeMs: number): string | null {
 }
 
 function whatsappStatus() {
-  // Linked wins regardless of stale QR/code files left on disk.
+  // Linked requires registered === true. requestPairingCode() writes a
+  // PROVISIONAL me.id (the number being paired) into creds.json with
+  // registered:false BEFORE the user enters the code — so checking me.id alone
+  // is a false positive that shows "linked" mid-pairing. Only a completed
+  // handshake flips registered to true.
   try {
     const creds = JSON.parse(
       fs.readFileSync(path.join(STORE_DIR, 'auth', 'creds.json'), 'utf8'),
     );
-    if (creds?.me?.id) {
+    if (creds?.registered === true && creds?.me?.id) {
       const phone = String(creds.me.id).split(':')[0].split('@')[0];
       return {
         state: 'linked' as const,
@@ -441,8 +445,7 @@ const server = http.createServer(async (req, res) => {
       parts.length === 3
     ) {
       const body = await readBody(req);
-      const linkMethod =
-        body.method === 'pairing-code' ? 'pairing-code' : 'qr';
+      const linkMethod = body.method === 'pairing-code' ? 'pairing-code' : 'qr';
       try {
         fs.unlinkSync(path.join(STORE_DIR, 'pairing-error.txt'));
       } catch {
