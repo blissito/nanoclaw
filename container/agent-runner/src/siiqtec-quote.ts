@@ -18,8 +18,29 @@ const ITEMS_PER_PRODUCT_PAGE = 6;
 const FOLIO_REGEX = /^\d{6}-\d{3}$/;
 const VALID_UNITS = new Set(['PZA', 'GARRAFA', 'KG', 'LT', 'CAJA', 'BOLSA', 'PAR', 'JGO']);
 
-const LOGO_URL = 'https://easybits-public.fly.storage.tigris.dev/69e19ed033ef9abb7cd5a54b/90R';
-const BANK_LOGO_URL = 'https://easybits-public.fly.storage.tigris.dev/69e19ed033ef9abb7cd5a54b/eHr';
+// Emisor branding — overridable per deployment via QUOTE_* env vars so one tool can serve
+// sister brands (SIIQTEC, Totequim, ...). Defaults reproduce the SIIQTEC quote byte-for-byte,
+// so a deployment that sets nothing is unaffected.
+//
+// SEED-ON-PULL: these values live in SQLite (per-group container_config.env), NOT in git, so
+// they are passed through wholesale by container-runner buildEnvFile(). A sister-brand instance
+// must (re)seed QUOTE_* after each pull/clean-install. Totequim (tania) seed:
+//   UPDATE registered_groups SET container_config = json_set(container_config, '$.env', json('{
+//     "QUOTE_RAZON_SOCIAL":"TOTEQUIM","QUOTE_BRAND_SHORT":"Totequim","QUOTE_WEB":"totequim.com",
+//     "QUOTE_CONTACT_LINE":"Tel: 771 701 0389 · 771 364 9372",
+//     "QUOTE_FOOTER_CONTACT":"totequim.com · Tel: 771 701 0389"}')) WHERE folder='main';
+const BRAND = {
+  logoUrl: process.env.QUOTE_LOGO_URL || 'https://easybits-public.fly.storage.tigris.dev/69e19ed033ef9abb7cd5a54b/90R',
+  bankLogoUrl: process.env.QUOTE_BANK_LOGO_URL || 'https://easybits-public.fly.storage.tigris.dev/69e19ed033ef9abb7cd5a54b/eHr',
+  razonSocial: process.env.QUOTE_RAZON_SOCIAL || 'SIIQTEC SA DE CV',
+  rfc: process.env.QUOTE_RFC || 'SII140827F4A',
+  addr1: process.env.QUOTE_ADDR_1 || 'ENTRADA SAN ISIDRO 142 · Col: RANCHO SAN ISIDRO C.P.: 42188',
+  addr2: process.env.QUOTE_ADDR_2 || 'MINERAL DE LA REFORMA, HIDALGO, MÉXICO',
+  contactLine: process.env.QUOTE_CONTACT_LINE || 'Tel: 7712211359 · TOTEQUIM 7717010389 · siiqtec@hotmail.com',
+  shortName: process.env.QUOTE_BRAND_SHORT || 'SIIQTEC',
+  web: process.env.QUOTE_WEB || 'siiqtec.com.mx',
+  footerContact: process.env.QUOTE_FOOTER_CONTACT || 'ventas@siiqtec.com.mx · Tel: 7712211359',
+};
 
 // Product photos display at 40px but the PDF engine embeds the full-res source, bloating large
 // quotes to 5-9MB and timing out the container. weserv returns a ~1-3KB thumbnail instead.
@@ -159,7 +180,7 @@ export function computeTotals(input: QuoteInput): {
   let envioColor = '#16A34A';
   if (input.envio.modo === 'ruta_siiqtec') {
     envioCost = 0;
-    envioLabel = `Ruta SIIQTEC — ${input.envio.destino} · Entrega ${input.envio.dia}`;
+    envioLabel = `Ruta ${BRAND.shortName} — ${input.envio.destino} · Entrega ${input.envio.dia}`;
     envioValueText = 'GRATIS';
   } else {
     envioCost = Math.round(input.envio.costo * 100) / 100;
@@ -247,13 +268,13 @@ export function renderProductPage(opts: {
   <!-- HEADER -->
   <div class="shrink-0 flex justify-between items-center px-8 pt-3 pb-2 border-b-2 border-gray-800">
     <div class="flex items-center gap-4">
-      <img src="${LOGO_URL}" class="h-16 w-auto object-contain" />
+      <img src="${BRAND.logoUrl}" class="h-16 w-auto object-contain" />
       <div class="text-left text-xs text-gray-700">
-        <p class="text-sm font-black tracking-wide text-gray-900">SIIQTEC SA DE CV</p>
-        <p class="mt-0.5">RFC: SII140827F4A</p>
-        <p>ENTRADA SAN ISIDRO 142 · Col: RANCHO SAN ISIDRO C.P.: 42188</p>
-        <p>MINERAL DE LA REFORMA, HIDALGO, MÉXICO</p>
-        <p>Tel: 7712211359 · TOTEQUIM 7717010389 · siiqtec@hotmail.com</p>
+        <p class="text-sm font-black tracking-wide text-gray-900">${escapeHtml(BRAND.razonSocial)}</p>
+        <p class="mt-0.5">RFC: ${escapeHtml(BRAND.rfc)}</p>
+        <p>${escapeHtml(BRAND.addr1)}</p>
+        <p>${escapeHtml(BRAND.addr2)}</p>
+        <p>${escapeHtml(BRAND.contactLine)}</p>
       </div>
     </div>
     <div class="text-right border border-gray-300 rounded px-4 py-2 min-w-36">
@@ -278,7 +299,7 @@ export function renderProductPage(opts: {
       <div><span class="text-gray-500">Domicilio: </span><span class="text-gray-700">${dash(c.domicilio)}</span></div>
       <div><span class="text-gray-500">Colonia: </span><span class="text-gray-700">${dash(c.colonia)}</span></div>
       <div><span class="text-gray-500">Ciudad: </span><span class="text-gray-700">${dash(c.ciudad)}</span></div>
-      <div><span class="text-gray-500">Vendedor: </span><span class="text-gray-700">${dash(c.vendedor || 'SIIQTEC')}</span></div>
+      <div><span class="text-gray-500">Vendedor: </span><span class="text-gray-700">${dash(c.vendedor || BRAND.shortName)}</span></div>
     </div>
   </div>
 
@@ -307,7 +328,7 @@ ${tfoot}
     <div class="flex justify-between items-end text-xs">
       <div>
         <p class="text-gray-500">Vendedor</p>
-        <p class="font-semibold text-gray-800 mt-3 border-t border-gray-400 pt-1 w-40">${dash(c.vendedor || 'SIIQTEC')}</p>
+        <p class="font-semibold text-gray-800 mt-3 border-t border-gray-400 pt-1 w-40">${dash(c.vendedor || BRAND.shortName)}</p>
       </div>
       <div class="text-right text-gray-500">
         <p class="italic text-gray-400">${AI_DISCLAIMER}</p>
@@ -369,10 +390,10 @@ export function renderDepositPage(opts: {
           <p class="text-xs text-gray-500 font-bold tracking-widest" style="writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap">DATOS DE LA EMPRESA</p>
         </div>
         <div class="flex-1 flex flex-col items-center justify-center py-6 px-6 gap-3">
-          <img src="${LOGO_URL}" class="h-36 w-auto object-contain" />
+          <img src="${BRAND.logoUrl}" class="h-36 w-auto object-contain" />
           <table class="w-full text-xs border-collapse">
             <tr><td class="border border-gray-300 px-3 py-1 bg-gray-50 text-center text-gray-500">Razón Social</td></tr>
-            <tr><td class="border border-gray-300 px-3 py-2 text-center font-bold text-gray-800">SIIQTEC</td></tr>
+            <tr><td class="border border-gray-300 px-3 py-2 text-center font-bold text-gray-800">${escapeHtml(BRAND.shortName)}</td></tr>
           </table>
         </div>
       </div>
@@ -385,7 +406,7 @@ export function renderDepositPage(opts: {
             <p class="text-xs text-gray-500 font-bold tracking-widest" style="writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap">DATOS BANCARIOS</p>
           </div>
           <div class="flex-1 flex items-center gap-4 px-4 py-3">
-            <img src="${BANK_LOGO_URL}" class="h-10 w-auto object-contain flex-shrink-0" />
+            <img src="${BRAND.bankLogoUrl}" class="h-10 w-auto object-contain flex-shrink-0" />
             <table class="flex-1 text-xs border-collapse">
               <thead><tr>
                 <th class="border border-gray-300 px-4 py-1 bg-gray-50 text-gray-600 font-semibold">Cuenta</th>
@@ -427,8 +448,8 @@ ${mpCard}
 
   <div class="shrink-0 w-full px-10 py-3 border-t border-gray-200 mt-auto text-xs text-gray-400">
     <div class="flex justify-between">
-      <p>SIIQTEC · siiqtec.com.mx</p>
-      <p>ventas@siiqtec.com.mx · Tel: 7712211359</p>
+      <p>${escapeHtml(BRAND.shortName)} · ${escapeHtml(BRAND.web)}</p>
+      <p>${escapeHtml(BRAND.footerContact)}</p>
     </div>
     <p class="text-right italic mt-0.5">${AI_DISCLAIMER}</p>
   </div>
