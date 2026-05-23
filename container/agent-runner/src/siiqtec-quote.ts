@@ -393,7 +393,7 @@ export function renderDepositPage(opts: {
           <img src="${BRAND.logoUrl}" class="h-36 w-auto object-contain" />
           <table class="w-full text-xs border-collapse">
             <tr><td class="border border-gray-300 px-3 py-1 bg-gray-50 text-center text-gray-500">Razón Social</td></tr>
-            <tr><td class="border border-gray-300 px-3 py-2 text-center font-bold text-gray-800">${escapeHtml(BRAND.shortName)}</td></tr>
+            <tr><td class="border border-gray-300 px-3 py-2 text-center font-bold text-gray-800">${escapeHtml(BRAND.razonSocial)}</td></tr>
           </table>
         </div>
       </div>
