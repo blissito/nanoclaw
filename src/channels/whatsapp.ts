@@ -270,35 +270,17 @@ export class WhatsAppChannel implements Channel {
         if (shouldReconnect) {
           this.scheduleReconnect(1);
         } else {
-          // loggedOut (401): the stored creds are dead (failed pairing, or the
-          // user unlinked from their phone). Do NOT process.exit — in managed
-          // Firecracker deployments the unit is Restart=on-failure, so exit(0)
-          // takes admin-api down with us and never comes back. Wipe the dead
-          // creds + pairing artifacts and reconnect → fresh QR so the user can
-          // re-pair without operator intervention.
-          logger.info(
-            'Logged out — wiping creds and reconnecting for fresh pairing',
+          // loggedOut (401): WhatsApp invalidated the linked device. Do NOT
+          // process.exit and do NOT wipe store/auth — other listeners (the
+          // Formmy/WABA channel, credential proxy, admin-api) share this
+          // process, so exiting crash-loops them all, and deleting the creds
+          // throws away a session we may want to inspect or re-pair
+          // deliberately. Keep the daemon alive with creds intact; re-pairing
+          // is an explicit operator action (admin unlink / /setup), never an
+          // automatic side effect of a transient logout.
+          logger.warn(
+            'Logged out (401) — keeping daemon alive (creds left intact). Re-pair WhatsApp to restore linked groups.',
           );
-          try {
-            fs.rmSync(path.join(STORE_DIR, 'auth'), {
-              recursive: true,
-              force: true,
-            });
-          } catch {
-            /* ok */
-          }
-          for (const f of [
-            'qr-code.txt',
-            'pairing-code.txt',
-            'pairing-error.txt',
-          ]) {
-            try {
-              fs.unlinkSync(path.join(STORE_DIR, f));
-            } catch {
-              /* ok */
-            }
-          }
-          this.scheduleReconnect(1);
         }
       } else if (connection === 'open') {
         this.connected = true;
