@@ -766,6 +766,7 @@ const server = http.createServer(async (req, res) => {
         files: string[];
         sizeBytes: number;
         uploadedAt: string;
+        dir: string;
       }> = [];
       const groups = Object.entries(getAllRegisteredGroups());
       for (const [, group] of groups) {
@@ -820,6 +821,9 @@ const server = http.createServer(async (req, res) => {
             files,
             sizeBytes,
             uploadedAt: st.mtime.toISOString(),
+            // Ruta absoluta canónica DENTRO de la VM — la usa copySkill (easybits)
+            // para leer los bytes vía readFile y exportar la skill a otro agente.
+            dir: skillDir,
           });
         }
         // Solo el primer grupo — ghostyclaw VMs son single-agent.
