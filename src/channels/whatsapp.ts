@@ -1138,7 +1138,11 @@ export class WhatsAppChannel implements Channel {
         jid,
         isVoiceNote
           ? { audio: buffer, mimetype: 'audio/ogg; codecs=opus', ptt: true }
-          : { audio: buffer, mimetype: audioMime[ext] || 'audio/mpeg', ptt: false },
+          : {
+              audio: buffer,
+              mimetype: audioMime[ext] || 'audio/mpeg',
+              ptt: false,
+            },
       );
       logger.info({ jid, filePath, ptt: isVoiceNote }, 'Audio sent');
     } catch (err) {
