@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# generate-music: generate a music track from a text prompt using ElevenLabs Music.
+# Usage: generate-music "prompt describing the music" [seconds]
+set -euo pipefail
+
+PROMPT="${1:?Usage: generate-music \"prompt\" [seconds]}"
+LEN_SECS="${2:-20}"
+LEN_MS=$(( LEN_SECS * 1000 ))
+# ElevenLabs Music requires music_length_ms >= 3000.
+(( LEN_MS < 3000 )) && LEN_MS=3000
+
+OUTPUT_DIR="/workspace/group/attachments"
+mkdir -p "$OUTPUT_DIR"
+STAMP="$(date +%s%3N)"
+MP3_FILE="${OUTPUT_DIR}/music-${STAMP}.mp3"
+OGG_FILE="${OUTPUT_DIR}/music-${STAMP}.ogg"
+
+if [[ -z "${ELEVENLABS_API_KEY:-}" ]]; then
+  echo "ERROR: ELEVENLABS_API_KEY no disponible" >&2
+  exit 1
+fi
+
+REQ=$(python3 - "$PROMPT" "$LEN_MS" <<'PY'
+import json, sys
+print(json.dumps({"prompt": sys.argv[1], "music_length_ms": int(sys.argv[2])}))
+PY
+)
+
+# ElevenLabs Music. Endpoint puede variar: si /v1/music da 404, probar /v1/music/compose.
+RESPONSE_CODE=$(curl -sS -w "%{http_code}" -o "$MP3_FILE" \
+  -X POST "https://api.elevenlabs.io/v1/music" \
+  -H "xi-api-key: $ELEVENLABS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "$REQ")
+
+if [[ "$RESPONSE_CODE" != "200" ]]; then
+  ERR=$(cat "$MP3_FILE" 2>/dev/null || echo "HTTP $RESPONSE_CODE")
+  rm -f "$MP3_FILE"
+  echo "ERROR: ElevenLabs Music ($RESPONSE_CODE): $ERR" >&2
+  exit 1
+fi
+
+# Transcodear a Opus .ogg para que reproduzca inline como nota de audio.
+if ffmpeg -nostdin -loglevel error -i "$MP3_FILE" -c:a libopus -b:a 64k "$OGG_FILE" -y; then
+  rm -f "$MP3_FILE"
+  OUT="$OGG_FILE"
+else
+  # Si el transcode falla, conserva el mp3 (mándalo como document_path).
+  OUT="$MP3_FILE"
+fi
+
+# Cost tracking via IPC (non-fatal)
+{
+  IPC_DIR="/workspace/ipc/messages"; mkdir -p "$IPC_DIR"
+  TRACK="${IPC_DIR}/imgtrack-$(date +%s%3N).json"
+  python3 - "$PROMPT" "$TRACK" <<'PY'
+import json, sys
+json.dump({
+    "type": "track_image_gen",
+    "gen_type": "music",
+    "prompt": sys.argv[1][:100],
+    "model": "elevenlabs-music",
+    "cost_usd": 0.05,
+}, open(sys.argv[2], "w"))
+PY
+} || true
+
+echo "$OUT"
