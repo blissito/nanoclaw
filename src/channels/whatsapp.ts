@@ -1123,12 +1123,24 @@ export class WhatsAppChannel implements Channel {
     }
     try {
       const buffer = fs.readFileSync(filePath);
-      await this.sock.sendMessage(jid, {
-        audio: buffer,
-        mimetype: 'audio/ogg; codecs=opus',
-        ptt: true,
-      });
-      logger.info({ jid, filePath }, 'Audio sent');
+      const ext = path.extname(filePath).toLowerCase();
+      // Opus/OGG is the only format WhatsApp renders as an inline voice note
+      // (ptt). Other formats must go as a normal audio message with their real
+      // mimetype — labeling an mp3 as opus breaks playback on mobile.
+      const isVoiceNote = ext === '.ogg' || ext === '.opus';
+      const audioMime: Record<string, string> = {
+        '.mp3': 'audio/mpeg',
+        '.m4a': 'audio/mp4',
+        '.aac': 'audio/aac',
+        '.wav': 'audio/wav',
+      };
+      await this.sock.sendMessage(
+        jid,
+        isVoiceNote
+          ? { audio: buffer, mimetype: 'audio/ogg; codecs=opus', ptt: true }
+          : { audio: buffer, mimetype: audioMime[ext] || 'audio/mpeg', ptt: false },
+      );
+      logger.info({ jid, filePath, ptt: isVoiceNote }, 'Audio sent');
     } catch (err) {
       logger.warn({ jid, filePath, err }, 'Failed to send audio');
     }
