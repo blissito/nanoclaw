@@ -19,9 +19,9 @@ Produce un PDF de una página con dos capas:
 | Scope | WABA del cliente: `channel='formmy-whatsapp'`, 1:1 | **NO mezclar con Baileys** (`channel='whatsapp'` = grupos admin Siiqtec). Para droplets Baileys, cambia el canal en `metrics.sql` (CTE `scope`) y en `classify-topics.mjs` (`CHANNEL`). |
 | Rango | últimos 30 días | Editable (ver Paso 1). |
 | Muestra (N) | 30 conversaciones | Las de más mensajes entrantes. |
-| Marca | `totequim` | Cliente de sofi-0. Cambiar en el HTML para otro cliente. |
+| Marca | `SIIQTEC` | Cliente de sofi-0 (NO "totequim"). Cambiar en el HTML para otro cliente. |
 
-**Semántica (importante):** en el canal `formmy-whatsapp` de sofi-0, `is_bot_message` está siempre en 0 y `manual_mode` es ubicuo, así que NO sirven para medir bot-vs-humano ni escalamiento. La señal fiable es `is_from_me` (0=entrante, 1=saliente). Por eso el reporte mide **volumen + capacidad de respuesta**, no automatización/contención. (Detalle en memoria `reference_sofi_waba_channel_schema`.) Todo es **solo lectura** sobre prod.
+**Coexistencia (clave):** WABA es bot (Sofi) + operador humano vía Formmy; las conversaciones son **híbridas**. `is_bot_message` siempre 0 y todo saliente sale como `sender_name='Operador'` → NO se puede medir "respondidas por el bot" ni tiempo de respuesta del bot. La señal fiable es **`manual_mode=1` = el operador humano tomó la conversación**. El split se mide por presencia de intervención a nivel conversación: **autónomas** (sin manual_mode) vs **con apoyo humano** (≥1 manual_mode, híbridas). NO etiquetar cada conversación como puro-bot/puro-humano. (Detalle en memoria `reference_sofi_waba_channel_schema`.) Todo es **solo lectura** sobre prod.
 
 ## Paso 1 — Capa 0 (SQL, solo lectura)
 
@@ -39,92 +39,96 @@ sed 's/-30 days/-60 days/' .claude/skills/reporte-cliente/metrics.sql \
   | ssh root@64.23.167.64 'sqlite3 /home/nanoclaw/app/store/messages.db'
 ```
 
-Devuelve un objeto JSON con: `conversaciones`, `conversaciones_nuevas`, `mensajes_in`, `mensajes_out`, `respondidas`, `primera_respuesta_p50_seg`, `pico_dow` (0=Dom…6=Sáb, hora México), `pico_hora`, y `consumo` (objeto ya sumado para el cliente). Si `conversaciones` es 0, avisa al usuario y detente — el rango/scope no trae datos.
+Devuelve un objeto JSON con: `conversaciones`, `con_apoyo_humano`, `autonomas`, `mensajes_in`, `mensajes_out`, `pico_dow` (0=Dom…6=Sáb, hora México), `pico_hora`, y `consumo` (objeto sumado). Si `conversaciones` es 0, avisa al usuario y detente.
 
 Cálculos derivados (en la sesión host):
-- `% respondidas` = `respondidas / conversaciones`
-- `1ª respuesta` = `primera_respuesta_p50_seg` formateado (ej. `8 s`, `36 min`)
-- `mensajes/conversación` = `mensajes_in / conversaciones`
-- Consumo: `consumo` ya viene sumado (un solo cliente en sofi-0). `costo/conversación` = `cost_usd / conversaciones`; `cache hit` = `cache_read_tok / (cache_read_tok + in_tok)`.
+- `% autónomas` = `autonomas / conversaciones` (Sofi sola); `% con apoyo` = `con_apoyo_humano / conversaciones` (híbridas).
+- `mensajes/conversación` = `mensajes_in / conversaciones`.
+- Consumo: estimado (plan Max, equivalente API, NO factura real). En MXN: `cost_usd * tc` (tc ~18, ajustable). Mostrar como una línea, no como bloque grande.
 
-**Ojo con la ventana vs historia real:** la `messages.db` de sofi-0 solo guarda historia reciente (al 2026-05-26, desde ~2026-05-08). Si la ventana pedida es mayor que la historia disponible, ajusta la etiqueta del período al rango real de datos. Por eso `conversaciones_nuevas` NO se muestra (sin historia previa todos parecen nuevos); se reemplaza por `mensajes/conversación`.
+**Ojo con la ventana vs historia real:** la `messages.db` de sofi-0 solo guarda historia reciente (al 2026-05-26, desde ~2026-05-11). Si la ventana pedida es mayor que la historia disponible, ajusta la etiqueta del período al rango real de datos (ej. "11–27 may 2026").
+
+**Lo que NO se puede medir (limitación de tracking):** respuestas/tiempo del bot (no se etiquetan), resolución (no hay tabla `conversations`), secuencia de handoffs. Esto va en el diagnóstico interno, NO en el PDF del cliente.
 
 ## Paso 2 — Capa 1 (temas, gpt-4o-mini)
 
-Primero confirma que la llave existe:
+**sofi-0 NO tiene `OPENAI_API_KEY`** (usa whisper local), así que la clasificación corre **localmente** con la key de tu `.env` del repo. La data se jala por SSH (solo lectura) y la key nunca sale de tu máquina. Este es el modo recomendado:
 
 ```bash
-ssh root@64.23.167.64 "grep -c '^OPENAI_API_KEY=' /home/nanoclaw/app/.env"
+# 1) Jala la muestra (top-N chats + texto entrante) desde el droplet, read-only:
+ssh root@64.23.167.64 'sqlite3 -json /home/nanoclaw/app/store/messages.db "
+  SELECT m.chat_jid AS jid, substr(group_concat(m.content, char(10)),1,1500) AS text, COUNT(*) n
+  FROM messages m JOIN chats c ON c.jid=m.chat_jid
+  WHERE c.channel=''formmy-whatsapp'' AND c.is_group=0
+    AND c.jid NOT LIKE ''formmy_audit%'' AND c.jid NOT LIKE ''%HEALTHCHECK%''
+    AND m.is_from_me=0 AND m.content IS NOT NULL AND m.content!=''''
+    AND m.timestamp >= strftime(''%Y-%m-%dT%H:%M:%fZ'',''now'',''-30 days'')
+  GROUP BY m.chat_jid ORDER BY n DESC LIMIT 30;"' > /tmp/sofi_sample.json
+
+# 2) Clasifica local con tu key (modo --sample):
+OPENAI_API_KEY=$(grep -E '^OPENAI_API_KEY=' .env | head -1 | cut -d= -f2- | tr -d '"') \
+  node .claude/skills/reporte-cliente/classify-topics.mjs --sample /tmp/sofi_sample.json
 ```
 
-Si da `0`, avisa al usuario (no abortes el reporte: puedes entregarlo sin la sección de temas). Si existe, copia el script y córrelo:
+Devuelve `{ sample_size, resueltos, topics }`. Convierte `topics` a porcentajes sobre `sample_size` y ordena de mayor a menor.
 
-```bash
-scp .claude/skills/reporte-cliente/classify-topics.mjs root@64.23.167.64:/tmp/
-ssh root@64.23.167.64 \
-  "OPENAI_API_KEY=\$(grep -E '^OPENAI_API_KEY=' /home/nanoclaw/app/.env | cut -d= -f2-) \
-   node /tmp/classify-topics.mjs /home/nanoclaw/app/store/messages.db 30 30"
-```
-
-(Ajusta `30 30` = días y N al rango/muestra elegidos.) Devuelve `{ sample_size, resueltos, topics }`. Convierte `topics` a porcentajes sobre `sample_size` y ordena de mayor a menor.
-
-**Prueba primero con N=5** para validar la llave y el parseo antes de las 30.
+**Modo alterno (droplet con su propia key):** `scp` el script y corre `node classify-topics.mjs <db> <días> <N>` con `OPENAI_API_KEY` del `.env` del droplet. Si no hay key en ningún lado, entrega el reporte SIN la sección de temas (no abortes).
 
 ## Paso 3 — Armar el PDF
 
 Llena la plantilla de abajo con los datos de los pasos 1 y 2. Genera las barras de temas (`{{TEMAS_BARS}}`) repitiendo la fila por cada tema con su `%`. Luego, con los tools EasyBits MCP de tu sesión (mismo path que las cotizaciones de Sofi):
 
-1. `mcp__easybits__create_document(name, [{ id, order, name, html }])` → `documentId`
+1. `mcp__easybits__create_document(name, [{ id, order, name, html }], brandKitId)` → `documentId`
 2. `mcp__easybits__export_document(documentId, as: 'pdf')` → `file.url`
-3. Descarga el PDF (`curl -o`) y entrégalo.
+3. Descarga el PDF (`curl -o ~/Downloads/...`), `open -R` para Finder y `open` para Preview.
 
-**Gotcha (memoria `reference_easybits_mcp_behavior`):** usa `export_document` (funciona). NO uses `upload_file` público (roto: url vacía + 403).
+**Brand kit fixter.org:** `brandKitId='69f4357ae2888eff16f30f5e'` (tinta `#19262a`, menta `#85ddcb`, blanco, Inter). Para impresión: fondo **blanco** y los hex de la paleta hardcodeados en el HTML (garantiza el render aunque las clases semánticas no resuelvan); pasa igual `brandKitId` para metadata/logo.
 
-### Plantilla HTML (one-pager minimalista)
+**Gotcha (memoria `reference_easybits_mcp_behavior`):** usa `export_document` (funciona, probado 2026-05-26). NO uses `upload_file` público (roto: url vacía + 403).
+
+### Plantilla HTML (one-pager minimalista, coexistencia, paleta fixter — validada 2026-05-26)
+
+Fondo blanco; hex hardcodeados (tinta `#19262a`, menta `#85ddcb`, claro `#dae8e5`). La tarjeta del medio (autónomas = valor del bot) va en oscuro como acento.
 
 ```html
 <!doctype html><html lang="es"><head><meta charset="utf-8">
-<script src="https://cdn.tailwindcss.com"></script></head>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>*{font-family:'Inter',ui-sans-serif,system-ui,sans-serif}</style></head>
 <body class="bg-white">
-<div class="w-[8.5in] min-h-[11in] px-16 py-14 font-sans text-slate-800">
-  <header class="flex items-baseline justify-between border-b border-slate-200 pb-6">
+<div class="w-[8.5in] h-[11in] bg-white text-[#19262a] px-[1in] py-[0.9in] flex flex-col">
+  <header class="flex items-start justify-between">
     <div>
-      <h1 class="text-3xl font-light tracking-tight">{{MARCA}}</h1>
-      <p class="text-slate-400 text-sm mt-1">Reporte de actividad</p>
+      <p class="text-[10px] uppercase tracking-[0.25em] text-[#19262a]/40">Reporte de actividad · WhatsApp</p>
+      <h1 class="text-5xl font-medium tracking-tight mt-2">{{MARCA}}</h1>
+      <p class="text-sm text-[#19262a]/50 mt-1">Asistente Sofi + equipo</p>
     </div>
-    <p class="text-slate-400 text-sm">{{PERIODO}}</p>
+    <div class="text-right"><p class="text-sm font-medium">{{PERIODO}}</p>
+      <p class="text-[10px] uppercase tracking-[0.2em] text-[#19262a]/40 mt-1">Periodo</p></div>
   </header>
+  <div class="h-[3px] w-16 bg-[#85ddcb] rounded-full mt-6"></div>
 
-  <section class="grid grid-cols-3 gap-8 mt-12 text-center">
-    <div><div class="text-5xl font-light">{{CONVERSACIONES}}</div><div class="text-slate-400 text-xs uppercase tracking-widest mt-2">Conversaciones</div></div>
-    <div><div class="text-5xl font-light">{{PCT_RESPONDIDAS}}</div><div class="text-slate-400 text-xs uppercase tracking-widest mt-2">Respondidas</div></div>
-    <div><div class="text-5xl font-light">{{PRIMERA_RESP}}</div><div class="text-slate-400 text-xs uppercase tracking-widest mt-2">1ª respuesta</div></div>
+  <section class="grid grid-cols-3 gap-5 mt-10">
+    <div class="rounded-2xl border border-[#dae8e5] p-6"><div class="text-5xl font-light leading-none">{{CONVERSACIONES}}</div><div class="text-[11px] uppercase tracking-[0.16em] text-[#19262a]/45 mt-3">Conversaciones</div></div>
+    <div class="rounded-2xl bg-[#19262a] text-white p-6"><div class="text-5xl font-light leading-none">{{PCT_AUTONOMAS}}<span class="text-2xl align-top">%</span></div><div class="text-[11px] uppercase tracking-[0.16em] text-white/60 mt-3">Autónomas · solo Sofi</div><div class="text-[10px] text-white/40 mt-1">{{N_AUTONOMAS}} conversaciones</div></div>
+    <div class="rounded-2xl border border-[#dae8e5] p-6"><div class="text-5xl font-light leading-none">{{PCT_APOYO}}<span class="text-2xl align-top">%</span></div><div class="text-[11px] uppercase tracking-[0.16em] text-[#19262a]/45 mt-3">Con apoyo humano</div><div class="text-[10px] text-[#19262a]/35 mt-1">{{N_APOYO}} · híbridas</div></div>
   </section>
 
-  <section class="grid grid-cols-3 gap-8 mt-10 text-center text-sm">
-    <div><span class="text-2xl font-light">{{MENSAJES_IN}}</span><div class="text-slate-400 mt-1">mensajes recibidos</div></div>
-    <div><span class="text-2xl font-light">{{MENSAJES_OUT}}</span><div class="text-slate-400 mt-1">mensajes enviados</div></div>
-    <div><span class="text-2xl font-light">{{MSGS_POR_CONV}}</span><div class="text-slate-400 mt-1">mensajes / conversación</div></div>
-  </section>
+  <p class="text-sm text-[#19262a]/50 mt-8">{{MENSAJES_IN}} mensajes recibidos · {{MSGS_POR_CONV}} por conversación · {{PICO}}</p>
 
-  <section class="mt-14">
-    <h2 class="text-xs uppercase tracking-widest text-slate-400 mb-5">Temas</h2>
+  <section class="mt-12">
+    <p class="text-[11px] uppercase tracking-[0.2em] text-[#19262a]/50 mb-4">Temas más frecuentes</p>
     <div class="space-y-3">{{TEMAS_BARS}}</div>
+    <p class="text-[10px] text-[#19262a]/35 mt-3">muestra de {{N_MUESTRA}} conversaciones</p>
   </section>
 
-  <section class="mt-12 text-sm text-slate-500">
-    <span class="text-slate-400 uppercase tracking-widest text-xs">Horario pico</span>
-    <span class="ml-3 text-slate-800">{{PICO}}</span>
-  </section>
-
-  <footer class="mt-auto pt-10 border-t border-slate-200 grid grid-cols-4 gap-4 text-center text-xs absolute-none">
-    <div><div class="text-lg font-light text-slate-800">{{COSTO}}</div><div class="text-slate-400 mt-1">consumo modelos</div></div>
-    <div><div class="text-lg font-light text-slate-800">{{COSTO_CONV}}</div><div class="text-slate-400 mt-1">por conversación</div></div>
-    <div><div class="text-lg font-light text-slate-800">{{TOKENS}}</div><div class="text-slate-400 mt-1">tokens</div></div>
-    <div><div class="text-lg font-light text-slate-800">{{CACHE_HIT}}</div><div class="text-slate-400 mt-1">cache hit</div></div>
-  </footer>
-
-  <p class="text-slate-300 text-[10px] mt-8">Generado {{GENERADO}} · consumo facturado a la cuenta del cliente</p>
+  <div class="mt-auto">
+    <p class="text-xs text-[#19262a]/45">Consumo estimado de modelos: {{CONSUMO_MXN}} <span class="text-[#19262a]/35">(equivalente API, plan Max · no factura real)</span></p>
+    <footer class="flex items-center justify-between mt-4 pt-4 border-t border-[#dae8e5]">
+      <img src="https://fixter.org/logo.png" alt="Fixter" class="h-5 opacity-70">
+      <p class="text-[10px] text-[#19262a]/40">Generado {{GENERADO}}</p>
+    </footer>
+  </div>
 </div>
 </body></html>
 ```

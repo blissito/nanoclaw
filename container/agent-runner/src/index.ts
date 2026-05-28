@@ -447,6 +447,16 @@ function getAllMcpServers(containerInput: ContainerInput, mcpServerPath: string)
         SKYDROPX_BASE_URL: process.env.SKYDROPX_BASE_URL || 'https://pro.skydropx.com',
       },
     },
+    spotify: {
+      command: 'node',
+      args: ['/app/mcp-servers/spotify/dist/index.js'],
+      env: {
+        GHOSTY_STUDIO_URL: process.env.GHOSTY_STUDIO_URL || 'https://ghosty.studio',
+        NANOCLAW_ADMIN_TOKEN: process.env.NANOCLAW_ADMIN_TOKEN || '',
+        NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
+        NANOCLAW_CHAT_JID: containerInput.chatJid,
+      },
+    },
   };
 }
 

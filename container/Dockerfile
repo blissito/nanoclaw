@@ -81,6 +81,12 @@ RUN cd /app/mcp-servers/skydropx && npm install
 COPY mcp-servers/skydropx/ /app/mcp-servers/skydropx/
 RUN cd /app/mcp-servers/skydropx && npm run build
 
+# Build bundled Spotify MCP server (Web API, OAuth via ghosty.studio)
+COPY mcp-servers/spotify/package*.json /app/mcp-servers/spotify/
+RUN cd /app/mcp-servers/spotify && npm install
+COPY mcp-servers/spotify/ /app/mcp-servers/spotify/
+RUN cd /app/mcp-servers/spotify && npm run build
+
 # Install pdf-reader CLI
 COPY skills/pdf-reader/pdf-reader /usr/local/bin/pdf-reader
 RUN chmod +x /usr/local/bin/pdf-reader
@@ -110,7 +116,7 @@ RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/
 RUN printf '#!/bin/bash\nset -e\ncat > /tmp/input.json\nif [ /app/src/index.ts -nt /app/dist/index.js ]; then\n  cd /app && npx tsc --outDir dist 2>/dev/null\nfi\nnode /app/dist/index.js < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Set ownership to node user (non-root) for writable directories
-RUN chown -R node:node /workspace /app/dist /app/mcp-servers/kommo/dist /app/mcp-servers/canva/dist /app/mcp-servers/skydropx/dist && chmod 777 /home/node
+RUN chown -R node:node /workspace /app/dist /app/mcp-servers/kommo/dist /app/mcp-servers/canva/dist /app/mcp-servers/skydropx/dist /app/mcp-servers/spotify/dist && chmod 777 /home/node
 
 # Switch to non-root user (required for --dangerously-skip-permissions)
 USER node
