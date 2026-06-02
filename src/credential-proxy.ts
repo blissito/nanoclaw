@@ -259,6 +259,7 @@ export interface NanoClawHandlers {
   createGroup?: (
     name: string,
   ) => Promise<{ jid: string; inviteLink: string | null }>;
+  setJoinApproval?: (jid: string, mode: 'on' | 'off') => Promise<void>;
   leaveGroup?: (jid: string) => Promise<{
     jid: string;
     folder: string;
@@ -538,6 +539,34 @@ export function startCredentialProxy(
             })
             .catch((err) => {
               logger.error({ err, jid }, 'Error getting invite link');
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Internal error' }));
+            });
+          return;
+        }
+
+        if (url.pathname === '/nanoclaw/join-approval' && req.method === 'POST') {
+          const jid = url.searchParams.get('jid');
+          const mode = url.searchParams.get('mode');
+          if (
+            !jid ||
+            (mode !== 'on' && mode !== 'off') ||
+            !handlers.setJoinApproval
+          ) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(
+              JSON.stringify({ error: 'Missing jid/mode or handler not ready' }),
+            );
+            return;
+          }
+          handlers
+            .setJoinApproval(jid, mode)
+            .then(() => {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: true, jid, mode }));
+            })
+            .catch((err) => {
+              logger.error({ err, jid, mode }, 'Error setting join approval');
               res.writeHead(500, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ error: 'Internal error' }));
             });

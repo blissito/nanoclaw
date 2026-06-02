@@ -1219,28 +1219,27 @@ export class WhatsAppChannel implements Channel {
       throw new Error('WhatsApp not connected');
     }
     const meta = await this.sock.groupCreate(subject, []);
-    let inviteLink: string | null = null;
-    // The invite code fetched immediately after groupCreate is often stale /
-    // not yet active server-side, so the link shows "Couldn't join this group.
-    // Please try again." in WhatsApp. Give the group a moment to propagate, then
-    // force the server to mint a fresh, active code with groupRevokeInvite (a
-    // `set`, unlike groupInviteCode's `get`). Retry a few times.
-    for (let attempt = 0; attempt < 3 && !inviteLink; attempt++) {
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      try {
-        const code = await this.sock.groupRevokeInvite(meta.id);
-        if (code) inviteLink = `https://chat.whatsapp.com/${code}`;
-      } catch (err) {
-        logger.warn(
-          { jid: meta.id, attempt, err },
-          'Failed to mint group invite code, retrying',
-        );
-      }
-    }
-    if (!inviteLink) {
+    // New groups now default to "approve new members" ON in some regions. With
+    // approval ON, an admin can still ADD members directly, but anyone joining
+    // via the invite link gets stuck as a pending request and the client shows
+    // "Couldn't join this group. Please try again." Disable join approval so the
+    // invite link works for everyone.
+    try {
+      await this.sock.groupJoinApprovalMode(meta.id, 'off');
+    } catch (err) {
       logger.warn(
-        { jid: meta.id },
-        'Group created but failed to get invite link after retries',
+        { jid: meta.id, err },
+        'Failed to disable group join approval mode',
+      );
+    }
+    let inviteLink: string | null = null;
+    try {
+      const code = await this.sock.groupInviteCode(meta.id);
+      if (code) inviteLink = `https://chat.whatsapp.com/${code}`;
+    } catch (err) {
+      logger.warn(
+        { jid: meta.id, err },
+        'Group created but failed to get invite link',
       );
     }
     return { jid: meta.id, inviteLink };
@@ -1252,6 +1251,14 @@ export class WhatsAppChannel implements Channel {
     }
     await this.sock.groupLeave(jid);
     logger.info({ jid }, 'Left WhatsApp group');
+  }
+
+  async setJoinApproval(jid: string, mode: 'on' | 'off'): Promise<void> {
+    if (!this.connected) {
+      throw new Error('WhatsApp not connected');
+    }
+    await this.sock.groupJoinApprovalMode(jid, mode);
+    logger.info({ jid, mode }, 'Set group join approval mode');
   }
 
   async setTyping(jid: string, isTyping: boolean): Promise<void> {

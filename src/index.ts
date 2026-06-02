@@ -1677,6 +1677,13 @@ async function main(): Promise<void> {
     if (!channel || !channel.getInviteLink) return null;
     return channel.getInviteLink(jid);
   };
+  nanoClawHandlers.setJoinApproval = async (jid, mode) => {
+    const channel = findChannel(channels, jid);
+    if (!channel || !channel.setJoinApproval) {
+      throw new Error('Channel does not support join approval toggle');
+    }
+    return channel.setJoinApproval(jid, mode);
+  };
   nanoClawHandlers.createGroup = async (name) => {
     // Use first channel that supports group creation (currently only WhatsApp)
     const channel = channels.find((c) => typeof c.createGroup === 'function');
