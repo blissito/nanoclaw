@@ -545,7 +545,10 @@ export function startCredentialProxy(
           return;
         }
 
-        if (url.pathname === '/nanoclaw/join-approval' && req.method === 'POST') {
+        if (
+          url.pathname === '/nanoclaw/join-approval' &&
+          req.method === 'POST'
+        ) {
           const jid = url.searchParams.get('jid');
           const mode = url.searchParams.get('mode');
           if (
@@ -555,7 +558,9 @@ export function startCredentialProxy(
           ) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(
-              JSON.stringify({ error: 'Missing jid/mode or handler not ready' }),
+              JSON.stringify({
+                error: 'Missing jid/mode or handler not ready',
+              }),
             );
             return;
           }
