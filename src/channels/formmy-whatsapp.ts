@@ -54,6 +54,7 @@ import {
   recordOutboundFailure,
   snapshotMetrics,
 } from '../metrics.js';
+import { transcribeAudioBuffer } from '../transcription.js';
 import { Channel, NewMessage } from '../types.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 
@@ -961,7 +962,26 @@ export class FormmyWhatsAppChannel implements Channel {
           fs.mkdirSync(attachDir, { recursive: true });
           const filename = `audio-${Date.now()}.ogg`;
           fs.writeFileSync(path.join(attachDir, filename), buffer);
-          return `[Audio: attachments/${filename}]`;
+          // Transcribe so the agent sees text, not just a file ref.
+          // Whisper.cpp local first (no API cost); OpenAI fallback if key set.
+          let transcript: string | null = null;
+          try {
+            transcript = await transcribeAudioBuffer(buffer);
+          } catch (err) {
+            logger.warn(
+              { err, filename },
+              '[formmy-whatsapp] transcription threw, continuing without text',
+            );
+          }
+          const fileRef = `[Audio: attachments/${filename}]`;
+          if (transcript) {
+            logger.info(
+              { filename, chars: transcript.length },
+              '[formmy-whatsapp] transcribed voice note',
+            );
+            return `${transcript}\n\n${fileRef}`;
+          }
+          return fileRef;
         }
         default:
           return existingContent || `[Media: ${media.type}]`;
