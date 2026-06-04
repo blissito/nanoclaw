@@ -649,9 +649,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // markReceived is idempotent (rejects duplicates), so this is safe for normal-path messages too.
   // React only when the bot is explicitly addressed (trigger pattern present), so
   // groups with requiresTrigger=false don't get 👀/✅ on chatter between humans.
+  // Exception: groups with reactAlways=true (demo groups where every message is
+  // for the bot) react to every user message regardless of trigger.
+  const reactAlways = group.containerConfig?.reactAlways === true;
   for (const msg of actionableMessages) {
     if (msg.is_from_me || msg.is_bot_message) continue;
-    if (!hasExplicitTrigger(msg)) continue;
+    if (!reactAlways && !hasExplicitTrigger(msg)) continue;
     statusTracker.markReceived(
       msg.id,
       chatJid,
@@ -1342,10 +1345,12 @@ async function startMessageLoop(): Promise<void> {
           // React only when the bot is explicitly addressed (trigger pattern
           // present). Groups with requiresTrigger=false still process every
           // message internally, but reactions stay silent unless the user
-          // says @bot/bot:.
+          // says @bot/bot:. Exception: reactAlways=true demo groups react to
+          // every user message.
+          const reactAlways = group.containerConfig?.reactAlways === true;
           for (const msg of groupMessages) {
             if (msg.is_from_me || msg.is_bot_message) continue;
-            if (!hasExplicitTrigger(msg)) continue;
+            if (!reactAlways && !hasExplicitTrigger(msg)) continue;
             statusTracker.markReceived(
               msg.id,
               chatJid,

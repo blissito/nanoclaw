@@ -35,6 +35,7 @@ export interface ContainerConfig {
   allowedTools?: string[]; // Override default tool list for restricted groups (e.g. public-facing). MCP tools auto-added from mcpServers.
   env?: Record<string, string>; // Per-group env var overrides (e.g. SMATCH_CLUB_ID). Overrides values from .env for this container only.
   stickerTrigger?: boolean; // Whether stickers count as trigger (default: true). Set false to ignore stickers.
+  reactAlways?: boolean; // React (👀/✅) to every user message, even without explicit trigger. For requiresTrigger=false demo groups where all chatter is for the bot. Default false (only react when explicitly addressed).
   profile?: 'public' | 'admin'; // 'public' isolates the container: no global mount, restricted skills/agents. Default 'admin'.
 }
 
