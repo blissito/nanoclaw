@@ -30,7 +30,7 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     libreoffice-calc \
     unzip \
-    && pip3 install --break-system-packages yt-dlp openpyxl pandas \
+    && pip3 install --break-system-packages yt-dlp openpyxl pandas python-docx \
     && curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
