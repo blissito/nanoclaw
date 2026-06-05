@@ -616,7 +616,10 @@ async function runQuery(
     }).format(nowMx);
     return `\n\n## Fecha y hora actuales (host)\nHoy es **${todayMx}**, son las **${timeMx}** (America/Mexico_City). Úsalas como verdad absoluta para referencias a "hoy", "mañana", "ayer", al día de la semana y al saludo según la hora (buenos días <12:00, buenas tardes 12:00–18:59, buenas noches ≥19:00). No las recalcules a partir de la fecha ISO; si dudas, corre \`date\` en Bash.`;
   }
-  const systemAppend = globalClaudeMd ? globalClaudeMd + buildDateNote() : buildDateNote();
+  // La fecha la inyecta el hook UserPromptSubmit (abajo) + el preset claude_code del SDK.
+  // NO la horneamos en el system prompt: cambia al minuto y reventaría el prefijo cacheado
+  // (los tokens cacheados no cuentan para el rate limit; recrearlos sí). Prefijo estable = caché caliente.
+  const systemAppend = globalClaudeMd ?? '';
 
   // Refresh date/time on every user message so it stays accurate across the
   // life of a persistent container (sessions can live for days via `resume`).
