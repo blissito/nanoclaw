@@ -202,6 +202,15 @@ function isApiOutageError(text: string): boolean {
       text,
     ) ||
     /adaptive thinking is not supported/i.test(text) ||
+    // Billing exhaustion: the Claude Code SDK surfaces an out-of-credit
+    // account as a *synthetic* success result whose text is literally
+    // "Credit balance is too low" (model "<synthetic>", $0 cost). Because it
+    // arrives as status:success — not status:error — it sails past the fatal
+    // classifier and the raw text would otherwise be sent verbatim to the
+    // customer. Catch it here so it's replaced by the stand-by image instead
+    // of exposing our billing state. Also matches the wrapped error variant
+    // "Claude Code returned an error result: Credit balance is too low".
+    /credit balance is too low/i.test(text) ||
     /^\s*Connection error\.?\s*$/i.test(text) ||
     /^\s*Bad Gateway\s*$/i.test(text) ||
     // Anthropic API response artifacts leaking as chat text (defensive).
