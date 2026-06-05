@@ -194,3 +194,27 @@ igualarlo a sofi (panel sano, lista de grupos Baileys, "Probar"):
 
 Ver también: `docs/formmy-nanoclaw-bridge.md` (modelo viejo / detalles de JIDs, coexistencia,
 rescate de mensajes) y el script `scripts/alta-agente-formmy.sh` (lado droplet automatizado).
+
+---
+
+## Registro de altas (droplets en producción)
+
+Un droplet por agente Formmy (canal público WABA). Todos `clean install` desde `main` salvo
+sofi-0 (fork divergente). Branch de customización del prompt en `blissito/nanoclaw`.
+
+| Droplet | Team / Plan | IP | Agente Formmy (id) | Número WABA | Marca | Branch | Alta |
+|---|---|---|---|---|---|---|---|
+| **sofi-0** | Sofi / $48 8GB | 64.23.167.64 | `Siiqtec` `6a00d9acc67b99668fa13d35` | 5217712973339 (+ WABA) | SIIQTEC | (fork `sofi-0`) | productivo |
+| **tania** | Sofi / $12 2GB | 164.90.150.119 | `Totequim` campañas + MKT | 5217713649372 / … | TOTEQUIM | `tania` | 2026-06-05 |
+| **siiqtec-mkt-0** | Sofi / $48 8GB | 143.110.230.193 | `Siiqtec- MKT` `6a2226e277d0b90476ce52de` | 5217711972227 | SIIQTEC | `siiqtec-mkt` | 2026-06-05 |
+
+**Patrón de alta (resumen, ~minutos):** crear droplet → clean install desde `main`
+(Node22+Docker+whisper, `npm ci && build`, `./container/build.sh`) → `.env` = copia de sofi-0
+con `FORMMY_CHANNEL_SECRET` PROPIO + `FORMMY_TRAINING_GROUP_FOLDER=main` + Baileys off
+(`#WHATSAPP_PHONE_NUMBER`) → `groups/main/CLAUDE.md` = cotizador de sofi-0 (scp read-only) →
+systemd + mount-allowlist → wiring Mongo (`Agent.dropletHost`/`dropletChannelPort`/
+`dropletChannelSecret` + clonar `AgentSecret EASYBITS_API_KEY`) → verificar 400/401/404 +
+POST directo con número falso → mensaje real (`wamid` de Meta = entregado).
+
+> `ANTHROPIC_API_KEY` + `CLAUDE_CODE_OAUTH_TOKEN` + `EASYBITS_API_KEY` se comparten entre
+> droplets a propósito (cómputo, no identidad). El ÚNICO per-agente es `FORMMY_CHANNEL_SECRET`.
