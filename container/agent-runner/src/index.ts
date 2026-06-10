@@ -18,7 +18,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFile } from 'child_process';
-import { query, HookCallback, PreCompactHookInput, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
 interface ContainerInput {
@@ -198,6 +198,38 @@ function createPreCompactHook(assistantName?: string): HookCallback {
     return {};
   };
 }
+
+const READ_IMAGE_DENY_REASON =
+  'No leas esta imagen con Read. Las imágenes que el usuario mandó por WhatsApp YA están ' +
+  'arriba en esta conversación como contenido visual — ya las puedes ver. Releerlas desde ' +
+  'attachments/ las trae como base64 gigante (~40k tokens c/u) y revienta el contexto. ' +
+  'Trabaja con lo que YA ves en la imagen. Si de plano no la ves (porque el contexto se ' +
+  'compactó), no la re-leas: pide que te la reenvíen.';
+
+/**
+ * Block Read on attachment images: the host already injects them as vision blocks.
+ * After an autocompact the vision is dropped but the "[Image: attachments/...]" text
+ * survives, so the agent re-Reads the file — and Read returns full base64 (~40k tokens
+ * each), which refills the window and triggers autocompact-thrashing.
+ */
+const readImageGuardHook: HookCallback = async (input) => {
+  const pre = input as PreToolUseHookInput;
+  if (pre.tool_name !== 'Read') return {};
+  const filePath = (pre.tool_input as { file_path?: unknown })?.file_path;
+  if (typeof filePath !== 'string') return {};
+  const resolved = path.resolve('/workspace/group', filePath);
+  if (!resolved.startsWith('/workspace/group/attachments/') || !/\.(jpe?g|png|gif|webp)$/i.test(resolved)) {
+    return {};
+  }
+  log(`Blocked Read on injected vision image: ${filePath}`);
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse' as const,
+      permissionDecision: 'deny' as const,
+      permissionDecisionReason: READ_IMAGE_DENY_REASON,
+    },
+  };
+};
 
 function sanitizeFilename(summary: string): string {
   return summary
@@ -663,6 +695,7 @@ async function runQuery(
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
         UserPromptSubmit: [{ hooks: [dateInjectHook] }],
+        PreToolUse: [{ hooks: [readImageGuardHook] }],
       },
     }
   })) {
