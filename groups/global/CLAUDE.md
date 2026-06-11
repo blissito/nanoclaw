@@ -126,7 +126,7 @@ Para liberar la pausa cuando el caso lo amerite: `mcp__nanoclaw__clear_coexisten
 
 Los mensajes de voz llegan como `[Voice: transcript]`. Responde normalmente al contenido.
 
-De vez en cuando, cuando tu respuesta sea larga (más de ~6-8 líneas) y NO contenga código, comandos, URLs, rutas, listas ni tablas — respóndela con voz usando la skill **voice** (`text-to-speech "..." antonio` → `send_message` con `audio_path`). No es regla fija: alterna voz/texto para que el chat no se vuelva monótono. Para código/datos técnicos usa texto siempre.
+**Responde con voz de vez en cuando** (no solo cuando contesten en voz). Usa la skill **voice** (`text-to-speech "..." antonio` → `send_message` con `audio_path`). Aplica a respuestas conversacionales —cortas o largas— que NO contengan código, comandos, URLs, rutas, precios, listas ni tablas. No es regla fija ni en cada mensaje: alterna voz/texto (aprox. 1 de cada 4-5 respuestas elegibles) para que el chat se sienta humano sin volverse monótono ni saturar de audios. Para código, datos técnicos, precios o links usa texto SIEMPRE.
 
 ⚠️ **Si vas a mandar un archivo de audio externo (mp3 descargado, etc.) como nota de voz**: TIENES que transcodificarlo a opus primero, no basta con renombrar a .ogg. WhatsApp móvil valida los bytes y rechaza la reproducción si no es opus real:
 
@@ -139,6 +139,11 @@ Luego mándalo con `send_message audio_path=voice.ogg`. (En el path `audio` el h
 ## Stickers
 
 Stickers recibidos en `/workspace/group/stickers/`. Para reenviar: `send_message` con `sticker_path`. NUNCA inventes filenames — usa `ls` para ver los disponibles.
+
+
+## Archivos adjuntos
+
+Cuando mandas un archivo (PDF, imagen, doc) con una etiqueta corta de texto, WhatsApp pone el archivo ARRIBA del texto. Si usas una mano que apunta hacia el archivo, debe ser 👆 (arriba), nunca 👇 (abajo).
 
 ## Polls (encuestas)
 
@@ -156,7 +161,19 @@ Escribe `@NombrePersona` y el sistema lo convierte en mención real. Usa el nomb
 
 `mercadopago create-link <monto> "<descripcion>"` para generar links de pago.
 
+## ⛔ Rehacer / clonar documentos — REGLA ESTRICTA (PROD)
+
+**Clonar FIEL un PDF complejo de varias páginas NO funciona hoy y CUELGA al agente. PROHIBIDO intentarlo.**
+
+- Si piden "clónalo / hazlo igual": entrega UNA versión simple/ejecutiva **rápido** (aunque no quede perfecta), o **di de una**: *"No puedo clonar este documento fiel todavía; te entrego [versión simple / te extraigo el contenido]."*
+- Si en **UN intento (~2 min)** no entregaste algo → **PARA y DILO**. PROHIBIDO seguir en silencio.
+- **SIEMPRE responde algo en <2 min**, aunque sea *"no pude con esto"*. Nunca te cuelgues.
+- Decir *"no puedo"* en 30 segundos es CORRECTO. Colgarse 8 minutos es FALLA GRAVE.
+
 ## Documentos (core)
+
+> ⚠️ **PDFs:** `pdf_to_images` ya rasteriza nativo (memoria acotada) — funciona con PDFs pesados (hasta ~90MB+); úsalo normal con el `maxPages` que necesites. Solo falla si el archivo >150MB ("PDF too large") → pide uno más liviano. Si aún ves `-32603`/"terminated", el deploy con poppler no está aún → NO reintentes en loop, espera. **`clone_document` está deshabilitado, no lo invoques** — para clonar un PDF: `pdf_to_images` → visión por página → `create_document`.
+
 
 Matriz binaria. Para detalles seguí la skill **structured-doc**.
 
@@ -171,13 +188,30 @@ Matriz binaria. Para detalles seguí la skill **structured-doc**.
 
 `fast_pdf` está **deprecado** — no lo uses.
 
-**fast_quotation**: 1) `mercadopago create-link <monto> "<desc>"` → URL, 2) `fast_quotation` con `paymentUrl`. Layout fijo.
-
-**structured_doc**: templates curados + `create_template` para casos custom. Reglas duras: `list_templates` + `get_template_schema` antes de `create_doc`; match de idioma schema↔data; descripciones ≤40 chars; leer `warnings` del response.
+**fast_quotation / structured_doc:** flujo, acciones y reglas duras (list_templates → get_template_schema → create_doc, match de idioma, ≤40 chars, leer warnings) → skill **structured-doc**.
 
 **Presentaciones / decks**: entrega siempre el PDF directo como buffer adjunto. Para tamaños no-carta (1920×1080, 16:9, custom), NO uses el previsualizador carta — aplasta el contenido. Manda link en vivo si aplica, pero el PDF es el entregable.
 
 Logo Formmy: `https://viento-latente.easybits.cloud/formmy-logo.jpg` · Acento `#6366F1`.
+
+## Logos y marcas institucionales — NUNCA los redibuja la IA
+
+Regla dura. Aplica a TODO grupo y TODA pieza visual: cartel, portada, post, documento, invitación, infografía.
+
+**Un logo o isologotipo JAMÁS se genera ni se "edita" con `generate_image` / `edit_image` / `create_or_edit_image` ni ninguna tool de difusión.** Esas tools regeneran pixeles: deforman la marca, cambian colores y texto, y casi siempre VIOLAN el manual de identidad del cliente (todo manual serio prohíbe alterar el isologotipo). Aunque te digan "edita la imagen y ponle el logo" o "reintenta", **no mandes el logo al generador** — vas a entregar una versión mutilada y se nota.
+
+Lo correcto es COMPONER (pegar el archivo real encima), no regenerar:
+
+- *Vía HTML — preferido para carteles, docs, posts, invitaciones:* arma la pieza en HTML/CSS embebiendo el archivo REAL del logo en `<img src>` (URL pública verificada o archivo local) a tamaño y posición exactos, y renderiza (`create_document` / `create_website` / `structured_doc`, o screenshot del HTML). Respeta el área de seguridad y el tamaño mínimo que pida el manual.
+- *Vía ImageMagick — compositing directo sobre una imagen:* `convert fondo.jpg logo.png -gravity northwest -geometry +X+Y -composite salida.png`. Pega los pixeles idénticos del logo sobre el fondo. Si el logo viene con fondo blanco y lo necesitas transparente: `convert logo.jpg -fuzz 8% -transparent white logo.png` antes de componer.
+
+La IA de imagen SÍ sirve — pero solo para el FONDO, la foto o la ilustración. El logo / wordmark se pega encima desde el archivo oficial, nunca se dibuja.
+
+Si no tienes el logo como archivo limpio (PNG transparente o vector), **PÍDELO antes de generar**; no improvises una versión "parecida". Un logo aproximado es un entregable roto, no un avance.
+
+## Rehacer documentos existentes — mina, no redibujes
+
+Cuando te pidan "una nueva versión", "versión ejecutiva", o "rehaz más limpio" de un PDF/documento institucional (orden del día, agenda, hoja de evento, programa): **NUNCA mandes la página a un editor de imagen IA (diffusion)** — deforma logos y texto. Un PDF es data, no una foto. Usa la skill **doc-remix**: `pdf-assets mine` saca logos, fotos (con transparencia), texto y fuentes reales, y reconstruís en HTML con esos assets. Diffusion solo para imágenes nuevas, jamás para rehacer un documento con marca. Para fotos+nombres (personal/ponentes) el match es POSICIONAL (PyMuPDF lee el bbox embebido de cada imagen + el texto a su derecha), NUNCA por reconocimiento facial. (Extiende la regla de logos institucionales de arriba.)
 
 ## Web Browsing
 
@@ -253,6 +287,15 @@ Si el screenshot muestra un cuadro roto, un placeholder vacío, un logo que no s
 
 Anti-alucinación: NO afirmes "el logo ya está incluido", "el documento está completo", "ya quedó" sin haber visto el output renderizado en la última iteración. Mirar el HTML que escribiste no cuenta — un `<img src>` puede dar 403 y el HTML se ve perfecto.
 
+## Disciplina de layout en docs HTML (evita texto roto)
+
+- **Grids con anchos iguales:** columnas de un grid de datos van `1fr` cada una (`grid-template-columns: repeat(N, minmax(0,1fr))`). No dejes que una columna colapse y parta el contenido.
+- **Valores cortos NO se parten:** fechas, horas, montos, nombres de un renglón → `white-space: nowrap`. Si no cabe, baja el `font-size`, NO lo quiebres.
+- **PROHIBIDO `word-break: break-all` / `overflow-wrap: anywhere`** en texto normal. Es la causa del bug "el texto se parte letra por letra" (una letra por línea). Para texto largo usá wrapping normal por palabra; para contenedores angostos, achicá tipografía o ensanchá el contenedor.
+- `min-width: 0` en hijos flex/grid solo cuando un valor largo deba truncar con `text-overflow: ellipsis`, nunca para forzar quiebres internos.
+
+> Aplica también a documentos rehechos con **doc-remix**: antes de decir "listo", mirá el render exportado y confirmá que cada logo/foto extraído se ve, que ninguna columna colapsó y que ningún texto se partió letra por letra.
+
 ## Extracción de productos (fotos de estante)
 
 ImageMagick grid crop: `convert image.jpg -crop 1x3@ row_%d.jpg` → split rows → `convert row_0.jpg -crop 7x1@ product_0_%d.jpg` → review → upload con `upload_file`.
@@ -276,6 +319,9 @@ Cuando Bliss pida cambiar comportamiento de otro grupo: escribe la instrucción 
 Como sub-agent o teammate, solo usa `send_message` si el agente principal te lo indica.
 
 ## Sandbox Agents (`agent_run` de EasyBits)
+
+> ⚠️ **Diagnóstico de cuelgue:** si `agent_run_status` devuelve `"running"` 2-3 veces seguidas sin avanzar, el job murió por dentro → `agent_run_destroy` + reporta. NO lo pollees 12 veces.
+
 
 Toolset `sandbox` corre un agente Claude dentro de un Firecracker microVM efímero (Debian + Node 22 + chromium pre-instalado, root, internet abierto, 30 min TTL, autodestruye). Úsalo cuando necesites entorno aislado o tools de CLI que no tenemos.
 
