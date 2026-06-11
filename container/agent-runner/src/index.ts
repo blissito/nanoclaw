@@ -530,7 +530,12 @@ function buildAllowedTools(containerInput: ContainerInput, mcpServerPath: string
     return [...userTools, ...wildcards];
   }
 
-  // Subagent/team tools intentionally excluded — re-experiment later.
+  // NOTE: allowedTools does NOT restrict the toolset — under
+  // permissionMode:'bypassPermissions' the SDK only uses it to auto-approve
+  // permissions (per SDK docs: "to restrict which tools are available, use the
+  // `tools` option instead"). The claude_code preset still exposes the
+  // subagent-spawning Agent/Task tools. They are removed for real via
+  // buildDisallowedTools() below; this list stays the auto-approve allowlist.
   return [
     'Bash',
     'Read', 'Write', 'Edit', 'Glob', 'Grep',
@@ -539,6 +544,25 @@ function buildAllowedTools(containerInput: ContainerInput, mcpServerPath: string
     'NotebookEdit',
     ...enabledServers.map(n => `mcp__${n}__*`),
   ];
+}
+
+// Subagent/team-spawning tools. Under permissionMode:'bypassPermissions' the SDK
+// ignores allowedTools as a *restriction* (it only auto-approves perms); the
+// claude_code preset still exposes these. They must be DISALLOWED to truly remove
+// them from the model's context. Disabled because a subagent returning a large
+// research/scrape dump floods the parent context past the window -> autocompact
+// thrashing -> container dies (incident Caribe Ventures, ghosty-colombia 2026-06-11).
+const SUBAGENT_TOOLS = [
+  'Agent', 'Task', 'TaskCreate', 'TaskOutput', 'TaskStop',
+  'TaskList', 'TaskGet', 'TaskUpdate',
+  'TeamCreate', 'TeamDelete', 'SendMessage',
+];
+
+// Disallow the subagent family, EXCEPT any a group opted into via its explicit
+// container_config.allowedTools (preserves the documented per-group override).
+function buildDisallowedTools(containerInput: ContainerInput): string[] {
+  const optedIn = new Set(containerInput.allowedTools ?? []);
+  return SUBAGENT_TOOLS.filter(t => !optedIn.has(t));
 }
 
 /**
@@ -687,6 +711,7 @@ async function runQuery(
       resumeSessionAt: resumeAt,
       systemPrompt: { type: 'preset', preset: 'claude_code', append: systemAppend },
       allowedTools: buildAllowedTools(containerInput, mcpServerPath),
+      disallowedTools: buildDisallowedTools(containerInput),
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
