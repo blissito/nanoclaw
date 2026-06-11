@@ -1095,6 +1095,13 @@ async function runAgent(
         'invalid_api_key',
         'Credit balance is too low',
         'authentication_error',
+        // Autocompact thrashing: the SDK gives up when context refills to the
+        // limit within a few turns of a compact, repeatedly. Retrying re-runs
+        // the same doomed turn (e.g. an agent stuck retry-looping a tool that
+        // keeps returning the same error), so treat it as fatal to break the
+        // loop and advance the cursor. See "previous compact, N times in a row".
+        'times in a row',
+        'too large for the context window',
       ];
       if (
         output.error &&
