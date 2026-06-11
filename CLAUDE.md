@@ -234,8 +234,9 @@ A snapshot inherits the source droplet's **allocated disk** as its restore floor
 
 1. Create a plain Ubuntu 24.04 droplet on the target plan.
 2. `apt` install Node 22 (NodeSource) + Docker (get.docker.com) + `sqlite3 build-essential python3 rsync psmisc`.
-3. Create the `nanoclaw` user (add to the `docker` group); `rsync` the repo (exclude `.git node_modules store data logs .env groups`).
+3. Create the `nanoclaw` user (add to the `docker` group); `rsync` the repo (exclude `.git node_modules store data logs .env groups`). **Then copy the shared base back in: `groups/global/CLAUDE.md` (Ghosty strategy: file-handling discipline, big-file rules, reasoning) and `groups/main/CLAUDE.md`.** The blanket `groups` exclude keeps client conversation data from leaking between droplets, but it also drops these two tracked files — without `groups/global/CLAUDE.md` the agent loses the large-file strategy and is more prone to context thrash (incident 2026-06-11, caribeños).
 4. `npm ci && npm run build`, then `./container/build.sh`.
+   **Every group you register must get a scoped `container_config.mcpServers`** (e.g. `["nanoclaw","easybits","brightdata"]`). Code defaults empty config to that lean set, but be explicit — loading every MCP server bloats the static prompt past the ~200k window and thrashes.
 5. Replicate from a known-good droplet: the systemd unit (`/etc/systemd/system/nanoclaw.service`), `~/.config/nanoclaw/mount-allowlist.json`, and `.env` (copy shared keys; override per-instance `ASSISTANT_NAME` / `WHATSAPP_PHONE_NUMBER` / `MAX_CONCURRENT_CONTAINERS`).
 6. Pair WhatsApp (pairing-code flow). **Confirm the link by polling `store/auth/creds.json` for a populated `account`/`platform` — NOT `registered`, which Baileys sets optimistically when it *generates* the code (false positive).** Then register the main group and restart.
 
