@@ -206,27 +206,60 @@ const READ_IMAGE_DENY_REASON =
   'Trabaja con lo que YA ves en la imagen. Si de plano no la ves (porque el contexto se ' +
   'compactó), no la re-leas: pide que te la reenvíen.';
 
+const READ_PDF_DENY_REASON =
+  'No leas PDFs con Read. Un PDF (sobre todo multipágina) entra como binario gigante y ' +
+  'revienta el contexto ("Prompt is too long") — el turno muere. Usá el CLI pdf-reader: ' +
+  '`pdf-reader info <file>` para tamaño/páginas; `pdf-reader extract <file> --layout > ' +
+  '/workspace/group/<nombre>.txt` para volcar el texto a un ARCHIVO (no al contexto) y luego ' +
+  'procesarlo por partes con grep/sed; para PDFs largos extrae por rangos con `--pages 1-20`. ' +
+  'Nunca cargues el PDF entero al contexto.';
+
+const READ_DOC_DENY_REASON =
+  'No leas documentos Office ni archivos comprimidos con Read — revientan el contexto. Usá ' +
+  '`office-reader` para .xlsx/.docx/.pptx, o el protocolo del skill big-files (`unzip -l`, ' +
+  '`tar -tzf`, ...) para comprimidos: inspecciona metadata primero y procesa solo lo necesario.';
+
 /**
- * Block Read on attachment images: the host already injects them as vision blocks.
- * After an autocompact the vision is dropped but the "[Image: attachments/...]" text
- * survives, so the agent re-Reads the file — and Read returns full base64 (~40k tokens
- * each), which refills the window and triggers autocompact-thrashing.
+ * Block Read on attachment images AND on PDFs / Office docs / archives.
+ *
+ * Images: the host injects them as vision blocks; after a compact the vision is
+ * dropped but the "[Image: attachments/...]" text survives, so the agent re-Reads
+ * the file — Read returns ~40k-token base64 and thrashes the context.
+ *
+ * PDFs / Office / archives: Read pulls the whole binary into the prompt. An 8MB /
+ * 103-page PDF = "Prompt is too long" and the turn dies (incident 2026-06-11,
+ * caribeños: agent Read the report and hung). The agent must instead use
+ * pdf-reader / office-reader / the big-files protocol, which extract BOUNDED text
+ * out of context. This guard is the deterministic backstop — prompt guidance
+ * (CLAUDE.md, the big-files skill) was repeatedly ignored.
  */
-const readImageGuardHook: HookCallback = async (input) => {
+const readAttachmentGuardHook: HookCallback = async (input) => {
   const pre = input as PreToolUseHookInput;
   if (pre.tool_name !== 'Read') return {};
   const filePath = (pre.tool_input as { file_path?: unknown })?.file_path;
   if (typeof filePath !== 'string') return {};
   const resolved = path.resolve('/workspace/group', filePath);
-  if (!resolved.startsWith('/workspace/group/attachments/') || !/\.(jpe?g|png|gif|webp)$/i.test(resolved)) {
-    return {};
+  if (!resolved.startsWith('/workspace/group/')) return {};
+
+  let reason: string | null = null;
+  if (
+    resolved.startsWith('/workspace/group/attachments/') &&
+    /\.(jpe?g|png|gif|webp)$/i.test(resolved)
+  ) {
+    reason = READ_IMAGE_DENY_REASON;
+  } else if (/\.pdf$/i.test(resolved)) {
+    reason = READ_PDF_DENY_REASON;
+  } else if (/\.(xlsx?|docx?|pptx?|zip|tar|t?gz|bz2|rar|7z)$/i.test(resolved)) {
+    reason = READ_DOC_DENY_REASON;
   }
-  log(`Blocked Read on injected vision image: ${filePath}`);
+  if (!reason) return {};
+
+  log(`Blocked Read on ${path.basename(resolved)} — redirected to extraction CLI`);
   return {
     hookSpecificOutput: {
       hookEventName: 'PreToolUse' as const,
       permissionDecision: 'deny' as const,
-      permissionDecisionReason: READ_IMAGE_DENY_REASON,
+      permissionDecisionReason: reason,
     },
   };
 };
@@ -739,7 +772,7 @@ async function runQuery(
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
         UserPromptSubmit: [{ hooks: [dateInjectHook] }],
-        PreToolUse: [{ hooks: [readImageGuardHook] }],
+        PreToolUse: [{ hooks: [readAttachmentGuardHook] }],
       },
     }
   })) {
