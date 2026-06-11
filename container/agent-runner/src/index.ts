@@ -500,11 +500,22 @@ function getAllMcpServers(containerInput: ContainerInput, mcpServerPath: string)
   };
 }
 
+// A group with no explicit container_config.mcpServers used to load EVERY MCP
+// server. Their combined tool schemas bloat the static prompt to ~165k tokens
+// of a ~200k window, leaving no headroom and tripping autocompact thrashing
+// (the SDK kills the container after compacting 3x in 3 turns). Incident
+// 2026-06-11 on caribeños: every group registered without scoped config
+// thrashed. Default to a lean set instead — proven safe (matches ghosty-0's
+// DESCTI groups, which max ~131k and never thrash). Groups that genuinely need
+// more servers (kommo, smatch, supabase, canva, ...) must list them explicitly.
+const DEFAULT_MCP_SERVERS = ['easybits', 'brightdata'];
+
 function buildMcpServers(containerInput: ContainerInput, mcpServerPath: string): McpServerConfig {
   const all = getAllMcpServers(containerInput, mcpServerPath);
-  if (!containerInput.mcpServers) return all;
+  const requested = containerInput.mcpServers ?? DEFAULT_MCP_SERVERS;
 
-  const enabled = new Set(['nanoclaw', ...containerInput.mcpServers]);
+  // 'nanoclaw' (core group/IPC/email tools) is always included.
+  const enabled = new Set(['nanoclaw', ...requested]);
   const result: McpServerConfig = {};
   for (const name of enabled) {
     if (all[name]) result[name] = all[name];
