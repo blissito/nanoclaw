@@ -489,6 +489,14 @@ function getAllMcpServers(containerInput: ContainerInput, mcpServerPath: string)
         NANOCLAW_CHAT_JID: containerInput.chatJid,
       },
     },
+    supabase: {
+      command: 'node',
+      args: ['/app/mcp-servers/supabase/dist/index.js'],
+      env: {
+        SUPABASE_URL: process.env.SUPABASE_URL || '',
+        SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+      },
+    },
   };
 }
 
