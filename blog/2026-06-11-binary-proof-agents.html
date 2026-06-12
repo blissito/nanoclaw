@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cómo evitar que tu agente reviente el contexto al leer un PDF — NanoClaw Blog</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: system-ui, -apple-system, sans-serif; max-width: 720px; margin: 0 auto; padding: 2rem 1rem; color: #1a1a1a; line-height: 1.7; }
+a { color: #0066cc; }
+h1 { margin-bottom: .25rem; font-size: 1.6rem; }
+.meta { color: #888; margin-bottom: 2rem; font-size: .9rem; }
+h2 { margin: 2rem 0 .75rem; font-size: 1.2rem; }
+h3 { margin: 1.5rem 0 .5rem; font-size: 1.05rem; }
+p { margin-bottom: 1rem; }
+code { background: #f4f4f4; padding: .15em .35em; border-radius: 3px; font-size: .9em; }
+pre { background: #f4f4f4; padding: 1rem; border-radius: 6px; overflow-x: auto; margin-bottom: 1rem; }
+pre code { background: none; padding: 0; }
+ul, ol { margin-bottom: 1rem; padding-left: 1.5rem; }
+li { margin-bottom: .35rem; }
+blockquote { border-left: 3px solid #ddd; padding-left: 1rem; color: #555; margin-bottom: 1rem; }
+.back { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #eee; }
+.author { display: flex; align-items: center; gap: .75rem; margin-bottom: 2rem; }
+.author img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
+.author .info { font-size: .85rem; color: #888; }
+.author .name { font-weight: 600; color: #1a1a1a; }
+.author a { color: #0066cc; text-decoration: none; }
+</style>
+</head>
+<body>
+
+<h1>Cómo evitar que tu agente reviente el contexto al leer un PDF</h1>
+<p class="meta">June 11, 2026 &middot; <a href="index.html">NanoClaw Blog</a></p>
+
+<div class="author">
+  <img src="me.png" alt="Bliss">
+  <div class="info">
+    <span class="name">Blissmo</span> &middot; Building <a href="https://formmy.app">Formmy</a> &amp; Ghosty
+  </div>
+</div>
+
+<p>Todos los agentes LLM que tocan archivos reales terminan haciendo lo mismo en algún momento: <code>Read("reporte-anual-103-paginas.pdf")</code>. La herramienta <code>Read</code> del Anthropic Agent SDK agarra el archivo entero y lo mete al prompt. Ocho megabytes de PDF binario se convierten en cientos de miles de tokens. La API responde <em>"Prompt is too long"</em> y el turno muere. El usuario se queda viendo un error crudo en WhatsApp.</p>
+
+<p>Esto nos pasó en producción. Tres veces. Con tres clientes distintos. La primera vez era un ZIP de 113 MB con 47 archivos de catálogo. La segunda, un PDF de 103 páginas con estados financieros. La tercera, un Excel con 15 hojas de precios.</p>
+
+<p>La solución que construimos es un patrón de tres capas que intercepta la <code>Read</code> <em>antes</em> de que toque el archivo y redirige al agente hacia herramientas de extracción acotada. Es un patrón generalizable a cualquier SDK de agentes, no solo Anthropic.</p>
+
+<h2>El problema: Read mete binarios al contexto</h2>
+
+<p>El SDK de Anthropic expone <code>Read</code> como herramienta built-in. Lee cualquier archivo del filesystem y lo devuelve como contenido al modelo. Para archivos de texto es perfecto. Para binarios es una bomba:</p>
+
+<ul>
+<li>Un PDF de 8 MB → cientos de miles de tokens → <em>"Prompt is too long"</em></li>
+<li>Un ZIP de 100 MB con 47 archivos adentro → si lo descomprimes a ciegas, el agente intenta leer todo</li>
+<li>Una imagen JPG de WhatsApp que YA vio como adjunto multimodal → la re-lee desde <code>attachments/</code> como base64 gigante (~40K tokens) y satura el contexto después de un compact</li>
+</ul>
+
+<p>El síntoma es silencioso: el turno aborta, el usuario ve el error literal de la API Anthropic, y no hay recovery automático. El agente perdió todo el contexto de esa interacción.</p>
+
+<h2>El intento naïve: solo prompt guidance</h2>
+
+<p>Nuestra primera reacción fue instruir al agente en su <code>CLAUDE.md</code>:</p>
+
+<pre><code>NUNCA uses Read en PDFs. Usa pdf-reader extract --layout > archivo.txt
+y procesa con grep/sed.</code></pre>
+
+<p>Funcionó… a veces. El agente ignora instrucciones en lenguaje natural cuando está bajo presión de contexto o cuando la herramienta <code>Read</code> está simplemente ahí, disponible, y el path de menor resistencia es llamarla. Los incidentes se repitieron.</p>
+
+<p>Misma historia con el skill <code>big-files</code> que documenta el protocolo de inspección-y-pregunta para archivos >5 MB. El agente lo leía, lo entendía, y aún así a veces disparaba <code>Read</code> contra un PDF de 100 páginas porque el skill no es una restricción — es una sugerencia.</p>
+
+<h2>La solución: defensa en tres capas</h2>
+
+<h3>Capa 1 — Skill prompting (guía blanda)</h3>
+
+<p>Los skills <code>pdf-reader</code>, <code>office-reader</code> y <code>big-files</code> documentan el protocolo correcto. El agente <em>sabe</em> que no debe leer binarios crudos. Esta capa existe para que cuando la capa 2 lo bloquea, el agente entienda por qué y sepa qué hacer.</p>
+
+<h3>Capa 2 — PreToolUse hook (bloqueo determinista)</h3>
+
+<p>Aquí está el núcleo del patrón. El SDK de Anthropic expone un hook <code>PreToolUse</code> que se ejecuta <em>antes</em> de cada llamada a herramienta. Lo usamos como circuit breaker:</p>
+
+<pre><code>const readAttachmentGuardHook: HookCallback = async (input) => {
+  const pre = input as PreToolUseHookInput;
+  if (pre.tool_name !== 'Read') return {};
+
+  const filePath = pre.tool_input?.file_path;
+  if (typeof filePath !== 'string') return {};
+
+  let reason = null;
+  if (/\.(jpe?g|png|gif|webp)$/i.test(filePath)) {
+    reason = 'No leas imágenes con Read — ya las viste como adjunto multimodal. '
+           + 'Releerlas mete ~40K tokens de base64 al contexto.';
+  } else if (/\.pdf$/i.test(filePath)) {
+    reason = 'No leas PDFs con Read. Usa pdf-reader extract --layout > archivo.txt '
+           + 'y procesa por partes con grep/sed.';
+  } else if (/\.(xlsx?|docx?|zip|tar|rar|7z)$/i.test(filePath)) {
+    reason = 'Usa office-reader o el protocolo big-files: inspecciona metadata primero.';
+  }
+
+  if (!reason) return {}; // dejar pasar
+
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'deny',
+      permissionDecisionReason: reason,
+    },
+  };
+};</code></pre>
+
+<p>Esto es <strong>código, no prompt</strong>. El hook no negocia. Si el archivo es PDF, imagen, Office o comprimido, la <code>Read</code> se deniega con un mensaje que redirige a la herramienta correcta. El modelo no tiene forma de saltarse esta restricción — el hook corre en el runtime del container, no en el loop de razonamiento del LLM.</p>
+
+<p>La <code>permissionDecisionReason</code> es clave: no solo bloquea, sino que instruye. El agente recibe el mensaje de denegación en su siguiente turno y pivotea a la CLI correcta. El usuario nunca ve el error.</p>
+
+<h3>Capa 3 — CLIs de extracción acotada</h3>
+
+<p>En lugar de meter el archivo al contexto, el agente usa scripts pequeños que extraen texto delimitado:</p>
+
+<p><strong><code>pdf-reader</code></strong> — wrapper de 200 líneas en bash sobre <code>pdftotext</code> / <code>pdfinfo</code> (poppler-utils):</p>
+
+<pre><code># Solo metadata, cero tokens
+pdf-reader info balances-2025.pdf
+
+# Extraer a archivo, no al contexto
+pdf-reader extract balances-2025.pdf --layout --pages 1-20 > /workspace/group/balance.txt
+
+# Procesar con herramientas de texto
+grep "EBITDA" balance.txt
+head -50 balance.txt</code></pre>
+
+<p><strong><code>office-reader</code></strong> — wrapper sobre <code>xlsx</code> y <code>mammoth</code> (npm):</p>
+
+<pre><code># Metadata sin leer celdas
+office-reader info precios.xlsx
+
+# Extraer una sola hoja como CSV
+office-reader extract precios.xlsx --sheet "Mayo" > precios-mayo.csv</code></pre>
+
+<p>El patrón universal: <strong>extraer a archivo → inspeccionar con herramientas de texto → procesar por partes</strong>. El binario nunca entra al prompt. El contexto crece de forma controlada según lo que el agente decide leer, no según el tamaño del archivo.</p>
+
+<h2>¿Por qué tres capas y no solo el hook?</h2>
+
+<p>Podrías pensar que con la capa 2 basta. Pero necesitas las tres:</p>
+
+<ul>
+<li><strong>Sin capa 1</strong>: el agente se bloquea con "deny" y no sabe qué hacer. Pivotea a leer el archivo de otra forma o se queda trabado.</li>
+<li><strong>Sin capa 2</strong>: el prompt guidance se ignora bajo presión (confirmado en producción, tres incidentes).</li>
+<li><strong>Sin capa 3</strong>: no hay alternativa real. Bloquear <code>Read</code> sin dar herramientas de extracción solo cambia el problema de lugar.</li>
+</ul>
+
+<h2>Generalizable a cualquier SDK</h2>
+
+<p>Esto no es específico de Anthropic. Cualquier agente que tenga acceso al filesystem va a intentar leer un binario grande eventualmente. El patrón se traduce así:</p>
+
+<table style="width:100%; border-collapse:collapse; margin-bottom:1rem;">
+<tr style="border-bottom:1px solid #ddd;">
+<th style="text-align:left; padding:.5rem .75rem;">SDK</th>
+<th style="text-align:left; padding:.5rem .75rem;">Equivalente de la capa 2</th>
+</tr>
+<tr style="border-bottom:1px solid #eee;">
+<td style="padding:.5rem .75rem;">Anthropic Agent SDK</td>
+<td style="padding:.5rem .75rem;"><code>PreToolUse</code> hook</td>
+</tr>
+<tr style="border-bottom:1px solid #eee;">
+<td style="padding:.5rem .75rem;">OpenAI Agents SDK</td>
+<td style="padding:.5rem .75rem;"><code>before_tool</code> hook en <code>FunctionTool</code></td>
+</tr>
+<tr style="border-bottom:1px solid #eee;">
+<td style="padding:.5rem .75rem;">LangChain / LangGraph</td>
+<td style="padding:.5rem .75rem;">Middleware en el <code>ToolNode</code> o guard en <code>@tool</code></td>
+</tr>
+<tr style="border-bottom:1px solid #eee;">
+<td style="padding:.5rem .75rem;">CrewAI</td>
+<td style="padding:.5rem .75rem;">Decorator wrapper en <code>@tool</code> con chequeo de extensión</td>
+</tr>
+<tr>
+<td style="padding:.5rem .75rem;">Raw API calls</td>
+<td style="padding:.5rem .75rem;">Middleware en tu orchestrator que intercepte <code>tool_call</code></td>
+</tr>
+</table>
+
+<p>La capa 3 (CLIs de extracción) es universal: <code>pdftotext</code> existe en cualquier distro Linux. <code>xlsx</code> y <code>mammoth</code> son paquetes npm ubicuos. Si tu agente corre en un contenedor, ya tienes todo lo necesario.</p>
+
+<h2>Incidentes que este patrón evitó</h2>
+
+<p>Después de implementar las tres capas:</p>
+
+<ul>
+<li><strong>Caribe Ventures (2026-06-11)</strong>: llegó un PDF de 103 páginas con estados financieros. El hook bloqueó <code>Read</code>, el agente usó <code>pdf-reader info</code> → 103 páginas, preguntó al usuario qué sección necesitaba → extrajo solo páginas 1-5. El turno duró 40 segundos en lugar de morir.</li>
+<li><strong>Jarcería (2026-05-14, pre-patrón)</strong>: ZIP de 113 MB, el agente intentó procesarlo de un golpe, "Prompt is too long", el cliente vio el error. <em>Este incidente fue el que disparó la construcción del patrón.</em></li>
+</ul>
+
+<h2>Lo que NO resuelve</h2>
+
+<ul>
+<li><strong>Archivos de texto genuinamente enormes</strong> (logs de 500K líneas). Ahí el problema no es binario sino volumen — necesitas <code>grep</code> o <code>head</code>/<code>tail</code> con conciencia de contexto, otro patrón distinto.</li>
+<li><strong>Agentes que genuinamente necesitan el archivo completo</strong> (ej. "búscame todas las menciones de X en este PDF"). Ahí toca chunking + map-reduce, que es más caro pero inevitable.</li>
+</ul>
+
+<p>Pero para el 90% de los casos — "mira este PDF que me mandaron", "cotiza los productos de este Excel", "¿qué trae este ZIP?" — este patrón convierte una falla catastrófica en una interacción normal.</p>
+
+<h2>El código</h2>
+
+<p>Todo está en el repo de <a href="https://github.com/qwibitai/nanoclaw">NanoClaw</a>:</p>
+
+<ul>
+<li>El hook: <a href="https://github.com/qwibitai/nanoclaw/blob/main/container/agent-runner/src/index.ts#L236"><code>readAttachmentGuardHook</code> en <code>agent-runner/src/index.ts</code></a></li>
+<li>Las CLIs: <a href="https://github.com/qwibitai/nanoclaw/tree/main/container/skills/pdf-reader"><code>container/skills/pdf-reader/</code></a> y <a href="https://github.com/qwibitai/nanoclaw/tree/main/container/skills/office-reader"><code>container/skills/office-reader/</code></a></li>
+<li>Los skills: <a href="https://github.com/qwibitai/nanoclaw/blob/main/container/skills/big-files/SKILL.md"><code>big-files/SKILL.md</code></a>, <a href="https://github.com/qwibitai/nanoclaw/blob/main/container/skills/pdf-reader/SKILL.md"><code>pdf-reader/SKILL.md</code></a></li>
+</ul>
+
+<div class="back">
+  <a href="index.html">&larr; Back to blog</a>
+</div>
+
+</body>
+</html>
