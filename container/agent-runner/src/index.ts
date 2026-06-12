@@ -485,6 +485,15 @@ function getAllMcpServers(containerInput: ContainerInput, mcpServerPath: string)
         GROUPS: 'geo,social,business,ecommerce,finance',
       },
     },
+    'coregrid-crm': {
+      command: 'npx',
+      args: ['-y', 'coregrid-crm-mcp'],
+      env: {
+        // Per-demo key — set via container_config.env.CRM_API_KEY per group,
+        // not the global .env (the CRM key changes for each demo tenant).
+        CRM_API_KEY: process.env.CRM_API_KEY || '',
+      },
+    },
     kommo: {
       command: 'node',
       args: ['/app/mcp-servers/kommo/dist/index.js'],

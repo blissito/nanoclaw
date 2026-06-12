@@ -437,6 +437,11 @@ function buildEnvFile(
   const bdToken = readEnvFile(['BRIGHTDATA_API_TOKEN']).BRIGHTDATA_API_TOKEN;
   if (bdToken) envLines.push(`BRIGHTDATA_API_TOKEN=${bdToken}`);
 
+  // CoreGrid CRM: default key from global .env; a group can override it for
+  // another board (tablero) via container_config.env.CRM_API_KEY.
+  const crmKey = readEnvFile(['CRM_API_KEY']).CRM_API_KEY;
+  if (crmKey) envLines.push(`CRM_API_KEY=${crmKey}`);
+
   const kommoEnv = readEnvFile(['KOMMO_BASE_URL', 'KOMMO_ACCESS_TOKEN']);
   if (kommoEnv.KOMMO_ACCESS_TOKEN) {
     envLines.push(`KOMMO_BASE_URL=${kommoEnv.KOMMO_BASE_URL || ''}`);
