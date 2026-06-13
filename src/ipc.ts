@@ -1088,6 +1088,27 @@ export async function processTaskIpc(
           nextRun = scheduled.toISOString();
         }
 
+        // WABA hardening: public-profile (customer-facing) chats must never run
+        // recurring tasks. A recurring "envía la cotización" task firing every
+        // N minutes in isolated context (no memory of prior runs) = duplicate
+        // spam to the customer — incident 2026-06-13 on sofi-0 (58 identical
+        // quotes overnight, interval=600000ms). Degrade any cron/interval to a
+        // single 'once' run at the already-computed nextRun, preserving the
+        // legitimate "follow up once" intent while making recurrence impossible.
+        let effectiveScheduleType = scheduleType;
+        let effectiveScheduleValue = data.schedule_value;
+        if (
+          targetGroupEntry.containerConfig?.profile === 'public' &&
+          scheduleType !== 'once'
+        ) {
+          logger.warn(
+            { sourceGroup, targetFolder, requested: scheduleType, nextRun },
+            'Public-profile chat requested a recurring task — degraded to once',
+          );
+          effectiveScheduleType = 'once';
+          effectiveScheduleValue = nextRun ?? data.schedule_value;
+        }
+
         const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const contextMode =
           data.context_mode === 'group' || data.context_mode === 'isolated'
@@ -1110,8 +1131,8 @@ export async function processTaskIpc(
           chat_jid: targetJid,
           prompt: data.prompt,
           script: data.script || null,
-          schedule_type: scheduleType,
-          schedule_value: data.schedule_value,
+          schedule_type: effectiveScheduleType,
+          schedule_value: effectiveScheduleValue,
           context_mode: contextMode,
           report_to_jid: reportToJid,
           next_run: nextRun,
