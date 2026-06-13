@@ -26,7 +26,12 @@ import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
-  sendImage: (jid: string, filePath: string, caption: string) => Promise<void>;
+  sendImage: (
+    jid: string,
+    filePathOrUrl: string,
+    caption: string,
+    isUrl?: boolean,
+  ) => Promise<void>;
   sendReaction: (
     jid: string,
     messageId: string | undefined,
@@ -748,6 +753,52 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   { sourceGroup, gen_type: data.gen_type },
                   'Image generation tracked',
                 );
+              } else if (
+                data.type === 'image' &&
+                data.chatJid &&
+                data.mediaUrl
+              ) {
+                // Image-by-URL: the agent already has a public https link
+                // (e.g. an EasyBits-hosted generated image). Skip the local
+                // file + base64 round-trip and let the channel forward the
+                // URL directly (Formmy/Meta fetch it themselves).
+                const mediaUrl = data.mediaUrl;
+                if (!/^https:\/\//i.test(mediaUrl)) {
+                  logger.warn(
+                    { mediaUrl, sourceGroup },
+                    'Rejected image with non-https mediaUrl',
+                  );
+                } else {
+                  const targetGroup = registeredGroups[data.chatJid];
+                  if (
+                    isMain ||
+                    (targetGroup && targetGroup.folder === sourceGroup)
+                  ) {
+                    await deps.sendImage(
+                      data.chatJid,
+                      mediaUrl,
+                      data.caption || '',
+                      true,
+                    );
+                    deps.notifyMcpOutboundSent?.(data.chatJid);
+                    recordOutboundMedia(
+                      data.chatJid,
+                      'image',
+                      mediaUrl,
+                      '',
+                      data.caption,
+                    );
+                    logger.info(
+                      { chatJid: data.chatJid, sourceGroup, mediaUrl },
+                      'IPC image (by URL) sent',
+                    );
+                  } else {
+                    logger.warn(
+                      { chatJid: data.chatJid, sourceGroup },
+                      'Unauthorized IPC image-by-URL attempt blocked',
+                    );
+                  }
+                }
               } else if (
                 data.type === 'image' &&
                 data.chatJid &&

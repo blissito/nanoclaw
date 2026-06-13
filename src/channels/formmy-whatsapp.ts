@@ -676,10 +676,25 @@ export class FormmyWhatsAppChannel implements Channel {
 
   async sendImage(
     jid: string,
-    filePath: string,
+    filePathOrUrl: string,
     caption: string,
+    isUrl = false,
   ): Promise<void> {
-    const buffer = readNonEmptyFile(filePath, 'image');
+    // URL fast-path: the agent already has a public https link (e.g. an
+    // EasyBits-hosted generated image). Hand Formmy the `media_url` and let
+    // Meta fetch it directly — no local file, no base64 round-trip. The
+    // Formmy bridge builds `image: { link: media_url }` upstream.
+    if (isUrl) {
+      await this.postToFormmy({
+        phone_number: extractPhone(jid),
+        integration_id: this.resolveIntegrationId(jid),
+        type: 'image',
+        media_url: filePathOrUrl,
+        caption,
+      });
+      return;
+    }
+    const buffer = readNonEmptyFile(filePathOrUrl, 'image');
     await this.postToFormmy({
       phone_number: extractPhone(jid),
       integration_id: this.resolveIntegrationId(jid),

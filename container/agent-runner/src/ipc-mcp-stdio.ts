@@ -94,6 +94,7 @@ tool('messaging-public',
     text: z.string().describe('The message text to send (used as caption when sending an image)'),
     sender: z.string().optional().describe('Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.'),
     image_path: z.string().optional().describe('Absolute path to an image file (e.g. /workspace/group/generated-123.png). When provided, sends a native image with the text as caption.'),
+    image_url: z.string().optional().describe('Public https URL of an already-hosted image (e.g. an EasyBits image link). Prefer this over image_path when you already have a URL — no local download needed; the channel forwards the link directly. Text is used as caption.'),
     audio_path: z.string().optional().describe('Absolute path to an audio file (e.g. /workspace/group/tts-123.ogg). When provided, sends a native voice note. Text is ignored.'),
     video_path: z.string().optional().describe('Absolute path to a video file (e.g. /workspace/group/video-123.mp4). When provided, sends a native inline video. Text is used as caption.'),
     document_path: z.string().optional().describe('Absolute path to a document file (e.g. /workspace/group/cotizacion.pdf). When provided, sends the file as a native document attachment. Text is used as caption.'),
@@ -164,6 +165,26 @@ tool('messaging-public',
       };
       writeIpcFile(MESSAGES_DIR, data);
       return { content: [{ type: 'text' as const, text: 'Audio queued for delivery.' }] };
+    }
+
+    if (args.image_url && !args.image_path) {
+      const trimmed = args.image_url.trim();
+      if (!/^https:\/\//i.test(trimmed)) {
+        return {
+          content: [{ type: 'text' as const, text: 'image_url must be a public https:// URL.' }],
+          isError: true,
+        };
+      }
+      const data = {
+        type: 'image',
+        chatJid,
+        mediaUrl: trimmed,
+        caption: args.text,
+        groupFolder,
+        timestamp: new Date().toISOString(),
+      };
+      writeIpcFile(MESSAGES_DIR, data);
+      return { content: [{ type: 'text' as const, text: 'Image (by URL) queued for delivery.' }] };
     }
 
     if (args.image_path) {

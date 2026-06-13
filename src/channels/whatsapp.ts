@@ -909,6 +909,7 @@ export class WhatsAppChannel implements Channel {
     jid: string,
     filePath: string,
     caption: string,
+    isUrl = false,
   ): Promise<void> {
     if (!this.connected) {
       this.outgoingQueue.push({ kind: 'image', jid, filePath, caption });
@@ -916,9 +917,13 @@ export class WhatsAppChannel implements Channel {
       return;
     }
     try {
-      const buffer = fs.readFileSync(filePath);
-      await this.sock.sendMessage(jid, { image: buffer, caption });
-      logger.info({ jid, filePath }, 'Image sent');
+      // Baileys downloads remote URLs itself when handed { image: { url } };
+      // for local files we read the buffer as before.
+      const content = isUrl
+        ? { image: { url: filePath }, caption }
+        : { image: fs.readFileSync(filePath), caption };
+      await this.sock.sendMessage(jid, content);
+      logger.info({ jid, filePath, isUrl }, 'Image sent');
     } catch (err) {
       this.outgoingQueue.push({ kind: 'image', jid, filePath, caption });
       logger.warn({ jid, filePath, err }, 'Failed to send image, queued');
