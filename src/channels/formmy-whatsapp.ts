@@ -24,6 +24,7 @@ import path from 'path';
 import {
   ASSISTANT_NAME,
   FORMMY_PUBLIC_TEMPLATE,
+  FORMMY_TRAINING_GROUP_FOLDER,
   GROUPS_DIR,
 } from '../config.js';
 import {
@@ -148,16 +149,32 @@ function sanitizeFolder(jid: string): string {
 }
 
 // Materialize a Formmy group folder on disk. Creates the directory, seeds
-// CLAUDE.md from groups/_training/formmy-public.md, and copies any
-// executable in groups/_training/bin/ into the group's bin/ with +x bits.
+// CLAUDE.md from the trainer group, and copies any executable in
+// groups/_training/bin/ into the group's bin/ with +x bits.
 // Idempotent — safe to call when the folder already has files. Failures
 // are warned (not thrown) so a missing training file doesn't block message
 // delivery; the group can still operate with an empty CLAUDE.md.
+//
+// CLAUDE.md seed source, in priority order:
+//   1. groups/{FORMMY_TRAINING_GROUP_FOLDER}/CLAUDE.md — the live trainer
+//      group (e.g. coregrid_demo). Keeps the one-time bootstrap aligned with
+//      the runtime overlay (container-runner.ts) so both come from the same
+//      source instead of diverging.
+//   2. groups/_training/formmy-public.md — legacy default for droplets that
+//      don't set FORMMY_TRAINING_GROUP_FOLDER.
+// Note: the runtime overlay still governs at spawn time; this seed only
+// determines the per-user CLAUDE.md visible before the first overlay mount.
 function seedFormmyGroupFiles(folder: string): void {
   const groupDir = path.join(GROUPS_DIR, folder);
   fs.mkdirSync(groupDir, { recursive: true });
   const trainingDir = path.join(GROUPS_DIR, '_training');
-  const trainingClaudeMd = path.join(trainingDir, 'formmy-public.md');
+  const trainerClaudeMd = FORMMY_TRAINING_GROUP_FOLDER
+    ? path.join(GROUPS_DIR, FORMMY_TRAINING_GROUP_FOLDER, 'CLAUDE.md')
+    : '';
+  const trainingClaudeMd =
+    trainerClaudeMd && fs.existsSync(trainerClaudeMd)
+      ? trainerClaudeMd
+      : path.join(trainingDir, 'formmy-public.md');
   const targetClaudeMd = path.join(groupDir, 'CLAUDE.md');
   try {
     if (
