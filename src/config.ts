@@ -185,6 +185,14 @@ if (extraPublicMcp.length) {
       ...extraPublicMcp,
     ]),
   ];
+  // CoreGrid CRM en chats públicos: ownership por-JID (cada chat solo ve/edita
+  // los deals/contactos que él creó) + superficie acotada a deals,contacts —
+  // sin delete, coexistencia ni escalamiento, que son de operador. Mismo patrón
+  // que KOMMO_SCOPE_BY_JID. Inerte donde coregrid-crm no esté en los extras.
+  if (extraPublicMcp.includes('coregrid-crm') && FORMMY_PUBLIC_TEMPLATE.env) {
+    FORMMY_PUBLIC_TEMPLATE.env.CRM_SCOPE_BY_JID = '1';
+    FORMMY_PUBLIC_TEMPLATE.env.CRM_TOOLSETS = 'deals,contacts';
+  }
 }
 
 // Droplet-scoped: give public WABA chats the FULL easybits surface (image/video/
