@@ -10,6 +10,7 @@ const envConfig = readEnvFile([
   'ASSISTANT_NAME',
   'ASSISTANT_HAS_OWN_NUMBER',
   'FORMMY_TRAINING_GROUP_FOLDER',
+  'FORMMY_PUBLIC_EXTRA_MCP',
 ]);
 
 export const ASSISTANT_NAME =
@@ -159,3 +160,25 @@ export const FORMMY_PUBLIC_TEMPLATE: ContainerConfig = {
     'mcp__kommo__*',
   ],
 };
+
+// Droplet-scoped extra MCP servers for public WABA chats. Comma-separated env
+// (e.g. FORMMY_PUBLIC_EXTRA_MCP=coregrid-crm) appended to the public template's
+// mcpServers. Lets a single demo droplet (ghosty-0 / CoreGrid) grant its public
+// chats an extra server WITHOUT changing the shared default for every other
+// droplet — inert wherever the env is unset. The extra server's secret (e.g.
+// CRM_API_KEY) is injected by container-runner from .env, and a per-chat
+// container_config.env can still override it; its tools auto-wildcard in
+// buildAllowedTools (no allowedTools entry needed).
+const extraPublicMcp = (
+  process.env.FORMMY_PUBLIC_EXTRA_MCP ||
+  envConfig.FORMMY_PUBLIC_EXTRA_MCP ||
+  ''
+)
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+if (extraPublicMcp.length) {
+  FORMMY_PUBLIC_TEMPLATE.mcpServers = [
+    ...new Set([...(FORMMY_PUBLIC_TEMPLATE.mcpServers ?? []), ...extraPublicMcp]),
+  ];
+}
