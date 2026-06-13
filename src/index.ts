@@ -1893,11 +1893,11 @@ async function main(): Promise<void> {
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       return channel.sendMessage(jid, text);
     },
-    sendImage: (jid, filePath, caption) => {
+    sendImage: (jid, filePath, caption, isUrl) => {
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       if (channel.sendImage) {
-        return channel.sendImage(jid, filePath, caption);
+        return channel.sendImage(jid, filePath, caption, isUrl);
       }
       // Fallback: send caption as text if channel doesn't support images
       return channel.sendMessage(

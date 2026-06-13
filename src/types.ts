@@ -101,7 +101,12 @@ export interface Channel {
   ownsJid(jid: string): boolean;
   disconnect(): Promise<void>;
   // Optional: send a native image with caption.
-  sendImage?(jid: string, filePath: string, caption: string): Promise<void>;
+  sendImage?(
+    jid: string,
+    filePathOrUrl: string,
+    caption: string,
+    isUrl?: boolean,
+  ): Promise<void>;
   // Optional: send a native video.
   sendVideo?(jid: string, filePath: string, caption: string): Promise<void>;
   // Optional: send a voice note.
