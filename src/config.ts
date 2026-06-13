@@ -11,6 +11,7 @@ const envConfig = readEnvFile([
   'ASSISTANT_HAS_OWN_NUMBER',
   'FORMMY_TRAINING_GROUP_FOLDER',
   'FORMMY_PUBLIC_EXTRA_MCP',
+  'FORMMY_PUBLIC_EASYBITS_FULL',
 ]);
 
 export const ASSISTANT_NAME =
@@ -179,6 +180,33 @@ const extraPublicMcp = (
   .filter(Boolean);
 if (extraPublicMcp.length) {
   FORMMY_PUBLIC_TEMPLATE.mcpServers = [
-    ...new Set([...(FORMMY_PUBLIC_TEMPLATE.mcpServers ?? []), ...extraPublicMcp]),
+    ...new Set([
+      ...(FORMMY_PUBLIC_TEMPLATE.mcpServers ?? []),
+      ...extraPublicMcp,
+    ]),
+  ];
+}
+
+// Droplet-scoped: give public WABA chats the FULL easybits surface (image/video/
+// voice generation), matching the trainer group. Drops the public-safe toolset
+// scoping (EASYBITS_TOOLSETS) and widens allowedTools to the mcp__easybits__*
+// wildcard. For demo droplets (ghosty-0 / CoreGrid) where public chats are a
+// controlled showcase, NOT untrusted B2C — the default elsewhere stays the
+// hardened 3-tool surface. Inert when unset.
+if (
+  (
+    process.env.FORMMY_PUBLIC_EASYBITS_FULL ||
+    envConfig.FORMMY_PUBLIC_EASYBITS_FULL ||
+    ''
+  ).trim()
+) {
+  if (FORMMY_PUBLIC_TEMPLATE.env) {
+    delete FORMMY_PUBLIC_TEMPLATE.env.EASYBITS_TOOLSETS;
+  }
+  FORMMY_PUBLIC_TEMPLATE.allowedTools = [
+    ...(FORMMY_PUBLIC_TEMPLATE.allowedTools ?? []).filter(
+      (t) => !t.startsWith('mcp__easybits__'),
+    ),
+    'mcp__easybits__*',
   ];
 }
