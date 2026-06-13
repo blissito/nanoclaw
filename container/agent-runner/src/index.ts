@@ -492,6 +492,15 @@ function getAllMcpServers(containerInput: ContainerInput, mcpServerPath: string)
         // Per-demo key — set via container_config.env.CRM_API_KEY per group,
         // not the global .env (the CRM key changes for each demo tenant).
         CRM_API_KEY: process.env.CRM_API_KEY || '',
+        CRM_API_URL: process.env.CRM_API_URL || '',
+        // Ownership por-chat: con CRM_SCOPE_BY_JID=1 el MCP manda este JID como
+        // X-Agent-Scope y el CRM solo deja ver/editar los leads de este chat.
+        // CRM_TOOLSETS limita qué tools registra (deals,contacts para públicos;
+        // vacío = todas, para el grupo admin). Ambas llegan vía
+        // container_config.env, igual que KOMMO_SCOPE_BY_JID.
+        NANOCLAW_CHAT_JID: containerInput.chatJid,
+        CRM_SCOPE_BY_JID: process.env.CRM_SCOPE_BY_JID || '',
+        CRM_TOOLSETS: process.env.CRM_TOOLSETS || '',
       },
     },
     kommo: {
