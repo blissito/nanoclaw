@@ -154,7 +154,7 @@ Adicionales a los del upstream:
 
 ### Sub-agentes deshabilitados por default
 
-El upstream permite el tool `Agent` para spawn de sub-agentes. En GhostyClaw está **removido** de `buildAllowedTools()` (en `container/agent-runner/src/index.ts`):
+El upstream permite el tool `Agent` para spawn de sub-agentes. En GhostyClaw la familia de tools de sub-agente/equipos (`Agent`, `Task`, `TaskCreate`, `TeamCreate`, …) está **bloqueada** vía `buildDisallowedTools()` (lista `SUBAGENT_TOOLS` en `container/agent-runner/src/index.ts`) — no basta con quitarlos del allowlist, hay que desautorizarlos para que el SDK no los exponga:
 
 - En droplets pequeños (2GB) saturan RAM (~100-150MB por sub-agente)
 - Los sub-agentes **no heredan MCP servers** del padre, así que pierden contexto crítico de DB/tools

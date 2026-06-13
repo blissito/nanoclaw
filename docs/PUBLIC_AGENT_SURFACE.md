@@ -4,7 +4,7 @@ Definition of the **safe surface** available to NanoClaw agents serving end user
 
 **Terminology.** A **WABA chat** is one isolated 1:1 conversation between an end-user phone number and the Formmy WABA channel. Each WABA chat has its own JID (`formmy_<phone>@s.whatsapp.net`), its own `groups/formmy_<jid>/` folder, its own SDK session under `data/sessions/`, and its own per-spawn container. "WABA chats" is the preferred plural — avoid "groups" (they aren't WhatsApp groups) or "WABA users" (a single end-user phone may correspond to multiple chats over time after re-provisioning). Internally the code still uses `registered_groups` for the SQLite table and "public agent" for the agent identity itself; those are stable identifiers, not the noun for the conversation.
 
-**Last reviewed:** 2026-05-11 (training overlay model + WABA chats terminology pinned)
+**Last reviewed:** 2026-06-13 (no-recurring-tasks guard on public chats; training overlay model + WABA chats terminology pinned)
 
 ## What the public agent CAN do (happy paths)
 
@@ -116,6 +116,8 @@ No `Bash`, no `Edit`, no `WebSearch`, no `WebFetch`, no `NotebookEdit`, no `Todo
 | `quote` | `siiqtec_quote_pdf` |
 
 Excluded toolsets (`messaging-admin`, `groups`, `email`) cannot register new agents, broadcast to other groups, manage email integrations, etc.
+
+**No recurring tasks on public chats.** `schedule_task` accepts `once`/`interval`/`cron`, but for `profile: 'public'` chats the host **degrades any `interval`/`cron` to a single `once`** run at task-creation time (`src/ipc.ts`, `processTaskIpc`). A customer-facing agent can still schedule a one-time follow-up, but a recurring timer is impossible — this closes the duplicate-send loop where an isolated, memory-less task re-sends the same artifact (e.g. a quote) every N minutes (incident 2026-06-13: 58 identical quotes overnight from a self-scheduled `interval=600000ms` task). Admin/internal groups keep recurring tasks.
 
 ### `mcp__kommo__*` (Kommo CRM)
 

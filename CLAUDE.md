@@ -133,6 +133,12 @@ Crucially, the trigger check (`src/index.ts`) only honors the `is_from_me` bypas
 ```
 Without that gate, a sibling on the same WA account would silently spawn the agent on every message they sent — observed in production on smatch-rulo-waba where a group member shared the bot's LID and was triggering containers without `@trigger`. In shared mode, every sender (including bot's account siblings) must use `@trigger` or be in the sender allowlist.
 
+## No recurring scheduled tasks on public chats
+
+`schedule_task` accepts `once`/`interval`/`cron`, but for `profile: 'public'` (customer-facing WABA) chats the host **degrades any `interval`/`cron` to a single `once`** run at task-creation time — in `src/ipc.ts` `processTaskIpc`, right after `nextRun` is computed and before `createTask` (the only creation path). The recurring row never gets stored; the degraded `once` fires once and `updateTaskAfterRun` marks it `completed`. Admin/internal groups keep recurring tasks.
+
+Why: incident 2026-06-13 on sofi-0 — Sofi self-scheduled an `interval=600000ms` task to "send the pending quote"; each fire ran in isolated context (no memory of prior runs) and re-sent a fresh quote → 58 identical quotes to one customer overnight. The guard makes blind auto-repeating sends into customer chats impossible while preserving one-time follow-ups. Enforced host-side (profile comes from the DB, not the agent) → not bypassable. Deployed to all live droplets 2026-06-13. See `docs/PUBLIC_AGENT_SURFACE.md`.
+
 ## Adding MCP Servers
 
 Per-group MCP servers give agents domain-specific tools. Each group's `container_config.mcpServers` array controls which servers are available (the `nanoclaw` server is always included automatically).
