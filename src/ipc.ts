@@ -60,6 +60,13 @@ export interface IpcDeps {
     name: string | undefined,
     address: string | undefined,
   ) => Promise<void>;
+  sendCtaUrl: (
+    jid: string,
+    text: string,
+    url: string,
+    buttonText: string,
+  ) => Promise<void>;
+  sendContact: (jid: string, name: string, phone: string) => Promise<void>;
   /**
    * Signal that an outbound message/media was sent for this chat via the
    * agent's MCP tools (send_message, send_image, etc.). The agent-run handler
@@ -571,6 +578,57 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   logger.warn(
                     { chatJid: data.chatJid, sourceGroup },
                     'Unauthorized IPC location attempt blocked',
+                  );
+                }
+              } else if (
+                data.type === 'cta_url' &&
+                data.chatJid &&
+                typeof data.url === 'string' &&
+                typeof data.buttonText === 'string'
+              ) {
+                const targetGroup = registeredGroups[data.chatJid];
+                if (
+                  isMain ||
+                  (targetGroup && targetGroup.folder === sourceGroup)
+                ) {
+                  await deps.sendCtaUrl(
+                    data.chatJid,
+                    typeof data.text === 'string' ? data.text : '',
+                    data.url,
+                    data.buttonText,
+                  );
+                  deps.notifyMcpOutboundSent?.(data.chatJid);
+                  logger.info(
+                    { chatJid: data.chatJid, sourceGroup, url: data.url },
+                    'IPC CTA URL sent',
+                  );
+                } else {
+                  logger.warn(
+                    { chatJid: data.chatJid, sourceGroup },
+                    'Unauthorized IPC cta_url attempt blocked',
+                  );
+                }
+              } else if (
+                data.type === 'contact' &&
+                data.chatJid &&
+                typeof data.name === 'string' &&
+                typeof data.phone === 'string'
+              ) {
+                const targetGroup = registeredGroups[data.chatJid];
+                if (
+                  isMain ||
+                  (targetGroup && targetGroup.folder === sourceGroup)
+                ) {
+                  await deps.sendContact(data.chatJid, data.name, data.phone);
+                  deps.notifyMcpOutboundSent?.(data.chatJid);
+                  logger.info(
+                    { chatJid: data.chatJid, sourceGroup },
+                    'IPC contact sent',
+                  );
+                } else {
+                  logger.warn(
+                    { chatJid: data.chatJid, sourceGroup },
+                    'Unauthorized IPC contact attempt blocked',
                   );
                 }
               } else if (

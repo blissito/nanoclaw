@@ -288,6 +288,50 @@ tool('messaging-public',
 );
 
 tool('messaging-public',
+  'send_cta_url',
+  'Send a WhatsApp interactive message with a native call-to-action button that opens a URL. Cleaner than pasting a raw link: the user sees a tappable button. Use for "Ver catálogo", "Agendar cita", "Pagar aquí", etc. Only on WhatsApp (WABA) chats.',
+  {
+    text: z.string().describe('Body text shown above the button (e.g. "¿Listo para agendar tu demo?")'),
+    url: z.string().describe('The https URL the button opens (e.g. "https://calendly.com/...")'),
+    button_text: z.string().max(20).describe('Button label, max ~20 chars (e.g. "Agendar", "Ver más")'),
+  },
+  async (args) => {
+    const data = {
+      type: 'cta_url',
+      chatJid,
+      text: args.text,
+      url: args.url,
+      buttonText: args.button_text,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+    writeIpcFile(MESSAGES_DIR, data);
+    return { content: [{ type: 'text' as const, text: 'CTA URL button queued for delivery.' }] };
+  },
+);
+
+tool('messaging-public',
+  'send_contact',
+  'Send a WhatsApp contact card (vCard) the user can tap to save. Use for sharing a salesperson, support line, or business contact. Only on WhatsApp (WABA) chats.',
+  {
+    name: z.string().describe('Contact display name (e.g. "Soporte CoreGrid")'),
+    phone: z.string().describe('Phone number in international format (e.g. "+5215512345678")'),
+  },
+  async (args) => {
+    const data = {
+      type: 'contact',
+      chatJid,
+      name: args.name,
+      phone: args.phone,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+    writeIpcFile(MESSAGES_DIR, data);
+    return { content: [{ type: 'text' as const, text: 'Contact card queued for delivery.' }] };
+  },
+);
+
+tool('messaging-public',
   'send_reaction',
   'React to a message with an emoji. Use message IDs from the conversation context. Great for acknowledging messages (👍), confirming actions (✅), or showing appreciation (❤️🔥). Omit message_id to react to the most recent message in the chat.',
   {

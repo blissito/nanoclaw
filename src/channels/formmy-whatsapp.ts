@@ -600,6 +600,25 @@ export class FormmyWhatsAppChannel implements Channel {
         // Deliver message to NanoClaw message loop
         this.opts.onMessage(fullJid, message);
 
+        // Acuse de lectura (palomas azules) + "escribiendo…" para mensajes
+        // reales del cliente. Solo si tenemos el wamid de Meta (`message_id`
+        // del payload; el id sintético `fwa_…` no sirve para mark-as-read) y
+        // no es echo del operador. typing solo cuando NO está en pausa (si el
+        // operador tomó la conv, mostrar "escribiendo…" sería engañoso).
+        // Fire-and-forget: nunca bloquea ni rompe la respuesta del webhook.
+        if (message_id && !message.is_from_me) {
+          const isPaused =
+            typeof paused_until === 'string' &&
+            paused_until.length > 0 &&
+            new Date(paused_until) > new Date();
+          this.markRead(fullJid, message_id, !isPaused).catch((err) =>
+            logger.warn(
+              { err, jid: fullJid },
+              '[formmy-whatsapp] markRead failed (non-fatal)',
+            ),
+          );
+        }
+
         // Métricas: clasificamos el inbound por origen aparente.
         // `is_from_me=true` es echo del cel del operador (coexistencia WABA).
         // El resto cae como `user` por default.
@@ -792,8 +811,8 @@ export class FormmyWhatsAppChannel implements Channel {
     });
   }
 
-  // Tentative — pending Formmy bridge confirmation that `type: 'reaction'`
-  // is accepted upstream (Meta Cloud API supports message reactions).
+  // Meta WABA message reaction (emoji). Formmy bridge maps type:'reaction' to
+  // Meta `reaction:{message_id, emoji}`. Empty emoji removes the reaction.
   async sendReaction(
     jid: string,
     messageId: string | undefined,
@@ -812,6 +831,57 @@ export class FormmyWhatsAppChannel implements Channel {
       type: 'reaction',
       message_id: messageId,
       emoji,
+    });
+  }
+
+  // Mark an inbound message as read (blue ticks) and optionally show the native
+  // "typing…" indicator. One Meta call (status:"read" + typing_indicator) via
+  // the Formmy bridge's type:'read' branch. messageId must be Meta's wamid.
+  async markRead(
+    jid: string,
+    messageId: string,
+    typing: boolean,
+  ): Promise<void> {
+    await this.postToFormmy({
+      phone_number: extractPhone(jid),
+      integration_id: this.resolveIntegrationId(jid),
+      type: 'read',
+      message_id: messageId,
+      typing,
+    });
+  }
+
+  // Interactive CTA URL button — native button that opens a link (no raw URL in
+  // the bubble). Formmy maps type:'interactive' → Meta interactive cta_url.
+  async sendCtaUrl(
+    jid: string,
+    text: string,
+    url: string,
+    buttonText: string,
+  ): Promise<void> {
+    await this.postToFormmy({
+      phone_number: extractPhone(jid),
+      integration_id: this.resolveIntegrationId(jid),
+      type: 'interactive',
+      text,
+      url,
+      button_text: buttonText,
+    });
+  }
+
+  // Contact card. We build Meta's `contacts` array shape here from the simple
+  // name/phone the agent provides; the bridge passes it through to Meta as-is.
+  async sendContact(jid: string, name: string, phone: string): Promise<void> {
+    await this.postToFormmy({
+      phone_number: extractPhone(jid),
+      integration_id: this.resolveIntegrationId(jid),
+      type: 'contacts',
+      contacts: [
+        {
+          name: { formatted_name: name, first_name: name },
+          phones: [{ phone, type: 'CELL', wa_id: phone.replace(/\D/g, '') }],
+        },
+      ],
     });
   }
 

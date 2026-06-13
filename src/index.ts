@@ -187,6 +187,14 @@ function pickReceivedEmoji(content: string): string {
   return '\u{1F440}';
 }
 
+// WABA 1:1 chats (Formmy bridge) have no trigger and aren't reactAlways, yet
+// every customer message is for the bot — so status reactions (👀/✅) should
+// always fire there, same as in groups. Single source of truth for both
+// markReceived gates so they can't drift.
+function isWabaJid(jid: string): boolean {
+  return jid.startsWith('formmy_');
+}
+
 const STANDBY_IMAGE_PATH = path.join(
   process.cwd(),
   'assets',
@@ -661,9 +669,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Exception: groups with reactAlways=true (demo groups where every message is
   // for the bot) react to every user message regardless of trigger.
   const reactAlways = group.containerConfig?.reactAlways === true;
+  const wabaChat = isWabaJid(chatJid);
   for (const msg of actionableMessages) {
     if (msg.is_from_me || msg.is_bot_message) continue;
-    if (!reactAlways && !hasExplicitTrigger(msg)) continue;
+    if (!reactAlways && !wabaChat && !hasExplicitTrigger(msg)) continue;
     statusTracker.markReceived(
       msg.id,
       chatJid,
@@ -1364,9 +1373,10 @@ async function startMessageLoop(): Promise<void> {
           // says @bot/bot:. Exception: reactAlways=true demo groups react to
           // every user message.
           const reactAlways = group.containerConfig?.reactAlways === true;
+          const wabaChat = isWabaJid(chatJid);
           for (const msg of groupMessages) {
             if (msg.is_from_me || msg.is_bot_message) continue;
-            if (!reactAlways && !hasExplicitTrigger(msg)) continue;
+            if (!reactAlways && !wabaChat && !hasExplicitTrigger(msg)) continue;
             statusTracker.markReceived(
               msg.id,
               chatJid,
@@ -1950,6 +1960,25 @@ async function main(): Promise<void> {
       const label = name ? `${name}\n` : '';
       const addr = address ? `${address}\n` : '';
       return channel.sendMessage(jid, `${label}${addr}${link}`);
+    },
+    sendCtaUrl: (jid, text, url, buttonText) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      if (channel.sendCtaUrl) {
+        return channel.sendCtaUrl(jid, text, url, buttonText);
+      }
+      // Fallback: plain text with the URL so the link still reaches the user.
+      const body = text ? `${text}\n${url}` : url;
+      return channel.sendMessage(jid, body);
+    },
+    sendContact: (jid, name, phone) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) throw new Error(`No channel for JID: ${jid}`);
+      if (channel.sendContact) {
+        return channel.sendContact(jid, name, phone);
+      }
+      // Fallback: plain text contact line.
+      return channel.sendMessage(jid, `${name}: ${phone}`);
     },
     sendVideo: (jid, filePath, caption) => {
       const channel = findChannel(channels, jid);

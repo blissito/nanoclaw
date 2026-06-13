@@ -254,6 +254,76 @@ describe('FormmyWhatsAppChannel.postToFormmy', () => {
   });
 });
 
+describe('FormmyWhatsAppChannel rich message types', () => {
+  let mock: MockServerHandle | null = null;
+
+  afterEach(async () => {
+    if (mock) {
+      await mock.close();
+      mock = null;
+    }
+  });
+
+  it('sendReaction posts type:reaction with message_id + emoji', async () => {
+    mock = await startMockServer((_req, res) => {
+      res.writeHead(200);
+      res.end();
+    });
+    const ch = makeChannel(mock.port);
+    await ch.sendReaction('formmy_5215555', 'wamid.ABC', '👀');
+    const sent = JSON.parse(mock.requests[0].body);
+    expect(sent.type).toBe('reaction');
+    expect(sent.message_id).toBe('wamid.ABC');
+    expect(sent.emoji).toBe('👀');
+  });
+
+  it('markRead posts type:read with message_id and typing flag', async () => {
+    mock = await startMockServer((_req, res) => {
+      res.writeHead(200);
+      res.end();
+    });
+    const ch = makeChannel(mock.port);
+    await ch.markRead('formmy_5215555', 'wamid.XYZ', true);
+    const sent = JSON.parse(mock.requests[0].body);
+    expect(sent.type).toBe('read');
+    expect(sent.message_id).toBe('wamid.XYZ');
+    expect(sent.typing).toBe(true);
+  });
+
+  it('sendCtaUrl posts type:interactive with url + button_text', async () => {
+    mock = await startMockServer((_req, res) => {
+      res.writeHead(200);
+      res.end();
+    });
+    const ch = makeChannel(mock.port);
+    await ch.sendCtaUrl(
+      'formmy_5215555',
+      '¿Agendamos?',
+      'https://cal.com/demo',
+      'Agendar',
+    );
+    const sent = JSON.parse(mock.requests[0].body);
+    expect(sent.type).toBe('interactive');
+    expect(sent.text).toBe('¿Agendamos?');
+    expect(sent.url).toBe('https://cal.com/demo');
+    expect(sent.button_text).toBe('Agendar');
+  });
+
+  it('sendContact posts type:contacts with Meta contact shape', async () => {
+    mock = await startMockServer((_req, res) => {
+      res.writeHead(200);
+      res.end();
+    });
+    const ch = makeChannel(mock.port);
+    await ch.sendContact('formmy_5215555', 'Soporte', '+5215512345678');
+    const sent = JSON.parse(mock.requests[0].body);
+    expect(sent.type).toBe('contacts');
+    expect(sent.contacts[0].name.formatted_name).toBe('Soporte');
+    expect(sent.contacts[0].phones[0].phone).toBe('+5215512345678');
+    expect(sent.contacts[0].phones[0].wa_id).toBe('5215512345678');
+  });
+});
+
 describe('extractPhone', () => {
   it('strips formmy_ prefix and @s.whatsapp.net suffix (legacy JID)', () => {
     expect(extractPhone('formmy_5217712412825@s.whatsapp.net')).toBe(

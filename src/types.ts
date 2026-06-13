@@ -142,6 +142,15 @@ export interface Channel {
     name?: string,
     address?: string,
   ): Promise<void>;
+  // Optional: send an interactive CTA URL button (native button opening a link).
+  sendCtaUrl?(
+    jid: string,
+    text: string,
+    url: string,
+    buttonText: string,
+  ): Promise<void>;
+  // Optional: send a contact card.
+  sendContact?(jid: string, name: string, phone: string): Promise<void>;
   // Optional: typing indicator. Channels that support it implement it.
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
   // Optional: sync group/chat names from the platform.
