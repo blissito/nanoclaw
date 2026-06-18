@@ -23,6 +23,7 @@
  * JID convention: "webhook_{platform}_{id}" (e.g., "webhook_formmy_user123")
  */
 import http from 'http';
+import https from 'https';
 import { Channel, NewMessage } from '../types.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import { logger } from '../logger.js';
@@ -137,7 +138,10 @@ export class WebhookChannel implements Channel {
       const payload = JSON.stringify({ jid, text });
       const url = new URL(this.callbackUrl);
 
-      const req = http.request(
+      // El callback puede ser https (ej. https://formmy.app); usar el módulo
+      // correcto según protocolo. Con `http` contra un puerto TLS daba ECONNRESET.
+      const transport = url.protocol === 'https:' ? https : http;
+      const req = transport.request(
         {
           hostname: url.hostname,
           port: url.port || (url.protocol === 'https:' ? 443 : 80),
