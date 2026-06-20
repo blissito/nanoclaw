@@ -218,22 +218,9 @@ export class WhatsAppChannel implements Channel {
       browser: Browsers.macOS('Chrome'),
     });
 
-    // Use pairing code when phone number is provided (more reliable than QR for remote setups)
-    const phoneNumber = process.env.WHATSAPP_PHONE_NUMBER;
-    if (phoneNumber && !state.creds.registered) {
-      setTimeout(async () => {
-        try {
-          const code = await this.sock.requestPairingCode(
-            phoneNumber.replace(/[^0-9]/g, ''),
-          );
-          logger.info({ code }, `PAIRING CODE: ${code}`);
-          const pairingFile = path.join(STORE_DIR, 'pairing-code.txt');
-          fs.writeFileSync(pairingFile, code);
-        } catch (err) {
-          logger.error({ err }, 'Failed to request pairing code');
-        }
-      }, 3000);
-    }
+    // Pairing code is requested on-demand via admin API (request-pairing action).
+    // Auto-requesting on every reconnect burns Meta rate limits when the phone
+    // is temporarily offline — do NOT restore the auto-call here.
 
     this.sock.ev.on('connection.update', (update) => {
       const { connection, lastDisconnect, qr } = update;
