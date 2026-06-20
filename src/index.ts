@@ -373,6 +373,15 @@ export function _setRegisteredGroups(
   registeredGroups = groups;
 }
 
+/** Strip <internal>/<thinking> reasoning blocks, tolerant of mismatched/unclosed tags. */
+function stripInternalReasoning(raw: string): string {
+  return raw
+    .replace(/<(?:internal|thinking)>[\s\S]*?<\/(?:internal|thinking)>/gi, '')
+    .replace(/<(?:internal|thinking)>[\s\S]*$/gi, '')
+    .replace(/<\/?(?:internal|thinking)>/gi, '')
+    .trim();
+}
+
 /**
  * Process all pending messages for a group.
  * Called by the GroupQueue when it's this group's turn.
@@ -458,9 +467,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           async (output) => {
             const text =
               typeof output.result === 'string'
-                ? output.result
-                    .replace(/<internal>[\s\S]*?<\/internal>/g, '')
-                    .trim()
+                ? stripInternalReasoning(output.result)
                 : '';
             if (text) await channel.sendMessage(chatJid, text);
           },
@@ -782,10 +789,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           typeof result.result === 'string'
             ? result.result
             : JSON.stringify(result.result);
-        // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-        const cleaned = raw
-          .replace(/<internal>[\s\S]*?<\/internal>/g, '')
-          .trim();
+        // Strip <internal>/<thinking> reasoning blocks (tolerant of mismatched/unclosed tags)
+        const cleaned = stripInternalReasoning(raw);
         // Strip self-prefix the agent may add (e.g. "Ghosty: hello" → "hello").
         // Escape regex metacharacters first: Formmy/WABA chats register with
         // trigger_pattern ".*", which unescaped turned this into a greedy
