@@ -160,27 +160,31 @@ export class WhatsAppChannel implements Channel {
         }
       } else if (req.action === 'unlink') {
         logger.info('WhatsApp unlink requested via admin control');
-        // logout() triggers a 'close' with reason 401 → the connection.update
-        // handler wipes creds + reconnects (fresh QR). No process.exit: under
-        // Restart=on-failure that would take admin-api down for good. If logout
-        // fails (socket not open), wipe + reconnect directly.
+        // Best-effort logout (invalidates the device on WhatsApp's side), then
+        // ALWAYS wipe store/auth + reconnect so the daemon comes back on a fresh
+        // QR. We must NOT rely on the 401-close handler to wipe: it deliberately
+        // keeps creds intact (see the connection.update 'close'/loggedOut branch),
+        // so on a *successful* logout the creds would otherwise survive and the
+        // admin-api status stays stuck on "linked" forever (no re-pair QR). No
+        // process.exit: other listeners (Formmy/WABA channel, admin-api) share
+        // this process.
         try {
           await this.sock.logout();
         } catch (err) {
           logger.warn(
             { err },
-            'sock.logout() failed — wiping creds + reconnecting directly',
+            'sock.logout() failed — wiping + reconnecting anyway',
           );
-          try {
-            fs.rmSync(path.join(STORE_DIR, 'auth'), {
-              recursive: true,
-              force: true,
-            });
-          } catch {
-            /* ok */
-          }
-          this.scheduleReconnect(1);
         }
+        try {
+          fs.rmSync(path.join(STORE_DIR, 'auth'), {
+            recursive: true,
+            force: true,
+          });
+        } catch {
+          /* ok */
+        }
+        this.scheduleReconnect(1);
         for (const f of ['pairing-code.txt', 'pairing-error.txt']) {
           try {
             fs.unlinkSync(path.join(STORE_DIR, f));
