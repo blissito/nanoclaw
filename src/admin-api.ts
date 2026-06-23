@@ -229,16 +229,19 @@ function readFileFresh(file: string, maxAgeMs: number): string | null {
 }
 
 function whatsappStatus() {
-  // Linked requires registered === true. requestPairingCode() writes a
-  // PROVISIONAL me.id (the number being paired) into creds.json with
-  // registered:false BEFORE the user enters the code — so checking me.id alone
-  // is a false positive that shows "linked" mid-pairing. Only a completed
-  // handshake flips registered to true.
+  // Linked = a populated `account` (+ me.id). Do NOT gate on `registered`:
+  // Baileys (multi-device) sets `registered` OPTIMISTICALLY when it *generates*
+  // the pairing code and frequently leaves it `false` even on a fully linked,
+  // message-receiving session — a false NEGATIVE that pins the UI on
+  // "conectando…" forever (CLAUDE.md clean-install §6: confirm with
+  // account/platform, NOT registered). The `account` object is only written
+  // after the handshake completes, so `me.id && account` avoids the provisional
+  // me.id false-positive mid-pairing (provisional has me.id but no account yet).
   try {
     const creds = JSON.parse(
       fs.readFileSync(path.join(STORE_DIR, 'auth', 'creds.json'), 'utf8'),
     );
-    if (creds?.registered === true && creds?.me?.id) {
+    if (creds?.me?.id && (creds?.account || creds?.platform)) {
       const phone = String(creds.me.id).split(':')[0].split('@')[0];
       return {
         state: 'linked' as const,
