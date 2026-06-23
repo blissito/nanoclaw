@@ -568,8 +568,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // forceEval (set by clear_coexistence_pause) bypasses all four — admin
   // explicit intent. Cursor advances on every skip so we don't re-scan
   // these messages on subsequent ticks.
+  // The coexistence gate below is WABA-only: it gates the spawn on a "waiting
+  // customer" (a message with is_from_me=0, sent by an end user from their own
+  // number). Admin/training Baileys groups are driven by the owner FROM the
+  // linked account itself (is_from_me=1), so running this gate there wrongly
+  // skips every owner message ("no pending customer message") — it regressed
+  // same-number piggyback training when it landed (2026-05-14, sofi-0). Scope it
+  // to public/WABA chats; non-public groups fall through to the normal
+  // trigger-gated spawn path below.
+  const isPublicChat = group.containerConfig?.profile === 'public';
   const forceEval = forceNextEvaluation.delete(chatJid);
-  if (!forceEval) {
+  if (isPublicChat && !forceEval) {
     const latestCustomerMsg = [...actionableMessages]
       .reverse()
       .find((m) => !m.is_from_me && !m.is_bot_message);
@@ -614,7 +623,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       saveState();
       return true;
     }
-  } else {
+  } else if (forceEval) {
     logger.info(
       { group: group.name, chatJid },
       'Force-evaluating chat (coexistence release)',
