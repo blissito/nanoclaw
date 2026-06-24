@@ -139,6 +139,20 @@ Without that gate, a sibling on the same WA account would silently spawn the age
 
 Why: incident 2026-06-13 on sofi-0 — Sofi self-scheduled an `interval=600000ms` task to "send the pending quote"; each fire ran in isolated context (no memory of prior runs) and re-sent a fresh quote → 58 identical quotes to one customer overnight. The guard makes blind auto-repeating sends into customer chats impossible while preserving one-time follow-ups. Enforced host-side (profile comes from the DB, not the agent) → not bypassable. Deployed to all live droplets 2026-06-13. See `docs/PUBLIC_AGENT_SURFACE.md`.
 
+## Prompt source & training reflection (verified 2026-06-23)
+
+How a group's effective prompt is assembled, and why edits sometimes "don't reflect."
+
+**One source of truth.** The admin/training group (`main`) reads `groups/main/CLAUDE.md` directly. Public WABA groups (`profile: 'public'`) read the **same** file via a read-only **training overlay**: `src/container-runner.ts` mounts every file in the training folder (`FORMMY_TRAINING_GROUP_FOLDER`, = `main`) onto `/workspace/group/<file>` ro, shadowing the per-customer folder. So `main/CLAUDE.md` (plus catalog, product images, reference docs) is what every WABA agent actually reads — the per-customer `groups/formmy_*/CLAUDE.md` is usually 0 bytes and is **not** what the agent sees. Train in `main` → applies to all WABA.
+
+**When CLAUDE.md is read.** The SDK reads CLAUDE.md (claude_code preset, `cwd: /workspace/group`) **once when the container / `query()` starts**, and fixes it for that container's lifetime. The resume transcript (`data/sessions/<folder>/.claude/projects/-workspace-group/<uuid>.jsonl`) stores **only** user/assistant messages — **no system prompt** (verified: entry types are `user` / `assistant` / `queue-operation`; no `system`, no `claude_code`). So on `--resume` the SDK **rebuilds the system prompt from the current CLAUDE.md** — resume does NOT pin an old prompt. (This is also why the host injects the date per-message via a `UserPromptSubmit` hook: the base prompt is built per-container, not per-message.)
+
+**Why "I edited the prompt and nothing changed":** a **live/warm** container keeps the prompt it read at startup. The edit reflects only on the **next container spawn**, which re-reads the current file — even when resuming the same session. Containers die on idle, so an edit applies on the next message *after* the warm container exits.
+
+**Force a reflect now** (without waiting for idle): `docker kill` the group's running container → the next message respawns it, re-reads the prompt, and **resumes the same session (no lost context)**. Prefer this over `DELETE FROM sessions WHERE group_folder=?` (which also works but starts a fresh session and loses conversational continuity). Check if a group is warm with `docker ps | grep <folder>`.
+
+**Pipeline edit rights (admin yes / WABA no) are code-gated, not just prompt-gated.** `main` loads `kommo` with no `KOMMO_TOOLSETS` → all toolsets incl. pipeline structure CRUD (`create_pipeline` / `update_pipeline` / `create_pipeline_status`, in the `admin` toolset). Public WABA groups set `KOMMO_TOOLSETS=read,create,scoped-mutate` → those tools are never registered, so a WABA agent **cannot** restructure the pipeline regardless of prompt (it can still create/move/read leads — `update_lead` takes `status_id`/`pipeline_id`). ⚠️ Default when `KOMMO_TOOLSETS` is unset = ALL toolsets (`ENABLED_TOOLSETS = … : null // null = all`, `container/mcp-servers/kommo/src/index.ts`) — fail-OPEN, so every public group must set the restricted toolset explicitly.
+
 ## Adding MCP Servers
 
 Per-group MCP servers give agents domain-specific tools. Each group's `container_config.mcpServers` array controls which servers are available (the `nanoclaw` server is always included automatically).
