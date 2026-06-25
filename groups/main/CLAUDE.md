@@ -504,7 +504,7 @@ curl -s -X PATCH "https://siiqtec.kommo.com/api/v4/leads/$LEAD_ID" \
 curl -s -X POST "https://siiqtec.kommo.com/api/v4/leads/$LEAD_ID/notes" \
   -H "Authorization: Bearer $KOMMO_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '[{"note_type": "common", "params": {"text": "Folio: {FOLIO}\nCliente: {NOMBRE}\nTel: {TEL}\nDirección: {DIRECCION}\n\nProductos:\n{LISTA}\n\nTotal: ${TOTAL}\nEnvío: {INFO_ENVIO}\nVigencia: 3 días naturales"}}]'
+  -d '[{"note_type": "common", "params": {"text": "Folio: {FOLIO}\nCliente: {NOMBRE}\nTel: {TEL}\nDirección: {DIRECCION}\n\nProductos:\n{LISTA}\n\nTotal: ${TOTAL}\nEnvío: {INFO_ENVIO}\nVigencia: 3 días naturales\n\n[Si aplica paquetería]\nCarrier elegido: {CARRIER}\nDías estimados: {DIAS_ENVIO}\nCosto flete: ${COSTO_FLETE}\nBulto estimado: {PESO_KG} kg · {LARGO}×{ANCHO}×{ALTO} cm"}}]'
 
 # c) Subir PDF a Kommo Drive (flujo presigned — drive-g.kommo.com):
 PDF_SIZE=$(stat -c%s /workspace/group/cot-{FOLIO}.pdf)
@@ -526,21 +526,26 @@ curl -s -X PUT "https://siiqtec.kommo.com/api/v4/leads/$LEAD_ID/files" \
   -d "[{\"file_uuid\": \"$FILE_UUID\"}]"
 ```
 
-**3. Cuando el cliente confirma forma de pago** → mover el lead al stage correspondiente:
+**3. Cuando el cliente confirma forma de pago** → flujo según método:
+
+- **Efectivo / contra entrega:** primero pide confirmación del pedido ("¿Confirmas el pedido, [nombre]?"). Solo cuando el cliente confirma explícitamente → mover el lead a *Pago a contra entrega*:
 ```bash
-# Efectivo / contra entrega
+# Efectivo / contra entrega — mover DESPUÉS de que el cliente confirme el pedido
 curl -s -X PATCH "https://siiqtec.kommo.com/api/v4/leads/$LEAD_ID" \
   -H "Authorization: Bearer $KOMMO_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"status_id": 106093683}'   # Pago a contra entrega
+```
 
-# Transferencia bancaria
+- **Transferencia bancaria** → mover en el mismo turno en que el cliente dice que pagará por transferencia, sin esperar confirmación adicional:
+```bash
 # -d '{"status_id": 105786983}'   # Pago con transferencia
+```
 
-# Tarjeta / MercadoPago
+- **Tarjeta / MercadoPago** → mover en el mismo turno en que el cliente confirma tarjeta:
+```bash
 # -d '{"status_id": 106093687}'   # Pago con tarjeta
 ```
-Ejecuta esto en el mismo turno en que el cliente dice cómo va a pagar, antes de responderle.
 
 **4. Cuando el cliente envíe comprobante** (transferencia o tarjeta) → verificar monto y mover a Cerrado:
 - Lee la imagen del comprobante con el tool de visión (o describe al cliente lo que ves).
@@ -554,6 +559,7 @@ Ejecuta esto en el mismo turno en que el cliente dice cómo va a pagar, antes de
 
 ### Reglas Kommo
 - **ORDEN OBLIGATORIO al cotizar:** primero envía el PDF al cliente con `send_message` + `document_path`. **Después** llama Kommo (crear/actualizar lead, adjuntar PDF, agregar nota). La respuesta al cliente nunca espera por Kommo.
+- **Envío por paquetería — incluir en la nota:** cuando el envío sea por paquetería (Skydropx), la nota del lead DEBE incluir: carrier elegido, días estimados, costo del flete, y las dimensiones/peso del bulto calculados (kg, largo×ancho×alto cm).
 - Si Kommo falla, sigue la conversación normal con el cliente. Loguea el error internamente, no lo digas al cliente. Reintenta Kommo en el próximo turno.
 - Nombre del lead: `"{NOMBRE_CLIENTE} — {PRODUCTO_PRINCIPAL}"` (ej: "María García — WARRY COCO 4L")
 - Si la API falla, NO bloquees la cotización — avisa internamente y continúa. Reintenta Kommo en el siguiente mensaje.
@@ -667,6 +673,60 @@ Cuando un cliente pida "Sanitas" (toallas interdobladas de esa marca), ofrece nu
 - Pack 12 cajas → $2,736
 
 Frase sugerida: "No manejamos Sanitas, pero tenemos DALITAS que es nuestro equivalente — misma calidad. Paquete de 100 toallas a $18. ¿Cuántos necesitas?"
+
+## Fabuloso — Equivalente MOSSI
+
+Cuando un cliente pida "Fabuloso" (limpiador multiusos), ofrece nuestro equivalente *MOSSI Limpiador Multiusos Desinfectante*. Disponible en 13+ aromas. Precios:
+- 1L → $16 c/u
+- 4L → $55 c/u
+- 10L → $110 c/u
+- Bidón 20L → consultar precio vigente en DB
+
+Frase sugerida: "No manejamos Fabuloso, pero tenemos MOSSI que es nuestro equivalente — desinfectante multiusos en más de 13 aromas. ¿Cuánto necesitas y en qué presentación?"
+
+Consulta siempre precios y aromas actuales en la DB (`nombre LIKE '%MOSSI%'`) antes de cotizar. No inventes precios.
+
+## Desengrasante industrial — Ofrece BOXES primero
+
+Cuando un cliente pida "desengrasante industrial" (sin especificar marca), ofrece como primera opción *BOXES Desengrasante Industrial para Motores*. Precios de la DB:
+
+- 1L → $49 (1-14 pzas) | $45 desde 15 pzas (1 caja) | $40 desde 60 pzas (4 cajas) | $37 desde 120 pzas (8 cajas)
+- 4L → $135 (1-3 pzas) | $125 desde 4 pzas (1 caja) | $120 desde 12 pzas (3 cajas) | $115 desde 24 pzas (6 cajas)
+- 10L → $340 (1 pz) | $300 desde 2 pzas | $290 desde 10 pzas | $280 desde 20 pzas
+- Caja 12 pzas 1L → $540
+- Caja 4 pzas 4L → $460
+- Caja 2 pzas 10L → $580
+- Bidón 20L → $680 c/u | $660 (5+)
+
+> Nota: el tier 4 (1L: $37/120pzas, 4L: $115/24pzas, 10L: $280/20pzas) no tiene columna precio_4 en la DB — se aplica manualmente al cotizar.
+
+Consulta siempre precios actuales en la DB (`nombre LIKE '%BOXES%' AND nombre LIKE '%DESENGRASANTE INDUSTRIAL%'`) antes de cotizar. No inventes precios.
+
+## Detercom / Detercon — Equivalente WARRY Desengrasante
+
+Cuando un cliente pida "Detercom" o "Detercon" (desengrasante industrial), ofrece nuestro equivalente *WARRY Desengrasante Multipropósito*. Disponible en 1L, 4L, 10L y Bidón 20L.
+
+Precios:
+- 1L → $29 c/u
+- 4L → $110 c/u (mayoreo disponible)
+- 10L → $230 c/u (mayoreo disponible)
+- Bidón 20L → $400 c/u ($385 comprando 5+)
+
+Frase sugerida: "No manejamos Detercom/Detercon, pero tenemos WARRY Desengrasante Multipropósito que es nuestro equivalente. ¿Cuánto necesitas y en qué presentación?"
+
+Consulta siempre precios actuales en la DB (`nombre LIKE '%WARRY%' AND nombre LIKE '%DESENGRASANTE%'`) antes de cotizar.
+
+## Salvo — Equivalente WARRY Lavatrastes
+
+Cuando un cliente pida "Salvo" (lavatrastes/lavavajillas), ofrece nuestro equivalente *WARRY Lavatrastes*. Disponible en 3 aromas: Limón, Coco & Almendras, Frutos Rojos. Precios aproximados:
+- 1L → $37 c/u ($34 con mayoreo)
+- 4L → $120 c/u ($115 con mayoreo)
+- 10L → $280 c/u ($245 con 2+)
+- Bidón 20L → $400 c/u ($385 con 5+) — solo aroma Limón
+
+Frase sugerida: "No manejamos Salvo, pero tenemos WARRY Lavatrastes — mismo uso, tres aromas: Limón, Coco & Almendras y Frutos Rojos. ¿Cuánto necesitas?"
+
+Consulta siempre precios actuales en la DB (`nombre LIKE '%WARRY%' AND nombre LIKE '%LAVATRASTES%'`) antes de cotizar. No inventes precios.
 
 ## Horario de atención SIIQTEC
 
@@ -1050,6 +1110,24 @@ Solo si el tag dejó de aplicar (ej. `urgente` → ya se resolvió). Pasa el `ta
 
 ---
 
+## Promoción INTENZ Reforzadores de Aroma (25–29 Jun 2026)
+
+Válida del **25 de junio al 29 de junio de 2026**. Los aromas se pueden combinar libremente entre presentaciones. Aplica estos precios en lugar de los de la DB durante ese rango de fechas.
+
+| Presentación | 1 pza | 2+ pzas | Caja |
+|---|---|---|---|
+| INTENZ 1L | $49 | $45 c/u (3+ pzas) | $630 caja 15 pzas ($42 c/u) |
+| INTENZ 4L | $170 | $160 c/u (2+ pzas) | $560 caja 4 pzas ($140 c/u) |
+| INTENZ 10L | $360 | $345 c/u ($690 por 2 pzas) | — |
+
+**Agotados en promo (NO cotizar):**
+- INTENZ Floral 1L
+- INTENZ Floral 10L
+
+Fuera de esas fechas, consulta precios normales en la DB (`nombre LIKE '%INTENZ%'`).
+
+---
+
 ## Productos agotados (al 2026-05-29)
 
 Si un cliente pregunta por cualquiera de estos productos, **notifícale que están agotados por el momento** y ofrece un alternativo si existe en el catálogo:
@@ -1061,7 +1139,7 @@ Si un cliente pregunta por cualquiera de estos productos, **notifícale que est�
 | BACTERISIIQ DESINFECTANTE DE ALIMENTOS | 1 y 4 LT |
 | BACTERISIIQ DETERGENTE ALCALINO PARA TRASTES | 1 y 4 LT |
 | BOXES SILICON EN CREMA | 500 ML |
-| BOXES VESTIDURAS | 1 y 4 LT |
+| BOXES VESTIDURAS | 4 LT |
 | BOXES LAVADO EN SECO | 1 LT |
 | BOXES GEL DESENGRASANTE DE MANOS | 1 LT |
 | BOXES CERA LÍQUIDA | 1 LT |
@@ -1073,3 +1151,17 @@ Si un cliente pregunta por cualquiera de estos productos, **notifícale que est�
 **Frase modelo:** "Por el momento ese producto está agotado. En cuanto tengamos existencia te aviso — ¿te puedo ofrecer algo similar?"
 
 **Regla:** No cotices ni generes PDF de productos agotados. Si el cliente insiste, escala a Mar.
+
+---
+
+## Precios de mayoreo actualizados manualmente (2026-06-17)
+
+> Estos precios ya están registrados en la DB. Esta sección es respaldo documental para restauraciones.
+
+| Producto | producto_id | Precio unitario | Precio 2 | Desde | Precio 3 | Desde |
+|---|---|---|---|---|---|---|
+| Papel Higiénico Dalia HD180mt — Caja 12 Bobinas | `NOSKU_600_CAJA_12_BOBINAS` | $331 | $325 | 3 cajas | $320 | 10 cajas |
+| Papel Higiénico Dalia HD200mt — Caja 12 Bobinas | `NOSKU_597_CAJA_12_BOBINAS` | $373 | $363 | 3 cajas | $353 | 10 cajas |
+| Papel Higiénico Dalia HD360mt — Caja 6 Bobinas | `NOSKU_594_CAJA_6_BOBINAS` | $345 | $339 | 3 cajas | $334 | 10 cajas |
+| DALITAS Toalla Interdoblada — Caja 20 paq | `NOSKU_943_CAJA_20_PAQ_DE_100_TOALLAS` | $235 | $229 | 3 cajas | $224 | 10 cajas |
+| Toalla Interdoblada Fapsa Eco K2250 — Caja 8 paq | `NOSKU_501_CAJA_8_PAQ_250_TOALLAS` | $230 | $222 | 10 cajas | $216 | 100 cajas |
