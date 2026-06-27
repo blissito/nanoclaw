@@ -1,92 +1,98 @@
 #!/usr/bin/env bash
-# text-to-speech: convert text to audio using ElevenLabs (primary) or OpenAI (fallback)
+# text-to-speech: convert text to audio using Kokoro (local, free) with OpenAI onyx fallback.
 # Usage: text-to-speech "text to speak" [voice-name]
-# Voices: antonio (default), jc, brian, daniel, enrique, custom
+# Voices (Spanish, Kokoro): santa (default), alex, dora.
+#   Legacy names are remapped so old calls/tasks keep working.
 set -euo pipefail
 
 TEXT="${1:?Usage: text-to-speech \"text\" [voice-name]}"
-VOICE_NAME="${2:-antonio}"
+VOICE_NAME="${2:-santa}"
 OUTPUT_DIR="/workspace/group"
 OUTPUT_FILE="${OUTPUT_DIR}/tts-$(date +%s%3N).ogg"
 
-# --- Voice catalog ---
+KOKORO_MODEL="${KOKORO_MODEL:-/opt/kokoro/kokoro-v1.0.onnx}"
+KOKORO_VOICES="${KOKORO_VOICES:-/opt/kokoro/voices-v1.0.bin}"
+
+# --- Voice catalog (name -> Kokoro voice id) ---
+# Kokoro español ships 3 voices: em_santa, em_alex (male), ef_dora (female).
+# Legacy ElevenLabs names map onto these so existing skills/tasks don't break.
 declare -A VOICES=(
-  [antonio]="htFfPSZGJwjBv1CL0aMD"
-  [jc]="4XUsiqPDK4UACIM2BILe"
-  [brian]="XgQWNZcJ8SRkxXwwhPTo"
-  [daniel]="T7BErSAR6r6NDaGdTLKB"
-  [enrique]="gbTn1bmCvNgk0QEAVyfM"
-  [maya]="nbcvT3C2tyOd2OsRAtUf"
-  [cristina]="nTkjq09AuYgsNR8E4sDe"
-  [regina]="9Godp7dNohUvXk6qp0gS"
+  [santa]="em_santa"
+  [alex]="em_alex"
+  [dora]="ef_dora"
+  # legacy male -> em_alex (default stays santa)
+  [antonio]="em_alex"
+  [jc]="em_alex"
+  [brian]="em_alex"
+  [daniel]="em_alex"
+  [enrique]="em_alex"
+  # legacy female -> ef_dora
+  [maya]="ef_dora"
+  [cristina]="ef_dora"
+  [regina]="ef_dora"
 )
 
-# Check for custom cloned voice in group config
-VOICE_CONFIG="/workspace/group/voice_config.json"
-if [[ "$VOICE_NAME" == "custom" || "$VOICE_NAME" == "cloned" ]] && [[ -f "$VOICE_CONFIG" ]]; then
-  VOICE_ID=$(python3 -c "import json; print(json.load(open('$VOICE_CONFIG')).get('voice_id',''))" 2>/dev/null || true)
-elif [[ -n "${VOICES[$VOICE_NAME]+x}" ]]; then
-  VOICE_ID="${VOICES[$VOICE_NAME]}"
+if [[ -n "${VOICES[$VOICE_NAME]+x}" ]]; then
+  KOKORO_VOICE="${VOICES[$VOICE_NAME]}"
+elif [[ "$VOICE_NAME" == "custom" || "$VOICE_NAME" == "cloned" ]]; then
+  # Voice cloning was ElevenLabs-only and is no longer available; use the default.
+  KOKORO_VOICE="em_santa"
+  echo "WARNING: cloned voices unavailable (Kokoro has no cloning), using santa" >&2
 else
-  # Unknown voice name, default to antonio
-  VOICE_ID="${VOICES[antonio]}"
-  echo "WARNING: Unknown voice '$VOICE_NAME', using antonio" >&2
+  KOKORO_VOICE="em_santa"
+  echo "WARNING: Unknown voice '$VOICE_NAME', using santa" >&2
 fi
 
-# --- ElevenLabs (primary) ---
-if [[ -n "${ELEVENLABS_API_KEY:-}" && -n "${VOICE_ID:-}" ]]; then
-  RESPONSE_CODE=$(curl -sS -w "%{http_code}" -o "$OUTPUT_FILE" \
-    -X POST "https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=opus_48000_64" \
-    -H "xi-api-key: $ELEVENLABS_API_KEY" \
-    -H "Content-Type: application/json" \
-    -d "$(python3 -c "
-import json, sys
-print(json.dumps({
-    'text': sys.argv[1],
-    'model_id': 'eleven_multilingual_v2',
-    'voice_settings': {
-        'stability': 0.35,
-        'similarity_boost': 0.85,
-        'style': 0.6,
-        'use_speaker_boost': True
-    }
-}))
-" "$TEXT")")
-
-  if [[ "$RESPONSE_CODE" == "200" ]]; then
-    # Track via IPC (non-fatal)
-    {
-      IPC_DIR="/workspace/ipc/messages"
-      mkdir -p "$IPC_DIR"
-      TRACK_FILE="${IPC_DIR}/imgtrack-$(date +%s%3N).json"
-      # ElevenLabs: ~1 credit per char, Creator plan = 110k chars for $11
-      CHAR_COUNT=${#TEXT}
-      COST=$(python3 -c "print(round(${CHAR_COUNT} * 0.0001, 4))")
-      python3 -c "
+# --- Kokoro TTS (primary, local, free) ---
+if [[ -f "$KOKORO_MODEL" && -f "$KOKORO_VOICES" ]]; then
+  WAV_FILE="${OUTPUT_FILE%.ogg}.wav"
+  if KOKORO_MODEL="$KOKORO_MODEL" KOKORO_VOICES="$KOKORO_VOICES" \
+     python3 - "$TEXT" "$KOKORO_VOICE" "$WAV_FILE" <<'PY' 2>/tmp/kokoro-err.log
+import os, sys
+from kokoro_onnx import Kokoro
+import soundfile as sf
+text, voice, out = sys.argv[1], sys.argv[2], sys.argv[3]
+k = Kokoro(os.environ["KOKORO_MODEL"], os.environ["KOKORO_VOICES"])
+samples, sr = k.create(text, voice=voice, speed=1.0, lang="es")
+sf.write(out, samples, sr)
+PY
+  then
+    # WAV -> OGG opus (WhatsApp-compatible)
+    if ffmpeg -y -i "$WAV_FILE" -c:a libopus -b:a 64k -ar 48000 -ac 1 "$OUTPUT_FILE" >/dev/null 2>&1; then
+      rm -f "$WAV_FILE"
+      # Track via IPC (non-fatal). Kokoro is local => no cost.
+      {
+        IPC_DIR="/workspace/ipc/messages"
+        mkdir -p "$IPC_DIR"
+        TRACK_FILE="${IPC_DIR}/imgtrack-$(date +%s%3N).json"
+        python3 -c "
 import json, sys
 json.dump({
     'type': 'track_image_gen',
     'gen_type': 'tts',
     'prompt': sys.argv[1][:100],
-    'model': 'elevenlabs-v2',
-    'cost_usd': float(sys.argv[2])
-}, open(sys.argv[3], 'w'))
-" "$TEXT" "$COST" "$TRACK_FILE"
-    } || true
+    'model': 'kokoro-onnx',
+    'cost_usd': 0.0
+}, open(sys.argv[2], 'w'))
+" "$TEXT" "$TRACK_FILE"
+      } || true
 
-    echo "$OUTPUT_FILE"
-    exit 0
+      echo "$OUTPUT_FILE"
+      exit 0
+    else
+      rm -f "$WAV_FILE" "$OUTPUT_FILE"
+      echo "WARNING: ffmpeg conversion failed, falling back to OpenAI" >&2
+    fi
   else
-    ERROR=$(cat "$OUTPUT_FILE" 2>/dev/null || echo "HTTP $RESPONSE_CODE")
-    rm -f "$OUTPUT_FILE"
-    echo "WARNING: ElevenLabs failed ($RESPONSE_CODE), falling back to OpenAI" >&2
-    echo "$ERROR" >&2
+    rm -f "$WAV_FILE"
+    echo "WARNING: Kokoro TTS failed, falling back to OpenAI" >&2
+    cat /tmp/kokoro-err.log >&2 || true
   fi
 fi
 
-# --- OpenAI fallback ---
+# --- OpenAI fallback (onyx) ---
 if [[ -z "${OPENAI_API_KEY:-}" ]]; then
-  echo "ERROR: No TTS API key available (ELEVENLABS_API_KEY or OPENAI_API_KEY)" >&2
+  echo "ERROR: Kokoro unavailable and no OPENAI_API_KEY for fallback" >&2
   exit 1
 fi
 

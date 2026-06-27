@@ -1,6 +1,6 @@
 ---
 name: voice
-description: Text-to-speech with Mexican Spanish voices (ElevenLabs) and voice cloning
+description: Text-to-speech with Spanish voices (Kokoro, local & free) and OpenAI fallback
 allowed-tools: Bash(text-to-speech:*),Bash(clone-voice:*),Bash(ffmpeg:*),Bash(yt-dlp:*)
 ---
 
@@ -10,33 +10,28 @@ When the user asks you to respond with voice, or when replying to a voice note a
 
 ## Voice catalog
 
-Pick the voice that fits the moment:
+Kokoro runs locally (free, no API key). It ships 3 Spanish voices:
 
 | Voice | Style | When to use |
 |-------|-------|-------------|
-| `antonio` | Confident, gentle, latino | **Default** — everyday conversation |
-| `jc` | Energetic, broadcaster | News, data, exciting updates |
-| `brian` | Warm, soft, podcast | Long explanations, calm tone |
-| `daniel` | Young, natural, casual | Casual banter, young audience |
-| `enrique` | Rich, credible, narrator | Serious narration, formal reports |
-| `maya` | Dynamic, Mexican female | Female storytelling, energetic |
-| `cristina` | Young, conversational, Mexican female | Female casual chat |
-| `regina` | Sweet, friendly, Mexican female | Female warm/professional |
-| `custom` | Cloned voice | When group has a custom cloned voice |
+| `santa` | Male, Spanish | **Default** — everyday conversation |
+| `alex` | Male, Spanish | Alternative male voice |
+| `dora` | Female, Spanish | Female delivery |
 
 ```bash
-# Default voice (antonio)
-text-to-speech "Qué onda, aquí el resumen de hoy" antonio
+# Default voice (santa)
+text-to-speech "Qué onda, aquí el resumen de hoy"
 
-# Energetic delivery
-text-to-speech "Última hora: el servidor está al 99% de uptime" jc
+# Alternative male voice
+text-to-speech "Última hora: el servidor está al 99% de uptime" alex
 
-# Calm explanation
-text-to-speech "Te explico cómo funciona el sistema de pagos" brian
-
-# Custom cloned voice (if available)
-text-to-speech "Esto con la voz personalizada" custom
+# Female voice
+text-to-speech "Te explico cómo funciona el sistema de pagos" dora
 ```
+
+Legacy names (antonio, jc, brian, daniel, enrique, maya, cristina, regina) still
+work — they remap to the closest Kokoro voice. If Kokoro is unavailable the script
+falls back to OpenAI `onyx`.
 
 ## Sending voice
 
@@ -86,9 +81,10 @@ mcp__nanoclaw__send_message({ text: "Descargando audio de YouTube y clonando la 
 For best results, pick a video with clear speech (no music, no background noise).
 
 ### After cloning
-This uploads the audio to ElevenLabs, creates a cloned voice, and saves it to the group config. Future calls with `text-to-speech "text" custom` will use the cloned voice.
-
-To stop using the cloned voice: delete `/workspace/group/voice_config.json`.
+> ⚠️ Voice cloning relied on ElevenLabs and is currently **unavailable** (no active
+> ElevenLabs plan). Kokoro does not support cloning. Calls with `custom`/`cloned`
+> fall back to the default `santa` voice. The cloning instructions below are kept
+> for when an ElevenLabs plan is restored.
 
 ## Important
 

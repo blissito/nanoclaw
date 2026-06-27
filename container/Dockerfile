@@ -3,8 +3,22 @@
 
 FROM node:22-slim
 
-# Install system dependencies for Chromium and PDF tools
-RUN apt-get update && apt-get install -y \
+# LEAN=1 builds a slim agent (~400-700MB vs ~5.4GB) for purpose-built bots whose
+# tools are text + MCP only (e.g. tania: cotización + envíos skydropx + Kommo +
+# EasyBits + MercadoPago). It SKIPS the heavy media/doc/browser/OCR toolchain
+# (chromium, libreoffice, ffmpeg, tesseract, imagemagick, poppler/mupdf/qpdf,
+# deno, gh, python-data). Default LEAN=0 = full kitchen-sink image, unchanged.
+# Build slim: docker build --build-arg LEAN=1 -t nanoclaw-agent:latest .
+ARG LEAN=0
+
+# Essentials — always present (npm/clone/MCP builds need these).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl git unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Heavy media/doc/browser/OCR toolchain — full builds only (skipped when LEAN=1).
+RUN if [ "$LEAN" != "1" ]; then set -eux; \
+    apt-get update && apt-get install -y \
     chromium \
     fonts-liberation \
     fonts-noto-cjk \
@@ -22,27 +36,39 @@ RUN apt-get update && apt-get install -y \
     libcups2 \
     libdrm2 \
     libxshmfence1 \
-    curl \
-    git \
     poppler-utils \
     ffmpeg \
     imagemagick \
+    espeak-ng \
     python3-pip \
     libreoffice-calc \
-    unzip \
     mupdf-tools \
     qpdf \
     tesseract-ocr \
     tesseract-ocr-spa \
     python3-pil \
-    && pip3 install --break-system-packages yt-dlp openpyxl pandas pymupdf python-docx \
+    && pip3 install --break-system-packages yt-dlp openpyxl pandas pymupdf python-docx kokoro-onnx soundfile \
     && curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
        > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y gh \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* ; \
+    fi
+
+# Kokoro TTS model (local, free) — baked in so no container downloads it from
+# HuggingFace at runtime. ~350MB. Full builds only (voice is a media feature).
+# Used by container/skills/voice/text-to-speech (kokoro-onnx, espeak-ng phonemizer).
+RUN if [ "$LEAN" != "1" ]; then set -eux; \
+    mkdir -p /opt/kokoro \
+    && curl -fsSL -o /opt/kokoro/kokoro-v1.0.onnx \
+       https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx \
+    && curl -fsSL -o /opt/kokoro/voices-v1.0.bin \
+       https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin ; \
+    fi
+ENV KOKORO_MODEL=/opt/kokoro/kokoro-v1.0.onnx
+ENV KOKORO_VOICES=/opt/kokoro/voices-v1.0.bin
 
 # Set Chromium path for agent-browser
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
