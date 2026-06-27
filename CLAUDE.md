@@ -322,6 +322,16 @@ r2.on('end',()=>{fake.close();process.exit(r2.statusCode===200?0:1);});}).end(b2
 
 Config: `FALLBACK_MODEL` in `src/credential-proxy.ts`. Fatal patterns in `src/index.ts` (`fatalContainerPatterns`). Cooldown in `src/group-queue.ts`.
 
+## Voice / TTS (Kokoro local)
+
+The `voice` skill (`container/skills/voice/text-to-speech`) does TTS with **Kokoro running locally** (`kokoro-onnx`, free, no API key) and **OpenAI `onyx` as fallback**. ElevenLabs was the old primary but its credits are exhausted; the script no longer calls it (the `clone-voice` flow was ElevenLabs-only and is currently unavailable).
+
+- **Model baked into the image** (`container/Dockerfile`, full builds only / `LEAN=0`): `kokoro-onnx` + `soundfile` + `espeak-ng` (Spanish phonemizer); `/opt/kokoro/kokoro-v1.0.onnx` (~325MB) + `voices-v1.0.bin` from the `thewh1teagle/kokoro-onnx` release `model-files-v1.0`. Env `KOKORO_MODEL` / `KOKORO_VOICES`. No runtime HuggingFace download. Image grows ~1.5GB (~5.4GB → ~6.9GB).
+- **Spanish voices** (Kokoro only ships these): `santa`=`em_santa` (default), `alex`=`em_alex` (M), `dora`=`ef_dora` (F). Legacy ElevenLabs names (antonio/jc/brian/daniel/enrique/maya/cristina/regina) **remap** to the closest Kokoro voice so old skills/tasks keep working. `lang='es'`; output WAV 24kHz → ffmpeg → Ogg Opus mono 48kHz.
+- **Perf — bound the threads.** The skill sets `OMP_NUM_THREADS` (default 4, tune with `KOKORO_THREADS`). Leaving it unset lets onnxruntime oversubscribe on small CPUs and thrash: inference measured ~9s vs ~3.5s when bounded (RTF 0.58). Full text-to-speech end-to-end ≈6s on a 4-vCPU droplet (~0.85s import + ~2–3s model load, fixed per call since each invocation is a fresh process, + ~3.5s inference). The **int8 quantized model was tested and rejected** — slower on CPUs without AVX-VNNI.
+- **Kokoro is not the bottleneck for perceived latency.** A voice-note turn can take minutes; that's the agent (LLM turns, cold start, shared rate limit), not the ~6s TTS. To reduce perceived latency, cut agent steps (prompt it to send only the audio) or keep the container warm.
+- **Skill changes don't need a rebuild** (skills sync at container spawn); only Dockerfile changes (model/pip/apt) require `./container/build.sh`. To apply to a warm container now, `docker kill` it → next message respawns with the new skill and resumes the same session.
+
 ## Agent Vault (WIP)
 
 Inspired by [OneCLI](https://github.com/onecli/onecli). Implemented in `src/credential-proxy.ts`:
