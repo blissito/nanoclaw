@@ -46,7 +46,11 @@ fi
 # --- Kokoro TTS (primary, local, free) ---
 if [[ -f "$KOKORO_MODEL" && -f "$KOKORO_VOICES" ]]; then
   WAV_FILE="${OUTPUT_FILE%.ogg}.wav"
+  # Bound onnxruntime/OpenMP threads. Leaving OMP_NUM_THREADS unset lets onnxruntime
+  # oversubscribe on small CPUs (thrashing), which measured ~9s vs ~3.5s when bounded
+  # to the core count. Tune per-droplet with KOKORO_THREADS (default 4).
   if KOKORO_MODEL="$KOKORO_MODEL" KOKORO_VOICES="$KOKORO_VOICES" \
+     OMP_NUM_THREADS="${KOKORO_THREADS:-4}" \
      python3 - "$TEXT" "$KOKORO_VOICE" "$WAV_FILE" <<'PY' 2>/tmp/kokoro-err.log
 import os, sys
 from kokoro_onnx import Kokoro
