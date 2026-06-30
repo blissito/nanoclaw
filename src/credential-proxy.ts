@@ -5,7 +5,7 @@
  *
  * Primary: OAuth (Max plan).
  * Fallback: If upstream returns 429 (rate limit) or 529 (overloaded) and
- *           an API key is configured, retries with API key + claude-sonnet-4-20250514.
+ *           an API key is configured, retries with API key + claude-sonnet-5.
  *           529s are typically per-model — switching to the fallback model
  *           usually clears even when both auths hit the same upstream.
  *
@@ -27,9 +27,12 @@ export interface ProxyConfig {
   authMode: AuthMode;
 }
 
-// claude-sonnet-4-6 is the only Sonnet that accepts the SDK's `thinking: { type: "adaptive" }`.
-// Verified via api.anthropic.com 2026-04-29: sonnet-4-20250514 and sonnet-4-5 both reject adaptive.
-const FALLBACK_MODEL = 'claude-sonnet-4-6';
+// Sonnet 5 accepts the SDK's `thinking: { type: "adaptive" }` (it's the default on the
+// 4.6+ family) and ships near-Opus coding/agentic quality at Sonnet pricing — cheaper than
+// Opus 4.8 and, with intro pricing through 2026-08-31 ($2/$10 per MTok), below sonnet-4 too.
+// Verified via api.anthropic.com 2026-06-30: claude-sonnet-5 returns 200 with the SDK body
+// shape (adaptive thinking, no temperature/budget_tokens — those 400 on the new family).
+const FALLBACK_MODEL = 'claude-sonnet-5';
 
 // ---------------------------------------------------------------------------
 // Vault: Per-group policies
