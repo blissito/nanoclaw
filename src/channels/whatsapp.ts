@@ -433,7 +433,15 @@ export class WhatsAppChannel implements Channel {
             // Image attachment handling
             if (isImageMessage(msg)) {
               try {
-                const buffer = await downloadMediaMessage(msg, 'buffer', {});
+                const buffer = await downloadMediaMessage(
+                  msg,
+                  'buffer',
+                  {},
+                  {
+                    logger: logger as any,
+                    reuploadRequest: this.sock.updateMediaMessage,
+                  },
+                );
                 const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
                 const caption = normalized?.imageMessage?.caption ?? '';
                 const result = await processImage(
@@ -456,6 +464,10 @@ export class WhatsAppChannel implements Channel {
                   msg,
                   'buffer',
                   {},
+                  {
+                    logger: logger as any,
+                    reuploadRequest: this.sock.updateMediaMessage,
+                  },
                 )) as Buffer;
                 const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
                 const caption = normalized?.videoMessage?.caption ?? '';
@@ -517,6 +529,10 @@ export class WhatsAppChannel implements Channel {
                   msg,
                   'buffer',
                   {},
+                  {
+                    logger: logger as any,
+                    reuploadRequest: this.sock.updateMediaMessage,
+                  },
                 );
                 const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
                 const attachDir = path.join(groupDir, 'attachments');
@@ -543,6 +559,11 @@ export class WhatsAppChannel implements Channel {
                   { err, jid: chatJid },
                   'Voice transcription failed',
                 );
+                // Failsafe: persist even if the voice download/transcription
+                // failed, so the agent can ask for a resend instead of staying
+                // silent. Append to preserve any quoted-reply text.
+                const note = `[⚠️ Llegó una nota de voz que no pude descargar/transcribir. Pídele al remitente que la reenvíe.]`;
+                content = content ? `${content}\n\n${note}` : note;
               }
             }
 
@@ -609,7 +630,15 @@ export class WhatsAppChannel implements Channel {
 
                 // Always save the document; emit a content hint so the agent
                 // sees the message even for unknown types (no silent drops).
-                const buffer = await downloadMediaMessage(msg, 'buffer', {});
+                const buffer = await downloadMediaMessage(
+                  msg,
+                  'buffer',
+                  {},
+                  {
+                    logger: logger as any,
+                    reuploadRequest: this.sock.updateMediaMessage,
+                  },
+                );
                 const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
                 const attachDir = path.join(groupDir, 'attachments');
                 fs.mkdirSync(attachDir, { recursive: true });
@@ -681,13 +710,31 @@ export class WhatsAppChannel implements Channel {
                   { err, jid: chatJid },
                   'Failed to download document attachment',
                 );
+                // Failsafe: persist the message even if the media download
+                // failed (e.g. expired/Forbidden WhatsApp media URL), so the
+                // agent can respond and ask for a resend instead of going
+                // silent. Append so a quoted-reply's text is preserved.
+                const fname =
+                  normalized.documentMessage?.fileName || 'documento';
+                const cap = normalized.documentMessage?.caption || '';
+                const note = `[⚠️ No pude descargar el documento adjunto "${fname}" (error de media de WhatsApp). Pídele al remitente que lo reenvíe.]`;
+                const merged = cap ? `${cap}\n\n${note}` : note;
+                content = content ? `${content}\n\n${merged}` : merged;
               }
             }
 
             // Sticker handling — download, save for reuse, and process for vision
             if (normalized?.stickerMessage) {
               try {
-                const buffer = await downloadMediaMessage(msg, 'buffer', {});
+                const buffer = await downloadMediaMessage(
+                  msg,
+                  'buffer',
+                  {},
+                  {
+                    logger: logger as any,
+                    reuploadRequest: this.sock.updateMediaMessage,
+                  },
+                );
                 const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
                 const stickerDir = path.join(groupDir, 'stickers');
                 fs.mkdirSync(stickerDir, { recursive: true });

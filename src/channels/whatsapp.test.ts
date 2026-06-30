@@ -128,6 +128,7 @@ import { WhatsAppChannel, WhatsAppChannelOpts } from './whatsapp.js';
 import { downloadMediaMessage } from '@whiskeysockets/baileys';
 import { getLastGroupSync, updateChatName, setLastGroupSync } from '../db.js';
 import { isImageMessage, processImage } from '../image.js';
+import { isVoiceMessage } from '../transcription.js';
 
 // --- Test helpers ---
 
@@ -906,7 +907,7 @@ describe('WhatsAppChannel', () => {
       );
     });
 
-    it('handles PDF download failure gracefully', async () => {
+    it('persists a fallback note when a document download fails', async () => {
       vi.mocked(downloadMediaMessage).mockRejectedValueOnce(
         new Error('Download failed'),
       );
@@ -935,8 +936,88 @@ describe('WhatsAppChannel', () => {
         },
       ]);
 
-      // Message skipped since content remains empty after failed download
-      expect(opts.onMessage).not.toHaveBeenCalled();
+      // No silent drop: the message is persisted with a note naming the file
+      // so the agent can ask for a resend instead of going silent.
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'registered@g.us',
+        expect.objectContaining({
+          content: expect.stringContaining('No pude descargar el documento'),
+        }),
+      );
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'registered@g.us',
+        expect.objectContaining({
+          content: expect.stringContaining('report.pdf'),
+        }),
+      );
+    });
+
+    it('requests media reupload when downloading a document', async () => {
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-pdf-reupload',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            documentMessage: {
+              mimetype: 'application/pdf',
+              fileName: 'report.pdf',
+            },
+          },
+          pushName: 'Bob',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      // The ctx (4th arg) must carry a reuploadRequest so expired/Forbidden
+      // WhatsApp media gets re-requested from the sender instead of failing.
+      const ctx = vi.mocked(downloadMediaMessage).mock.calls.at(-1)?.[3];
+      expect(ctx).toBeDefined();
+      expect(typeof ctx?.reuploadRequest).toBe('function');
+    });
+
+    it('persists a fallback note when a voice download fails', async () => {
+      vi.mocked(isVoiceMessage).mockReturnValueOnce(true);
+      vi.mocked(downloadMediaMessage).mockRejectedValueOnce(
+        new Error('Download failed'),
+      );
+
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      await triggerMessages([
+        {
+          key: {
+            id: 'msg-voice-fail',
+            remoteJid: 'registered@g.us',
+            participant: '5551234@s.whatsapp.net',
+            fromMe: false,
+          },
+          message: {
+            audioMessage: { mimetype: 'audio/ogg; codecs=opus', ptt: true },
+          },
+          pushName: 'Bob',
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+
+      // No silent drop for voice notes either.
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'registered@g.us',
+        expect.objectContaining({
+          content: expect.stringContaining('nota de voz que no pude'),
+        }),
+      );
     });
   });
 
