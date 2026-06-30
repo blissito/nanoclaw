@@ -277,9 +277,11 @@ Per-group override still works: groups can set `allowedTools` in `container_conf
 
 ## Rate Limit Fallback
 
-When OAuth (Max plan) gets rate-limited (429), the credential proxy retries with API key + `claude-sonnet-4-20250514`. The fallback model must be Agent SDK-compatible (supports reasoning). Haiku doesn't work.
+When OAuth (Max plan) gets rate-limited (429), the credential proxy retries with API key + `claude-sonnet-5` (`FALLBACK_MODEL` in `src/credential-proxy.ts`). The fallback model must be Agent SDK-compatible (accepts the SDK's `thinking: { type: "adaptive" }`). Haiku doesn't work.
 
-**⚠️ Model ID format — DO NOT guess model IDs.** Anthropic model IDs do NOT include the minor version number. Correct: `claude-sonnet-4-20250514`. Wrong: `claude-sonnet-4-6-20250514`, `claude-sonnet-4-5-20241022`. If you need to change the fallback model, verify the ID first:
+**Primary model is also pinned to `claude-sonnet-5`.** `src/container-runner.ts` injects `ANTHROPIC_MODEL` into the container env so the agent runs Sonnet 5 over the Max plan (instead of Claude Code's default). Override per-droplet with `NANOCLAW_MODEL` in `.env`. So primary and 429-fallback are both Sonnet 5.
+
+**⚠️ Model ID format — DO NOT guess model IDs.** Aliases do NOT take a date suffix. Correct: `claude-sonnet-5`, `claude-opus-4-8`. Wrong: `claude-sonnet-5-20250514`, `claude-sonnet-4-6-20250514`. Older dated snapshots (e.g. `claude-sonnet-4-20250514`) keep their date. If you need to change a model, verify the ID first:
 ```bash
 curl -s https://api.anthropic.com/v1/messages \
   -H "x-api-key: $KEY" -H "anthropic-version: 2023-06-01" -H "content-type: application/json" \
@@ -303,7 +305,7 @@ const rc=[];rr.on('data',d=>rc.push(d));rr.on('end',()=>{const t=Buffer.concat(r
 try{const p=JSON.parse(t);console.log(p.content?'✅ '+p.content[0].text:'❌ '+JSON.stringify(p.error));}catch{}
 res.writeHead(rr.statusCode,rr.headers);res.end(t);});});r.write(rb);r.end();});});
 fake.listen(18430,'127.0.0.1',()=>{const fs=require('fs'),key=fs.readFileSync('.env','utf8').match(/ANTHROPIC_API_KEY=(.*)/)[1],
-FM='claude-sonnet-4-20250514',bh={'content-type':'application/json','anthropic-version':'2023-06-01'},
+FM='claude-sonnet-5',bh={'content-type':'application/json','anthropic-version':'2023-06-01'},
 b1=JSON.stringify({model:'claude-opus-4-20250514',max_tokens:30,messages:[{role:'user',content:'Reply: fallback-ok'}]});
 http.request({hostname:'127.0.0.1',port:18430,path:'/v1/messages',method:'POST',
 headers:{...bh,authorization:'Bearer fake',  'content-length':Buffer.byteLength(b1)}},r1=>{const c1=[];r1.on('data',d=>c1.push(d));
