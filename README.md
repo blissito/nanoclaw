@@ -61,7 +61,8 @@ Solo se documenta lo que **cambia o se añade** respecto a `qwibitai/nanoclaw`. 
 - **Tareas programadas** — el agente agenda recordatorios, reportes recurrentes y briefings que llegan al chat por cron.
 - **Coexistencia bot-humano** — pausa automática cuando un operador humano responde en el mismo chat WABA (no se monta encima del humano).
 - **Fecha viva** — `currentDate` se refresca por turno via `UserPromptSubmit` hook; contenedores long-lived no "congelan" la fecha.
-- **Fallback de rate-limit transparente** — si el plan Max recibe 429, reintenta con API key + Sonnet sin que el usuario lo note.
+- **Modelo Claude Sonnet 5** — modelo principal de los agentes, fijado vía `ANTHROPIC_MODEL` sobre el plan Max (configurable por droplet con `NANOCLAW_MODEL`); calidad cercana a Opus en código/agentes a precio intermedio.
+- **Fallback de rate-limit transparente** — si el plan Max recibe 429, reintenta con API key + Claude Sonnet 5 sin que el usuario lo note.
 - **`/compact` desde chat de control** — compactación manual del contexto para sesiones largas sin perder el hilo.
 - **Filtro anti-meta-respuestas** — silencia leaks tipo "(Sin acción…)" para que el agente no rompa la inmersión.
 
@@ -119,7 +120,8 @@ Skills correspondientes: `/add-easybits`, `/add-skydropx`, `/add-ollama-tool`, `
 
 `src/credential-proxy.ts` no existe en upstream. Permite:
 
-- **OAuth Max + API key fallback** — si el plan Max recibe 429, reintenta automáticamente con API key y modelo Sonnet compatible.
+- **Modelo principal fijo** — `src/container-runner.ts` inyecta `ANTHROPIC_MODEL` (default `claude-sonnet-5`, override por droplet con `NANOCLAW_MODEL` en `.env`) para que el agente corra Sonnet 5 sobre el plan Max en vez del default de Claude Code.
+- **OAuth Max + API key fallback** — si el plan Max recibe 429, reintenta automáticamente con API key y `claude-sonnet-5` (`FALLBACK_MODEL`); el modelo de fallback debe aceptar `thinking: { adaptive }` del SDK.
 - **Switch sin rebuild** — comentar/descomentar `CLAUDE_CODE_OAUTH_TOKEN` en `.env` y reiniciar.
 - **Agent Vault (WIP)** — políticas por grupo (rate limit, modelos permitidos, max input tokens), usage logging en ring buffer, endpoints `GET /nanoclaw/vault/usage` y `POST /nanoclaw/vault/policy`.
 
