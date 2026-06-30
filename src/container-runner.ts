@@ -357,6 +357,15 @@ function buildEnvFile(
     envLines.push('CLAUDE_CODE_OAUTH_TOKEN=placeholder');
   }
 
+  // Pin the primary model. Claude Code / the Agent SDK read ANTHROPIC_MODEL and
+  // run it on the active auth (Max/OAuth). Without this, the SDK picks its own
+  // default. Configurable per-droplet via NANOCLAW_MODEL in .env; defaults to
+  // claude-sonnet-5. The 429/529 fallback model is set separately in
+  // credential-proxy.ts (FALLBACK_MODEL).
+  const primaryModel =
+    readEnvFile(['NANOCLAW_MODEL']).NANOCLAW_MODEL || 'claude-sonnet-5';
+  envLines.push(`ANTHROPIC_MODEL=${primaryModel}`);
+
   // Collect all secret env vars into the file
   const ebKey = readEnvFile(['EASYBITS_API_KEY']).EASYBITS_API_KEY;
   if (ebKey) envLines.push(`EASYBITS_API_KEY=${ebKey}`);
