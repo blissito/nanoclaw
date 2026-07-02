@@ -567,6 +567,69 @@ export class WhatsAppChannel implements Channel {
               }
             }
 
+            // Audio FILE (non-ptt): forwarded/shared audio, music, long
+            // recordings. `isVoiceMessage` only matches ptt voice notes, so a
+            // bare audioMessage otherwise falls through every branch and gets
+            // dropped at `if (!content) continue`. Save it and surface a
+            // reference so the agent can transcribe (audio-largo) or describe
+            // (audio-analyze) it on demand — we don't transcribe inline here
+            // because non-ptt audio may be music or very long (would block).
+            if (normalized?.audioMessage && !isVoiceMessage(msg)) {
+              const audioMsg = normalized.audioMessage;
+              try {
+                const audioBuffer = (await downloadMediaMessage(
+                  msg,
+                  'buffer',
+                  {},
+                  {
+                    logger: logger as any,
+                    reuploadRequest: this.sock.updateMediaMessage,
+                  },
+                )) as Buffer;
+                const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
+                const attachDir = path.join(groupDir, 'attachments');
+                fs.mkdirSync(attachDir, { recursive: true });
+                const mime = audioMsg.mimetype || '';
+                const ext = mime.includes('mpeg')
+                  ? 'mp3'
+                  : mime.includes('mp4') ||
+                      mime.includes('m4a') ||
+                      mime.includes('aac')
+                    ? 'm4a'
+                    : mime.includes('wav')
+                      ? 'wav'
+                      : 'ogg';
+                const audioFilename = `audio-${Date.now()}.${ext}`;
+                fs.writeFileSync(
+                  path.join(attachDir, audioFilename),
+                  audioBuffer,
+                );
+                const sizeMB = (audioBuffer.length / (1024 * 1024)).toFixed(1);
+                const seconds = audioMsg.seconds || 0;
+                const durLabel = seconds
+                  ? `~${Math.round(seconds / 60)}min, `
+                  : '';
+                const fileRef = `[Audio file: attachments/${audioFilename} (${durLabel}${sizeMB}MB)]`;
+                const hint = `\n[Audio recibido (no es nota de voz). Para transcribir habla: audio-largo attachments/${audioFilename}. Para describir música/vibe: audio-analyze attachments/${audioFilename}.]`;
+                content = content
+                  ? `${content}\n${fileRef}${hint}`
+                  : `${fileRef}${hint}`;
+                logger.info(
+                  { jid: chatJid, audioFilename, sizeMB, seconds },
+                  'Saved audio file (non-ptt)',
+                );
+              } catch (err) {
+                logger.warn(
+                  { err, jid: chatJid },
+                  'Audio file download failed',
+                );
+                // Failsafe: persist so the agent asks for a resend instead of
+                // staying silent (mirrors the voice-note failsafe above).
+                const note = `[⚠️ Llegó un audio que no pude descargar. Pídele al remitente que lo reenvíe.]`;
+                content = content ? `${content}\n\n${note}` : note;
+              }
+            }
+
             // Document attachment handling (PDF, text files, markdown, etc.)
             if (normalized?.documentMessage) {
               try {
@@ -753,6 +816,32 @@ export class WhatsAppChannel implements Channel {
                 logger.info({ jid: chatJid, filename }, 'Sticker saved');
               } catch (err) {
                 logger.warn({ err, jid: chatJid }, 'Sticker download failed');
+              }
+            }
+
+            // Catch-all: if a non-text message type produced no content (a
+            // media/attachment type we don't specifically handle, a contact,
+            // a poll, etc.), persist a placeholder instead of silently
+            // dropping it — so nothing ever disappears without a trace.
+            if (!content && normalized) {
+              const IGNORE_TYPES = [
+                'senderKeyDistributionMessage',
+                'messageContextInfo',
+                'protocolMessage',
+                'reactionMessage',
+                'pollUpdateMessage',
+                'ephemeralMessage',
+                'viewOnceMessage',
+              ];
+              const msgType = Object.keys(normalized).find(
+                (k) => !IGNORE_TYPES.includes(k),
+              );
+              if (msgType) {
+                content = `[Adjunto no soportado: ${msgType}]`;
+                logger.info(
+                  { jid: chatJid, msgType },
+                  'Unsupported message type — placeholder persisted',
+                );
               }
             }
 

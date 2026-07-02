@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# audio-largo: transcribe long/large SPEECH audio by chunking + OpenAI Whisper.
+# Splits into 10-min mono segments (each well under the API's 25MB cap) and
+# transcribes each, printing the concatenated transcript to stdout.
+# Usage: audio-largo /path/to/audio.(ogg|opus|mp3|m4a|mp4|wav|aac)
+set -euo pipefail
+
+AUDIO="${1:?Usage: audio-largo /path/to/audio.(ogg|mp3|m4a|mp4|wav)}"
+[[ -f "$AUDIO" ]] || { echo "ERROR: file not found: $AUDIO" >&2; exit 1; }
+if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+  echo "ERROR: sin OPENAI_API_KEY — no puedo transcribir." >&2
+  exit 1
+fi
+
+LANG_CODE="${AUDIO_LARGO_LANG:-es}"
+SEG_SECONDS="${AUDIO_LARGO_SEG_SECONDS:-600}" # 10 min per chunk
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+# Exact duration (informative)
+DUR=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$AUDIO" 2>/dev/null || echo "")
+[[ -n "$DUR" ]] && echo "=== Audio: ${AUDIO##*/} (~$(python3 -c "print(round(${DUR}/60,1))") min) ===" >&2
+
+# Split into mono 16k mp3 segments — small + Whisper-friendly.
+ffmpeg -nostdin -loglevel error -i "$AUDIO" -f segment -segment_time "$SEG_SECONDS" \
+  -ac 1 -ar 16000 -c:a libmp3lame -q:a 5 "$WORK/chunk_%03d.mp3"
+
+shopt -s nullglob
+CHUNKS=("$WORK"/chunk_*.mp3)
+if [[ ${#CHUNKS[@]} -eq 0 ]]; then
+  echo "ERROR: ffmpeg no produjo segmentos (¿formato no soportado?)." >&2
+  exit 1
+fi
+
+i=0
+for c in "${CHUNKS[@]}"; do
+  i=$((i + 1))
+  echo ">>> transcribiendo parte $i/${#CHUNKS[@]}..." >&2
+  RESP=$(curl -sS --max-time 300 https://api.openai.com/v1/audio/transcriptions \
+    -H "Authorization: Bearer $OPENAI_API_KEY" \
+    -F file="@$c" -F model=whisper-1 -F language="$LANG_CODE" \
+    -F response_format=text 2>/dev/null || echo "")
+  if [[ -z "$RESP" ]]; then
+    echo "[⚠️ parte $i falló al transcribir]" >&2
+  else
+    printf '%s\n' "$RESP"
+  fi
+done
+
+echo ">>> listo (${#CHUNKS[@]} partes)." >&2
