@@ -205,7 +205,7 @@ function seedFormmyGroupFiles(folder: string): void {
 }
 
 interface InboundMedia {
-  type: 'image' | 'sticker' | 'document' | 'audio';
+  type: 'image' | 'sticker' | 'document' | 'audio' | 'video';
   media_id?: string;
   url?: string;
   media_base64?: string;
@@ -546,6 +546,58 @@ export class FormmyWhatsAppChannel implements Channel {
             groupFolder,
             finalContent,
           );
+        }
+
+        // Structured non-media payloads that Formmy forwards as top-level
+        // fields (location / contacts / reaction). The receiver used to ignore
+        // them entirely, so a bare location pin (content="") hit the 400 below
+        // and was silently dropped. Surface each as a text hint so the agent
+        // sees it — location mirrors the Baileys channel format.
+        const loc = parsed.location as
+          | {
+              latitude?: number;
+              longitude?: number;
+              name?: string;
+              address?: string;
+            }
+          | undefined;
+        if (
+          loc &&
+          typeof loc.latitude === 'number' &&
+          typeof loc.longitude === 'number'
+        ) {
+          const parts = [`[Location: ${loc.latitude},${loc.longitude}]`];
+          if (loc.name) parts.push(`name="${loc.name}"`);
+          if (loc.address) parts.push(`address="${loc.address}"`);
+          parts.push(`https://maps.google.com/?q=${loc.latitude},${loc.longitude}`);
+          const line = parts.join(' ');
+          finalContent = finalContent ? `${finalContent}\n${line}` : line;
+        }
+
+        const cards = parsed.contacts as
+          | Array<{ name?: string; phones?: Array<string | { phone?: string }> }>
+          | undefined;
+        if (Array.isArray(cards) && cards.length > 0) {
+          const block = cards
+            .map((c) => {
+              const phones = Array.isArray(c.phones)
+                ? c.phones
+                    .map((p) => (typeof p === 'string' ? p : p?.phone || ''))
+                    .filter(Boolean)
+                    .join(', ')
+                : '';
+              return `[Contacto: ${c.name || 'sin nombre'}${phones ? ` — ${phones}` : ''}]`;
+            })
+            .join('\n');
+          finalContent = finalContent ? `${finalContent}\n${block}` : block;
+        }
+
+        const rx = parsed.reaction as
+          | { emoji?: string; to_message_id?: string }
+          | undefined;
+        if (rx && rx.emoji) {
+          const line = `[Reacción: ${rx.emoji}]`;
+          finalContent = finalContent ? `${finalContent}\n${line}` : line;
         }
 
         if (!finalContent) {
@@ -1084,6 +1136,22 @@ export class FormmyWhatsAppChannel implements Channel {
             return `${transcript}\n\n${fileRef}`;
           }
           return fileRef;
+        }
+        case 'video': {
+          const attachDir = path.join(groupDir, 'attachments');
+          fs.mkdirSync(attachDir, { recursive: true });
+          const mime = media.mime_type || '';
+          const ext = mime.includes('3gpp')
+            ? '.3gp'
+            : mime.includes('quicktime')
+              ? '.mov'
+              : '.mp4';
+          const filename = `video-${Date.now()}${ext}`;
+          fs.writeFileSync(path.join(attachDir, filename), buffer);
+          const sizeMB = (buffer.length / (1024 * 1024)).toFixed(1);
+          const caption = media.caption || existingContent || '';
+          const ref = `[Video: attachments/${filename} (${sizeMB}MB)]`;
+          return caption ? `${ref}\n${caption}` : ref;
         }
         default:
           return existingContent || `[Media: ${media.type}]`;
