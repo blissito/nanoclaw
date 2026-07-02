@@ -324,6 +324,17 @@ r2.on('end',()=>{fake.close();process.exit(r2.statusCode===200?0:1);});}).end(b2
 
 Config: `FALLBACK_MODEL` in `src/credential-proxy.ts`. Fatal patterns in `src/index.ts` (`fatalContainerPatterns`). Cooldown in `src/group-queue.ts`.
 
+## WhatsApp inbound audio & media forwards (fixed 2026-07-02)
+
+**The bug (Baileys / `src/channels/whatsapp.ts`):** a forwarded/shared audio **file** arrives as a bare `audioMessage` with `ptt` false/undefined. `isVoiceMessage()` matches **only** `audioMessage.ptt === true` (push-to-talk notes), and the `documentMessage` branch never fires for a native `audioMessage`. So `content` stayed `''` and the message was dropped at `if (!content) continue;` — **no log, no attachment, no failsafe**. Symptom: agent keeps replying "no veo ningún audio" to a forwarded audio (incident: DESCTI_Innovación, 50-min forward). It is **not** RAM/OOM — the media never reached the pipeline.
+
+**The fix (commit `c28e50b`, host code — `npm run build` + restart, no image rebuild):**
+- New branch after the voice branch: `if (normalized?.audioMessage && !isVoiceMessage(msg))` → download + save to `attachments/audio-<ts>.<ext>`, surface `[Audio file: …]` + a hint (`audio-largo` to transcribe speech, `audio-analyze` to describe music). Does **not** transcribe inline (non-ptt audio may be music or 50+ min → would block the socket). Failsafe mirrors the voice path.
+- **Catch-all anti-drop** just before `if (!content) continue;`: any unhandled non-text type persists `[Adjunto no soportado: <tipo>]` instead of vanishing. So nothing is ever dropped silently again.
+- **Skill `audio-largo`** (`container/skills/audio-largo/`): transcribes long/large speech by splitting with ffmpeg into 10-min mono segments and running each through OpenAI Whisper (dodges the API's 25MB cap). Container has ffmpeg but **not** whisper-cli, so it uses the API; `OPENAI_API_KEY` is already injected (`container-runner.ts:373`). Syncs at container spawn — no rebuild.
+
+**WABA (Formmy) channels are NOT affected — verified.** The WABA path (`src/channels/formmy-whatsapp.ts` `processMedia`) never had this bug: Meta Cloud API delivers media **pre-classified by `type`** (`image`/`audio`/`document`/`sticker`) with no ptt-vs-file distinction, so a forwarded audio arrives as `type:'audio'` and is saved + transcribed like any audio. Every branch saves + returns a hint; the `default` case and the catch return `[Media: <type> …]` placeholders, and `if (!jid || (!content && !media))` 400s with a diagnostic `warn` — **nothing is silently dropped on our side**. Two caveats: (1) it depends on the Formmy bridge actually forwarding the media payload (if Formmy ships `content:"[Unsupported…]"` for a type it can't parse, that's upstream — logged by the `non-standard payload` diagnostic at `formmy-whatsapp.ts:445`); (2) `InboundMedia.type` has no `video` — a forwarded **video** hits the `default` case → `[Media: video]` placeholder (surfaced, buffer not saved). Not a silent drop, but the only soft spot in the WABA media path.
+
 ## Voice / TTS (Kokoro local)
 
 The `voice` skill (`container/skills/voice/text-to-speech`) does TTS with **Kokoro running locally** (`kokoro-onnx`, free, no API key) and **OpenAI `onyx` as fallback**. ElevenLabs was the old primary but its credits are exhausted; the script no longer calls it (the `clone-voice` flow was ElevenLabs-only and is currently unavailable).
