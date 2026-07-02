@@ -569,13 +569,18 @@ export class FormmyWhatsAppChannel implements Channel {
           const parts = [`[Location: ${loc.latitude},${loc.longitude}]`];
           if (loc.name) parts.push(`name="${loc.name}"`);
           if (loc.address) parts.push(`address="${loc.address}"`);
-          parts.push(`https://maps.google.com/?q=${loc.latitude},${loc.longitude}`);
+          parts.push(
+            `https://maps.google.com/?q=${loc.latitude},${loc.longitude}`,
+          );
           const line = parts.join(' ');
           finalContent = finalContent ? `${finalContent}\n${line}` : line;
         }
 
         const cards = parsed.contacts as
-          | Array<{ name?: string; phones?: Array<string | { phone?: string }> }>
+          | Array<{
+              name?: string;
+              phones?: Array<string | { phone?: string }>;
+            }>
           | undefined;
         if (Array.isArray(cards) && cards.length > 0) {
           const block = cards
