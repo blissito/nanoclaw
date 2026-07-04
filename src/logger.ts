@@ -13,7 +13,11 @@ export const logger = pino({
 // same pending send → crash loop. Swallow this transient network class; keep
 // exiting on everything else so real bugs still restart.
 function isTransientSocketError(err: unknown): boolean {
-  const e = err as { message?: unknown; code?: unknown; cause?: { code?: unknown } };
+  const e = err as {
+    message?: unknown;
+    code?: unknown;
+    cause?: { code?: unknown };
+  };
   const msg = typeof e?.message === 'string' ? e.message : '';
   const code = typeof e?.code === 'string' ? e.code : '';
   const causeCode = typeof e?.cause?.code === 'string' ? e.cause.code : '';
