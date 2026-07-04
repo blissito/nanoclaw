@@ -50,6 +50,40 @@ const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 // Latin letters incl. accented (À-ɏ covers Western European + extended Latin)
 const MENTION_REGEX = /@[\wÀ-ɏ]+/g;
 
+// Download a remote URL to a Buffer with a hard timeout and size cap. We fetch
+// it ourselves — instead of handing the URL to Baileys' { image: { url } },
+// which downloads via undici and, if the origin drops the stream mid-body,
+// throws an ASYNC socket error that escapes the caller's try/catch and crashes
+// the process. Doing the fetch here keeps the failure inside a synchronous
+// await we can catch. Throws on timeout, non-2xx, or over-size.
+async function downloadToBuffer(
+  url: string,
+  { timeoutMs = 30_000, maxBytes = 16 * 1024 * 1024 } = {},
+): Promise<Buffer> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    }
+    const declared = Number(res.headers.get('content-length'));
+    if (declared && declared > maxBytes) {
+      throw new Error(`content-length ${declared} exceeds cap ${maxBytes}`);
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > maxBytes) {
+      throw new Error(`downloaded ${buf.length} bytes exceeds cap ${maxBytes}`);
+    }
+    if (buf.length === 0) {
+      throw new Error('downloaded 0 bytes (empty/truncated response)');
+    }
+    return buf;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export interface WhatsAppChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
@@ -1043,13 +1077,44 @@ export class WhatsAppChannel implements Channel {
       logger.info({ jid, filePath }, 'WA disconnected, image queued');
       return;
     }
+    // Remote URLs: download to a Buffer ourselves (see downloadToBuffer) so a
+    // broken/truncated origin fails inside this try/catch instead of throwing
+    // an async undici error that crashes the process. For images, sending a
+    // buffer is equivalent to { url } at the WhatsApp CDN (the "url gives
+    // better metadata" note applies to documents, not images). On failure we
+    // report to the chat rather than re-queueing — re-queueing would re-trigger
+    // the same broken download.
+    if (isUrl) {
+      let buffer: Buffer;
+      try {
+        buffer = await downloadToBuffer(filePath);
+      } catch (err) {
+        logger.warn(
+          { jid, filePath, err },
+          'Failed to download image URL, reporting to chat',
+        );
+        await this.sendMessage(
+          jid,
+          '⚠️ No pude adjuntar la imagen: el storage remoto (EasyBits) está fallando ahora mismo. Intenta de nuevo en un rato.',
+        );
+        return;
+      }
+      try {
+        await this.sock.sendMessage(jid, { image: buffer, caption });
+        logger.info({ jid, filePath, isUrl }, 'Image sent');
+      } catch (err) {
+        // Don't re-queue: the queue drain does fs.readFileSync(filePath), which
+        // would fail on a URL. The download already succeeded, so this is a WA
+        // send fault; drop it rather than poison the queue.
+        logger.warn({ jid, filePath, err }, 'Failed to send downloaded image');
+      }
+      return;
+    }
     try {
-      // Baileys downloads remote URLs itself when handed { image: { url } };
-      // for local files we read the buffer as before.
-      const content = isUrl
-        ? { image: { url: filePath }, caption }
-        : { image: fs.readFileSync(filePath), caption };
-      await this.sock.sendMessage(jid, content);
+      await this.sock.sendMessage(jid, {
+        image: fs.readFileSync(filePath),
+        caption,
+      });
       logger.info({ jid, filePath, isUrl }, 'Image sent');
     } catch (err) {
       this.outgoingQueue.push({ kind: 'image', jid, filePath, caption });
