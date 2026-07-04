@@ -853,6 +853,98 @@ export class WhatsAppChannel implements Channel {
               }
             }
 
+            // Quoted MEDIA (reply-to): the media of a replied-to message lives
+            // in contextInfo.quotedMessage, NOT at the top level — the
+            // isImageMessage/isVideoMessage checks above only inspect the top
+            // level, so a reply to an image/video was surfaced as text only and
+            // the agent answered "no me llegó tu imagen de referencia"
+            // (incident ghosty-0 2026-07-04). Download the quoted media from a
+            // synthetic WAMessage (its mediaKey + url travel inside the quoted
+            // content) and append it so vision + file refs reach the agent.
+            // Guarded so we don't re-download when the top-level message already
+            // carries the same media type (an image-reply-to-image handles its
+            // own top-level image). Runs last so nothing overwrites the result.
+            if (quoted) {
+              try {
+                const quotedNorm = normalizeMessageContent(quoted);
+                const groupDir = path.join(GROUPS_DIR, groups[chatJid].folder);
+                const synthetic = {
+                  key: {
+                    remoteJid: rawJid,
+                    id: contextInfo?.stanzaId || undefined,
+                    participant: contextInfo?.participant || undefined,
+                    fromMe: false,
+                  },
+                  message: quoted,
+                } as unknown as typeof msg;
+
+                if (quotedNorm?.imageMessage && !isImageMessage(msg)) {
+                  const buffer = (await downloadMediaMessage(
+                    synthetic,
+                    'buffer',
+                    {},
+                    {
+                      logger: logger as any,
+                      reuploadRequest: this.sock.updateMediaMessage,
+                    },
+                  )) as Buffer;
+                  const cap = quotedNorm.imageMessage.caption ?? '';
+                  const result = await processImage(buffer, groupDir, cap);
+                  if (result) {
+                    content =
+                      `${content}\n\n[Imagen citada]\n${result.content}`.trim();
+                    logger.info({ jid: chatJid }, 'Downloaded quoted image');
+                  }
+                } else if (quotedNorm?.videoMessage && !isVideoMessage(msg)) {
+                  const buffer = (await downloadMediaMessage(
+                    synthetic,
+                    'buffer',
+                    {},
+                    {
+                      logger: logger as any,
+                      reuploadRequest: this.sock.updateMediaMessage,
+                    },
+                  )) as Buffer;
+                  const cap = quotedNorm.videoMessage.caption ?? '';
+                  const framePath = await extractVideoFrame(buffer, groupDir);
+                  const frameBuffer = fs.readFileSync(framePath);
+                  fs.unlinkSync(framePath);
+                  const result = await processImage(frameBuffer, groupDir, cap);
+                  if (result) {
+                    content =
+                      `${content}\n\n[Video citado — frame]\n${result.content}`.trim();
+                    logger.info(
+                      { jid: chatJid },
+                      'Downloaded quoted video frame',
+                    );
+                  }
+                } else {
+                  // Other quoted media (document/audio/sticker): surface a note
+                  // so the agent knows a non-text attachment was referenced,
+                  // even though we don't inline it. Reply-to-text hits none of
+                  // these → qType stays '' → no spurious note.
+                  const qType = quotedNorm?.documentMessage
+                    ? `documento "${quotedNorm.documentMessage.fileName || 'archivo'}"`
+                    : quotedNorm?.audioMessage
+                      ? 'audio/nota de voz'
+                      : quotedNorm?.stickerMessage
+                        ? 'sticker'
+                        : '';
+                  if (qType) {
+                    content =
+                      `${content}\n\n[Adjunto citado: ${qType} — pídelo de nuevo si necesitas verlo]`.trim();
+                  }
+                }
+              } catch (err) {
+                logger.warn(
+                  { err, jid: chatJid },
+                  'Quoted media download failed',
+                );
+                content =
+                  `${content}\n\n[⚠️ La respuesta citaba un adjunto que no pude descargar (media de WhatsApp posiblemente expirada). Pídele al remitente que lo reenvíe.]`.trim();
+              }
+            }
+
             // Catch-all: if a non-text message type produced no content (a
             // media/attachment type we don't specifically handle, a contact,
             // a poll, etc.), persist a placeholder instead of silently
