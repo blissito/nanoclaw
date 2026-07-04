@@ -339,6 +339,19 @@ Config: `FALLBACK_MODEL` in `src/credential-proxy.ts`. Fatal patterns in `src/in
 
 Remaining, deferred (Formmy-side, needs confirmation they use it): **interactive button/list replies** are excluded from the channel route (`webhook.tsx:603` `message.type !== "interactive"`) and never reach NanoClaw — the only real bridge-side hole. `button`/`order`/`system`/`unsupported` still arrive as opaque `unhandled` envelopes; `referral`/CTWA is synthesized into `content` text (structured object not forwarded). If Formmy can't parse a type it ships `content:"[Unsupported…]"` (logged by the `non-standard payload` diagnostic at `formmy-whatsapp.ts:445`).
 
+## WhatsApp quoted / reply-to media (fixed 2026-07-04, commit `50195d8`)
+
+**The bug (Baileys / `src/channels/whatsapp.ts`):** when a user **replies quoting** a message that carried an image/video, the media lives in `contextInfo.quotedMessage.imageMessage`, **not** at the top level. `isImageMessage(msg)` / `isVideoMessage(msg)` (`image.ts`) only inspect `msg.message?.imageMessage` — the top level — so a reply-to-image top-levels as an `extendedTextMessage` and the image was **never downloaded**; only the quoted **text** was surfaced (`> name: caption`). Symptom: agent replies "no me llegó tu imagen de referencia visible en el contexto" to a quoted image (incident ghosty-0 2026-07-04, Ghosty ↔ Brenda, slide reference). **Forwards were never affected** — a forwarded image arrives as a top-level `imageMessage` (with `contextInfo.isForwarded`) and `isImageMessage` catches it.
+
+**The fix (host code — `npm run build` + restart, no image rebuild):** a new block runs **last** in the `messages.upsert` pipeline (right before the catch-all, so nothing overwrites it). When `contextInfo.quotedMessage` exists it builds a **synthetic `WAMessage`** (`{ key: { remoteJid, id: stanzaId, participant, fromMe:false }, message: quoted }`) — the quoted media's `mediaKey` + `url` travel inside the quoted content, so `downloadMediaMessage(synthetic, …)` works with the same `reuploadRequest`. Then:
+- **quoted image** → `processImage` → appended as `[Imagen citada]\n[Image: attachments/…]` (the `[Image: …]` marker is what `parseImageReferences` in `index.ts` injects into vision).
+- **quoted video** → first-frame via `extractVideoFrame` → `[Video citado — frame]\n[Image: …]`.
+- **quoted document/audio/sticker** → concise note `[Adjunto citado: …]` (not inlined). Reply-to-**text** hits none of these → no spurious note (quoted text is already handled earlier at ~L442).
+- Guarded with `!isImageMessage(msg)` / `!isVideoMessage(msg)` so an image-reply-to-image doesn't double-download (top-level handles its own).
+- Failsafe: expired quoted media → `[⚠️ … no pude descargar … Pídele al remitente que lo reenvíe]` instead of silence.
+
+**WABA (Formmy) path does NOT have this fix** — Meta Cloud API delivers a reply as a `context.id` reference to the prior message (no embedded media), so quoted-media re-download would be a Formmy-bridge concern, not a Baileys one. Out of scope here.
+
 ## Voice / TTS (Kokoro local)
 
 The `voice` skill (`container/skills/voice/text-to-speech`) does TTS with **Kokoro running locally** (`kokoro-onnx`, free, no API key) and **OpenAI `onyx` as fallback**. ElevenLabs was the old primary but its credits are exhausted; the script no longer calls it (the `clone-voice` flow was ElevenLabs-only and is currently unavailable).
