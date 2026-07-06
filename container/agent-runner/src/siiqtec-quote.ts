@@ -108,8 +108,11 @@ function todayMx(): string {
 }
 
 class QuoteError extends Error {
-  constructor(msg: string) {
+  /** True when the failure is an infra/transient hiccup worth retrying (vs a logical/validation error). */
+  readonly transient: boolean;
+  constructor(msg: string, transient = false) {
     super(`siiqtec_quote_pdf: ${msg}`);
+    this.transient = transient;
   }
 }
 
@@ -456,6 +459,54 @@ ${mpCard}
 </section>`;
 }
 
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Classify a JSON-RPC error object from easybits-mcp as transient (worth retrying)
+ * or fatal. Internal server errors (-32603) and network/5xx-flavoured messages are
+ * transient; validation/method errors (e.g. -32602) are fatal — retrying won't help.
+ */
+function isTransientMcpError(err: unknown): boolean {
+  const e = err as { code?: number; message?: string } | null;
+  if (!e || typeof e !== 'object') return false;
+  if (e.code === -32603) return true;
+  return /\b5\d\d\b|timeout|etimedout|econnreset|econnrefused|socket hang up|overloaded|unavailable|temporar/i.test(
+    e.message || '',
+  );
+}
+
+/**
+ * Call easybits-mcp with bounded retries on transient failures. The heavy
+ * `export_document` render is intermittently flaky under load (observed 2026-07-06:
+ * proxy dropping the connection → "no result"); a brief blip shouldn't cost the
+ * customer their quote. Fatal errors (bad args) fail on the first attempt.
+ * Exponential backoff with jitter; each retry is logged to stderr for journalctl.
+ */
+async function easybitsCallResilient(
+  method: string,
+  params: unknown,
+  attempts = 3,
+): Promise<unknown> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await easybitsCall(method, params);
+    } catch (e) {
+      lastErr = e;
+      const transient = e instanceof QuoteError && e.transient;
+      if (!transient || attempt === attempts) break;
+      const delay = Math.min(4000, 1000 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 500);
+      console.error(
+        `[siiqtec_quote_pdf] ${method} transient failure (attempt ${attempt}/${attempts}): ${
+          (e as Error).message
+        } — retrying in ${delay}ms`,
+      );
+      await sleep(delay);
+    }
+  }
+  throw lastErr;
+}
+
 /** Talk to easybits-mcp via stdio JSON-RPC. Spawns a fresh subprocess per call. */
 async function easybitsCall(method: string, params: unknown): Promise<unknown> {
   const messages = [
@@ -469,13 +520,13 @@ async function easybitsCall(method: string, params: unknown): Promise<unknown> {
     let stderr = '';
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-      reject(new QuoteError(`easybits-mcp ${method} timed out after 60s`));
+      reject(new QuoteError(`easybits-mcp ${method} timed out after 60s`, true));
     }, 60000);
     child.stdout.on('data', (d) => (stdout += d.toString()));
     child.stderr.on('data', (d) => (stderr += d.toString()));
     child.on('error', (e) => {
       clearTimeout(timer);
-      reject(new QuoteError(`easybits-mcp spawn failed: ${e.message}`));
+      reject(new QuoteError(`easybits-mcp spawn failed: ${e.message}`, true));
     });
     child.on('close', () => {
       clearTimeout(timer);
@@ -490,13 +541,15 @@ async function easybitsCall(method: string, params: unknown): Promise<unknown> {
         }
       }
       if (!last) {
-        reject(new QuoteError(`easybits-mcp ${method}: no result. stderr=${stderr.slice(0, 300)}`));
+        // Subprocess closed without emitting an id:2 response — proxy dropped the
+        // connection or the server 5xx'd. This is the observed transient failure mode.
+        reject(new QuoteError(`easybits-mcp ${method}: no result. stderr=${stderr.slice(0, 300)}`, true));
         return;
       }
       try {
         const resp = JSON.parse(last);
         if (resp.error) {
-          reject(new QuoteError(`easybits-mcp ${method} error: ${JSON.stringify(resp.error)}`));
+          reject(new QuoteError(`easybits-mcp ${method} error: ${JSON.stringify(resp.error)}`, isTransientMcpError(resp.error)));
           return;
         }
         const content = resp.result?.content || [];
@@ -507,7 +560,8 @@ async function easybitsCall(method: string, params: unknown): Promise<unknown> {
           resolve(text);
         }
       } catch (e) {
-        reject(new QuoteError(`easybits-mcp ${method}: parse failed: ${(e as Error).message}`));
+        // A partial/truncated line means the stream was cut mid-response — transient.
+        reject(new QuoteError(`easybits-mcp ${method}: parse failed: ${(e as Error).message}`, true));
       }
     });
     child.stdin.write(messages.map((m) => JSON.stringify(m)).join('\n') + '\n');
@@ -625,13 +679,17 @@ export async function runSiiqtecQuotePdf(input: QuoteInput): Promise<QuoteResult
     html: renderDepositPage({ folio: input.folio, total: totals.total, paymentUrl }),
   });
 
-  const created = (await easybitsCall('create_document', {
+  const created = (await easybitsCallResilient('create_document', {
     name: `COT-${input.folio} — ${input.cliente.nombre}`,
     sections,
   })) as { id?: string };
   if (!created?.id) throw new QuoteError('create_document returned no id');
 
-  const exported = (await easybitsCall('export_document', { documentId: created.id, as: 'pdf' })) as {
+  // Retries land on the SAME documentId — no re-render on our side.
+  const exported = (await easybitsCallResilient('export_document', {
+    documentId: created.id,
+    as: 'pdf',
+  })) as {
     file?: { url?: string };
   };
   const url = exported?.file?.url;
