@@ -263,14 +263,17 @@ async function sendStandByImage(
       await channel.sendImage(
         chatJid,
         STANDBY_IMAGE_PATH,
-        'Continuamos con atención personalizada',
+        'Creo que rompí mi servidor 😅 ya lo estoy arreglando',
       );
       return;
     } catch (err) {
       logger.warn({ err, chatJid }, 'sendImage failed, falling back to text');
     }
   }
-  await channel.sendMessage(chatJid, 'Continuamos con atención personalizada');
+  await channel.sendMessage(
+    chatJid,
+    'Creo que rompí mi servidor 😅 ya lo estoy arreglando',
+  );
 }
 
 function loadState(): void {
