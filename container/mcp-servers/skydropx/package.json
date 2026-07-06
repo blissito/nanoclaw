@@ -1,16 +1,14 @@
 {
-  "name": "skydropx-mcp",
-  "version": "0.1.0",
+  "name": "nanoclaw-skydropx-mcp",
+  "version": "1.0.0",
   "type": "module",
   "description": "MCP server para la API de Skydropx PRO — cotizar, crear, rastrear y cancelar envíos en México (FedEx, DHL, Estafeta, J&T, Sendex y más).",
   "main": "dist/index.js",
   "bin": {
-    "skydropx-mcp": "dist/index.js"
+    "nanoclaw-skydropx-mcp": "dist/index.js"
   },
   "files": [
-    "dist",
-    "README.md",
-    "LICENSE"
+    "dist"
   ],
   "scripts": {
     "build": "tsc && chmod +x dist/index.js",
@@ -49,5 +47,8 @@
   "devDependencies": {
     "@types/node": "^22.10.7",
     "typescript": "^5.7.3"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

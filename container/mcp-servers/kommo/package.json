@@ -15,5 +15,14 @@
   "devDependencies": {
     "@types/node": "^22.10.7",
     "typescript": "^5.7.3"
+  },
+  "bin": {
+    "nanoclaw-kommo-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }
