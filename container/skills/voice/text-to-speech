@@ -20,6 +20,16 @@ declare -A VOICES=(
   [santa]="em_santa"
   [alex]="em_alex"
   [dora]="ef_dora"
+  # US English (Kokoro American voices) — lang auto-selected below
+  [us]="am_michael"
+  [michael]="am_michael"
+  [liam]="am_liam"
+  [adam]="am_adam"
+  [eric]="am_eric"
+  [bella]="af_bella"
+  [heart]="af_heart"
+  [nova]="af_nova"
+  [sarah]="af_sarah"
   # legacy male -> em_alex (default stays santa)
   [antonio]="em_alex"
   [jc]="em_alex"
@@ -57,7 +67,8 @@ from kokoro_onnx import Kokoro
 import soundfile as sf
 text, voice, out = sys.argv[1], sys.argv[2], sys.argv[3]
 k = Kokoro(os.environ["KOKORO_MODEL"], os.environ["KOKORO_VOICES"])
-samples, sr = k.create(text, voice=voice, speed=1.0, lang="es")
+lang = "en-us" if voice[:1] == "a" else ("en-gb" if voice[:1] == "b" else "es")
+samples, sr = k.create(text, voice=voice, speed=1.0, lang=lang)
 sf.write(out, samples, sr)
 PY
   then
