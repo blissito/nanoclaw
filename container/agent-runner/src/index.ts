@@ -132,7 +132,7 @@ function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
 }
 
-function getSessionSummary(sessionId: string, transcriptPath: string): string | null {
+function getSessionSummary(sessionId: string | undefined, transcriptPath: string): string | null {
   const projectDir = path.dirname(transcriptPath);
   const indexPath = path.join(projectDir, 'sessions-index.json');
 
@@ -155,46 +155,56 @@ function getSessionSummary(sessionId: string, transcriptPath: string): string | 
 }
 
 /**
+ * Archive the full transcript to conversations/ as markdown.
+ * Returns the archive path + parsed messages, or null if there was nothing to
+ * archive. Shared by the PreCompact hook and the session auto-rotation path.
+ */
+function archiveTranscriptToFile(
+  transcriptPath: string | undefined,
+  sessionId: string | undefined,
+  assistantName?: string,
+): { filePath: string; messages: ParsedMessage[] } | null {
+  if (!transcriptPath || !fs.existsSync(transcriptPath)) {
+    log('No transcript found for archiving');
+    return null;
+  }
+
+  const content = fs.readFileSync(transcriptPath, 'utf-8');
+  const messages = parseTranscript(content);
+  if (messages.length === 0) {
+    log('No messages to archive');
+    return null;
+  }
+
+  const summary = getSessionSummary(sessionId, transcriptPath);
+  const name = summary ? sanitizeFilename(summary) : generateFallbackName();
+
+  const conversationsDir = '/workspace/group/conversations';
+  fs.mkdirSync(conversationsDir, { recursive: true });
+
+  const date = new Date().toISOString().split('T')[0];
+  const filePath = path.join(conversationsDir, `${date}-${name}.md`);
+
+  const markdown = formatTranscriptMarkdown(messages, summary, assistantName);
+  fs.writeFileSync(filePath, markdown);
+
+  return { filePath, messages };
+}
+
+/**
  * Archive the full transcript to conversations/ before compaction.
  */
 function createPreCompactHook(assistantName?: string): HookCallback {
   return async (input, _toolUseId, _context) => {
     const preCompact = input as PreCompactHookInput;
-    const transcriptPath = preCompact.transcript_path;
-    const sessionId = preCompact.session_id;
-
-    if (!transcriptPath || !fs.existsSync(transcriptPath)) {
-      log('No transcript found for archiving');
-      return {};
-    }
-
     try {
-      const content = fs.readFileSync(transcriptPath, 'utf-8');
-      const messages = parseTranscript(content);
-
-      if (messages.length === 0) {
-        log('No messages to archive');
-        return {};
-      }
-
-      const summary = getSessionSummary(sessionId, transcriptPath);
-      const name = summary ? sanitizeFilename(summary) : generateFallbackName();
-
-      const conversationsDir = '/workspace/group/conversations';
-      fs.mkdirSync(conversationsDir, { recursive: true });
-
-      const date = new Date().toISOString().split('T')[0];
-      const filename = `${date}-${name}.md`;
-      const filePath = path.join(conversationsDir, filename);
-
-      const markdown = formatTranscriptMarkdown(messages, summary, assistantName);
-      fs.writeFileSync(filePath, markdown);
-
-      log(`Archived conversation to ${filePath}`);
+      const archived = archiveTranscriptToFile(
+        preCompact.transcript_path, preCompact.session_id, assistantName,
+      );
+      if (archived) log(`Archived conversation to ${archived.filePath}`);
     } catch (err) {
       log(`Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`);
     }
-
     return {};
   };
 }
@@ -260,6 +270,49 @@ const readAttachmentGuardHook: HookCallback = async (input) => {
       hookEventName: 'PreToolUse' as const,
       permissionDecision: 'deny' as const,
       permissionDecisionReason: reason,
+    },
+  };
+};
+
+const EXTRACT_DUMP_DENY_REASON =
+  'No vuelques el texto completo de un documento al contexto — engorda la sesión (que es ' +
+  'append-only) y la vuelve lenta. Redirige la extracción a un ARCHIVO y procésalo por partes: ' +
+  '`office-reader <file> > /workspace/group/<nombre>.txt` (o `pdf-reader extract <file> ' +
+  '--pages 1-20 > /workspace/group/<nombre>.txt`), y luego grep/sed/head sobre el .txt. Si solo ' +
+  'quieres asomarte, acótalo con `| head`, `| grep` o `--pages`.';
+
+/**
+ * Block unbounded document-extraction dumps to stdout (office-reader /
+ * pdf-reader extract). Their full output lands verbatim in the transcript
+ * tool_result, and repeated .docx/.pdf extractions are what balloon a session
+ * to tens of MB (incident 2026-07-08, ghosty_legal: 24MB session → resume
+ * hangs). PostToolUse can't rewrite Bash stdout (updatedMCPToolOutput is
+ * MCP-only), so this is a deterministic PreToolUse backstop — same pattern as
+ * readAttachmentGuardHook. Allowed when the output is bounded: redirected to a
+ * file (`>`), piped through head/tail/grep/sed/awk/wc, or page-limited.
+ */
+const bashExtractGuardHook: HookCallback = async (input) => {
+  const pre = input as PreToolUseHookInput;
+  if (pre.tool_name !== 'Bash') return {};
+  const cmd = (pre.tool_input as { command?: unknown })?.command;
+  if (typeof cmd !== 'string') return {};
+
+  const usesExtractor = /\boffice-reader\b/.test(cmd) || /\bpdf-reader\s+extract\b/.test(cmd);
+  if (!usesExtractor) return {};
+
+  const isBounded =
+    />\s*\S+/.test(cmd) ||
+    /\|\s*(head|tail|grep|sed|awk|wc)\b/.test(cmd) ||
+    /--pages\b/.test(cmd) ||
+    /--out\b/.test(cmd);
+  if (isBounded) return {};
+
+  log(`Blocked unbounded doc extraction to context: ${cmd.slice(0, 80)}`);
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse' as const,
+      permissionDecision: 'deny' as const,
+      permissionDecisionReason: EXTRACT_DUMP_DENY_REASON,
     },
   };
 };
@@ -790,7 +843,7 @@ async function runQuery(
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
         UserPromptSubmit: [{ hooks: [dateInjectHook] }],
-        PreToolUse: [{ hooks: [readAttachmentGuardHook] }],
+        PreToolUse: [{ hooks: [readAttachmentGuardHook, bashExtractGuardHook] }],
       },
     }
   })) {
@@ -1118,75 +1171,99 @@ async function main(): Promise<void> {
   }
   // --- End slash command handling ---
 
-  // --- EXPERIMENT: auto-compact bloated sessions before first query ---
-  // When a session .jsonl exceeds this size, we force /compact before
-  // the real prompt so the model doesn't choke on megabytes of history.
-  // 4MB observed empirically: sessions >6MB cause 30-min hangs on resume
-  // (container init succeeds but no streaming output before SIGKILL).
-  const SESSION_SIZE_COMPACT_THRESHOLD = 4 * 1024 * 1024; // 4MB (jsonl is append-only and never shrinks after compact)
+  // --- Auto-rotate bloated sessions to a fresh session before first query ---
+  // The .jsonl transcript is append-only: /compact never shrinks it (it appends
+  // a summary), and re-reading tens of MB on resume causes 30-min hangs before
+  // SIGKILL (incident 2026-07-08, ghosty_legal: 24MB session, every turn re-
+  // forced a no-op /compact + rate-limited). Instead of compacting, we ARCHIVE
+  // the transcript to markdown, build a short carry-forward summary from the
+  // recent tail WITHOUT resuming (so this path never touches the big file), and
+  // start a FRESH session seeded with that summary. The old .jsonl is orphaned
+  // and reclaimed by the host maintenance sweep (scripts/session-orphan-sweep.sh).
+  const SESSION_SIZE_ROTATE_THRESHOLD = 4 * 1024 * 1024; // 4MB
   if (sessionId) {
     const sessionFile = path.join(
       os.homedir(), '.claude', 'projects', '-workspace-group', `${sessionId}.jsonl`,
     );
     try {
       const stat = fs.statSync(sessionFile);
-      if (stat.size > SESSION_SIZE_COMPACT_THRESHOLD) {
+      if (stat.size > SESSION_SIZE_ROTATE_THRESHOLD) {
         const sizeMB = (stat.size / 1024 / 1024).toFixed(1);
-        log(`Session file is ${sizeMB}MB (>${SESSION_SIZE_COMPACT_THRESHOLD / 1024 / 1024}MB) — forcing /compact before query`);
+        log(`Session file is ${sizeMB}MB (>${SESSION_SIZE_ROTATE_THRESHOLD / 1024 / 1024}MB) — rotating to a fresh session`);
 
-        // Notify user before compacting
+        // Notify user before rotating
         const notifyData = {
           type: 'text',
           chatJid: containerInput.chatJid,
-          text: `_Compactando sesión (${sizeMB}MB)… esto toma unos minutos._ ⏳`,
+          text: `_Renovando sesión (${sizeMB}MB) para mantener la velocidad… un momento._ ⏳`,
           groupFolder: containerInput.groupFolder,
           timestamp: new Date().toISOString(),
         };
         fs.mkdirSync(IPC_MESSAGES_DIR, { recursive: true });
-        const notifyFile = path.join(IPC_MESSAGES_DIR, `${Date.now()}-compact-notify.json`);
+        const notifyFile = path.join(IPC_MESSAGES_DIR, `${Date.now()}-rotate-notify.json`);
         fs.writeFileSync(notifyFile, JSON.stringify(notifyData));
 
-        for await (const message of query({
-          prompt: '/compact',
-          options: {
-            cwd: '/workspace/group',
-            resume: sessionId,
-            systemPrompt: undefined,
-            allowedTools: [],
-            env: sdkEnv,
-            permissionMode: 'bypassPermissions' as const,
-            allowDangerouslySkipPermissions: true,
-            settingSources: ['project', 'user'] as const,
-            hooks: {
-              PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
-            },
-          },
-        })) {
-          if (message.type === 'system' && message.subtype === 'init') {
-            sessionId = message.session_id;
-            log(`Session after auto-compact: ${sessionId}`);
+        // Archive the full transcript to markdown (does NOT resume the session).
+        const archived = archiveTranscriptToFile(sessionFile, sessionId, containerInput.assistantName);
+        let carryForward = '';
+        if (archived) {
+          const mdName = path.basename(archived.filePath);
+          log(`Archived conversation to ${archived.filePath} before rotation`);
+
+          // Build the carry-forward summary from the recent tail only, via a
+          // one-shot query with NO resume — bounded input, no big-file read.
+          const recentText = archived.messages
+            .slice(-20)
+            .map((m) => `${m.role}: ${m.content}`)
+            .join('\n\n')
+            .slice(-15000);
+          let summary = '';
+          try {
+            for await (const message of query({
+              prompt: `Resume en 4-6 líneas el estado de esta conversación para poder retomarla: en qué se estaba trabajando, decisiones clave y qué queda pendiente. Sé concreto. Devuelve solo el resumen, sin preámbulo.\n\n---\n${recentText}`,
+              options: {
+                cwd: '/workspace/group',
+                systemPrompt: undefined,
+                allowedTools: [],
+                env: sdkEnv,
+                permissionMode: 'bypassPermissions' as const,
+                allowDangerouslySkipPermissions: true,
+                settingSources: ['project', 'user'] as const,
+              },
+            })) {
+              if (message.type === 'assistant' && 'message' in message) {
+                const content = (message as { message: { content: Array<{ type: string; text?: string }> } }).message.content;
+                for (const block of content) {
+                  if (block.type === 'text' && block.text) summary += block.text;
+                }
+              }
+              if (message.type === 'result' && 'result' in message) {
+                const resultText = (message as { result?: string }).result;
+                if (resultText) summary = resultText;
+              }
+            }
+          } catch (err) {
+            log(`Rotation summary failed: ${err instanceof Error ? err.message : String(err)}`);
           }
-          if (message.type === 'system' && (message as { subtype?: string }).subtype === 'compact_boundary') {
-            log('Auto-compact completed');
-          }
+
+          carryForward = summary.trim()
+            ? `[Contexto de la sesión previa (renovada por tamaño). Resumen:\n${summary.trim()}\n\nEl detalle completo quedó archivado en conversations/${mdName} — léelo con Read (parcial) si necesitas más.]\n\n`
+            : `[La sesión previa se renovó por tamaño; su transcripción quedó archivada en conversations/${mdName}. Léela con Read (parcial) si necesitas contexto.]\n\n`;
         }
-        // Check new size — /compact creates a fresh session, so stat the new
-        // session's .jsonl, not the old append-only one (which never shrinks).
-        try {
-          const newSessionFile = path.join(
-            os.homedir(), '.claude', 'projects', '-workspace-group', `${sessionId}.jsonl`,
-          );
-          const newStat = fs.statSync(newSessionFile);
-          log(`Session file after compact: ${(newStat.size / 1024 / 1024).toFixed(2)}MB`);
-        } catch { /* file may not exist yet for new session */ }
+
+        // Start fresh: drop the resume so the next query creates a new session,
+        // seeded with the carry-forward preamble.
+        sessionId = undefined;
+        prompt = carryForward + prompt;
+        log(`Rotation done — new session on next query, carry-forward ${carryForward.length} chars`);
       } else {
-        log(`Session file is ${(stat.size / 1024).toFixed(0)}KB — no compact needed`);
+        log(`Session file is ${(stat.size / 1024).toFixed(0)}KB — no rotation needed`);
       }
     } catch {
       log(`Session file not found for ${sessionId} — skipping size check`);
     }
   }
-  // --- END EXPERIMENT ---
+  // --- END auto-rotate ---
 
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;

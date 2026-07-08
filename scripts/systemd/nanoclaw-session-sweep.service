@@ -1,0 +1,10 @@
+[Unit]
+Description=NanoClaw orphaned session transcript sweep
+After=nanoclaw.service
+
+[Service]
+Type=oneshot
+User=nanoclaw
+Group=nanoclaw
+Environment=NANOCLAW_APP_ROOT=/home/nanoclaw/app
+ExecStart=/home/nanoclaw/app/scripts/session-orphan-sweep.sh
