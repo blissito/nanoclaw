@@ -153,6 +153,21 @@ How a group's effective prompt is assembled, and why edits sometimes "don't refl
 
 **Pipeline edit rights (admin yes / WABA no) are code-gated, not just prompt-gated.** `main` loads `kommo` with no `KOMMO_TOOLSETS` → all toolsets incl. pipeline structure CRUD (`create_pipeline` / `update_pipeline` / `create_pipeline_status`, in the `admin` toolset). Public WABA groups set `KOMMO_TOOLSETS=read,create,scoped-mutate` → those tools are never registered, so a WABA agent **cannot** restructure the pipeline regardless of prompt (it can still create/move/read leads — `update_lead` takes `status_id`/`pipeline_id`). ⚠️ Default when `KOMMO_TOOLSETS` is unset = ALL toolsets (`ENABLED_TOOLSETS = … : null // null = all`, `container/mcp-servers/kommo/src/index.ts`) — fail-OPEN, so every public group must set the restricted toolset explicitly.
 
+## Context Bloat / MCP Toolset Optimization (autocompact thrashing)
+
+**Symptom:** a group's agent dies with `Autocompact is thrashing: the context refilled to the limit within 3 turns of the previous compact, 3 times in a row`. The host auto-fires `/clear`, but the **same request thrashes again on the clean session**.
+
+**Do NOT misdiagnose as disk/history.** A clean session reproducing the thrash rules out accumulated conversation and large files on disk — those only enter context when explicitly `Read`. The culprit is the **static system prompt** (system + tool definitions + CLAUDE.md), which loads on *every* container spawn and can't be compacted away. If it's already near the window, autocompact can never get below the threshold → infinite thrash. `/clear` doesn't touch the static prompt, which is why it doesn't help.
+
+**Diagnose from the container log usage line:** look at `cache_creation_input_tokens`. Healthy is ~20–40k. If it's ~150k+, the static prompt is bloated — almost always by a **heavy MCP toolset**. The prime offender is `easybits-design-core-sandbox` (design+core+sandbox ≈ 90+ tools ≈ ~165k tokens alone). The context arrives near ~248k and the first `compact_boundary` fires *before the first real exchange*.
+
+**Fix (per group, requires restart — container_config is cached in memory at startup):**
+1. Trim `container_config.mcpServers` to the lean set the group actually needs (drop the mega-toolset).
+2. Move image generation to the **EasyBits REST API** instead of the MCP: POST to `https://www.easybits.cloud/api/mcp` (MCP-over-HTTP, JSON-RPC 2.0, `Authorization: Bearer $EASYBITS_API_KEY` — injected unconditionally in `src/container-runner.ts`, independent of `mcpServers`). Handshake `initialize` → `notifications/initialized` → `tools/call create_or_edit_image` (gpt-image-2; `size:1024x1024`, `quality:low`). Ship a helper script in the group folder (`tools/eb_image.sh`) that prints **only** the resulting `.png` URL so the tool output doesn't re-bloat context; the agent then `curl -o attachments/x.png` and `send_message image_path=…`. Add a CLAUDE.md instruction telling the agent to use REST, not `mcp__easybits*`.
+3. `sqlite3 … UPDATE registered_groups SET container_config=… WHERE folder=…` then `systemctl restart nanoclaw`. Reference implementation: `whatsapp_nanoprueba` on ghosty-0 (2026-07-09), cut from `easybits-design-core-sandbox` to `brightdata`-only.
+
+**Audit which groups carry the heavy toolset:** `sqlite3 store/messages.db "SELECT folder,name,container_config FROM registered_groups WHERE container_config LIKE '%design-core%';"`. `easybits` (plain, core-only, what DESCTI uses) is lean and safe. See `project_empty_container_config_thrash` — same failure class, whether from an empty (→ all servers) or an oversized explicit config.
+
 ## Adding MCP Servers
 
 Per-group MCP servers give agents domain-specific tools. Each group's `container_config.mcpServers` array controls which servers are available (the `nanoclaw` server is always included automatically).
