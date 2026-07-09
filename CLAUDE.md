@@ -377,6 +377,16 @@ The `voice` skill (`container/skills/voice/text-to-speech`) does TTS with **Koko
 - **Kokoro is not the bottleneck for perceived latency.** A voice-note turn can take minutes; that's the agent (LLM turns, cold start, shared rate limit), not the ~6s TTS. To reduce perceived latency, cut agent steps (prompt it to send only the audio) or keep the container warm.
 - **Skill changes don't need a rebuild** (skills sync at container spawn); only Dockerfile changes (model/pip/apt) require `./container/build.sh`. To apply to a warm container now, `docker kill` it → next message respawns with the new skill and resumes the same session.
 
+## IconScout asset skill (ghosty-0, commit `5fc9260`)
+
+Skill `iconscout` (`container/skills/iconscout/`) lets the agent search and download IconScout design assets (icons, illustrations, 3D, Lottie animations, AI images) via the v3 API. Available to **every non-public group** (skills sync from `container/skills/`; `public`/WABA groups only get `container/skills-public/`, which today ships only `voice`).
+
+- **Bundled script** `container/skills/iconscout/iconscout` (bash + curl + python3, present in the image). Output is deliberately compact — one line per result on `search`, only the saved file path on `download` — to avoid re-bloating context. SKILL.md invokes it by its synced path `~/.claude/skills/iconscout/iconscout` (no PATH install / no image rebuild needed).
+- **Creds** live in ghosty-0 `.env` as `ICONSCOUT_CLIENT_ID` / `ICONSCOUT_CLIENT_SECRET` (never in git). Injected in `src/container-runner.ts` `buildEnvFile()` (same conditional pattern as EASYBITS/BRIGHTDATA). Client-Secret is only needed by the download endpoint.
+- **Single droplet-level account → premium downloads consume the account owner's quota.** The skill defaults to `price free`; only download `premium` on explicit request.
+- **⚠️ The published OpenAPI (`api-1.yaml`) does NOT match the live API.** Real responses use `response.items.data[]` (search) and `response.download.download_url` (download), `status:"success"` (string, not bool), and `price` (int, `0`=free) instead of `is_premium`. The script is coded against the real API — validate against the live endpoint, not the spec.
+- Applies on the **next container spawn** per group (warm containers keep their old skill set + env-file). Force-reflect a group now with `docker kill` (resumes same session).
+
 ## Agent Vault (WIP)
 
 Inspired by [OneCLI](https://github.com/onecli/onecli). Implemented in `src/credential-proxy.ts`:
