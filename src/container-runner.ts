@@ -446,6 +446,20 @@ function buildEnvFile(
   const bdToken = readEnvFile(['BRIGHTDATA_API_TOKEN']).BRIGHTDATA_API_TOKEN;
   if (bdToken) envLines.push(`BRIGHTDATA_API_TOKEN=${bdToken}`);
 
+  // IconScout: design-asset search/download skill. Same account for every group;
+  // Client-Secret is only needed by the download endpoint.
+  const iconscoutEnv = readEnvFile([
+    'ICONSCOUT_CLIENT_ID',
+    'ICONSCOUT_CLIENT_SECRET',
+  ]);
+  if (iconscoutEnv.ICONSCOUT_CLIENT_ID) {
+    envLines.push(`ICONSCOUT_CLIENT_ID=${iconscoutEnv.ICONSCOUT_CLIENT_ID}`);
+    if (iconscoutEnv.ICONSCOUT_CLIENT_SECRET)
+      envLines.push(
+        `ICONSCOUT_CLIENT_SECRET=${iconscoutEnv.ICONSCOUT_CLIENT_SECRET}`,
+      );
+  }
+
   // CoreGrid CRM: default key from global .env; a group can override it for
   // another board (tablero) via container_config.env.CRM_API_KEY.
   const crmKey = readEnvFile(['CRM_API_KEY']).CRM_API_KEY;

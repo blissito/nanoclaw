@@ -1,0 +1,127 @@
+#!/bin/bash
+# IconScout asset search + download helper (IconScout v3 API).
+# Keeps tool output tiny so it doesn't bloat the agent context.
+#
+# Usage:
+#   iconscout search "<query>" [asset] [price] [limit]
+#       asset : icon | illustration | 3d | lottie | ai_image   (default: icon)
+#       price : free | premium | all                            (default: all)
+#       limit : max results to print                            (default: 8)
+#
+#   iconscout download <uuid> <format> [width] [height] [outfile]
+#       format: svg|png|eps  (icon/illustration) · json|lottie|gif|mp4 (lottie)
+#               gltf|glb|obj|fbx|blend|png (3d) · png|jpg (ai_image)
+#       width/height: pixels for png (e.g. 512). Use 0 for vector formats.
+#       outfile: path to save. Default: attachments/<uuid>.<ext>
+#
+# Auth: reads ICONSCOUT_CLIENT_ID (+ ICONSCOUT_CLIENT_SECRET for downloads)
+# from the container env (injected by the host, same for every group).
+
+set -euo pipefail
+
+API="https://api.iconscout.com/v3"
+
+if [ -z "${ICONSCOUT_CLIENT_ID:-}" ]; then
+  echo "Error: ICONSCOUT_CLIENT_ID no configurado en este contenedor." >&2
+  exit 1
+fi
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  search)
+    query="${1:-}"
+    asset="${2:-icon}"
+    price="${3:-all}"
+    limit="${4:-8}"
+
+    url="$API/search?asset=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$asset")"
+    if [ -n "$query" ]; then
+      url="$url&query=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$query")"
+    fi
+    if [ "$price" = "free" ] || [ "$price" = "premium" ]; then
+      url="$url&price=$price"
+    fi
+
+    resp=$(curl -sS "$url" -H "Client-ID: $ICONSCOUT_CLIENT_ID")
+
+    echo "$resp" | LIMIT="$limit" python3 -c '
+import json, os, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("Error: respuesta no-JSON de IconScout", file=sys.stderr); sys.exit(1)
+if d.get("status") not in ("success", True):
+    print("Error IconScout:", d.get("message", "desconocido"), file=sys.stderr); sys.exit(1)
+items = d.get("response", {}).get("items", {})
+rows = items.get("data", []) or []
+total = items.get("total", 0)
+limit = int(os.environ.get("LIMIT", "8"))
+print("%s resultados (mostrando %s):" % (total, min(limit, len(rows))))
+for it in rows[:limit]:
+    tag = "free" if not it.get("price") else "premium"
+    urls = it.get("urls", {}) or {}
+    prev = urls.get("png_128") or urls.get("svg") or urls.get("gif") or urls.get("mp4") or ""
+    print("- %s | %s [%s] | %s" % (it.get("uuid"), it.get("name"), tag, prev))
+'
+    ;;
+
+  download)
+    uuid="${1:-}"
+    format="${2:-}"
+    width="${3:-0}"
+    height="${4:-0}"
+    outfile="${5:-}"
+
+    if [ -z "$uuid" ] || [ -z "$format" ]; then
+      echo "Error: uso: iconscout download <uuid> <format> [width] [height] [outfile]" >&2
+      exit 1
+    fi
+    if [ -z "${ICONSCOUT_CLIENT_SECRET:-}" ]; then
+      echo "Error: ICONSCOUT_CLIENT_SECRET no configurado (requerido para descargar)." >&2
+      exit 1
+    fi
+    if [ -z "$outfile" ]; then
+      mkdir -p attachments
+      outfile="attachments/${uuid}.${format}"
+    fi
+
+    body="{\"oauth_client_id\":\"$ICONSCOUT_CLIENT_ID\",\"format\":\"$format\",\"width\":$width,\"height\":$height}"
+
+    resp=$(curl -sS -X POST "$API/items/$uuid/api-download" \
+      -H "Client-ID: $ICONSCOUT_CLIENT_ID" \
+      -H "Client-Secret: $ICONSCOUT_CLIENT_SECRET" \
+      -H "Content-Type: application/json" \
+      -d "$body")
+
+    dl_url=$(echo "$resp" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("", end=""); sys.exit(0)
+if d.get("status") not in ("success", True):
+    print("ERR:" + str(d.get("message", "desconocido")), end=""); sys.exit(0)
+print(d.get("response", {}).get("download", {}).get("download_url", ""), end="")
+')
+
+    if [ -z "$dl_url" ]; then
+      echo "Error: IconScout no devolvió download_url. Respuesta: $resp" >&2
+      exit 1
+    fi
+    if [[ "$dl_url" == ERR:* ]]; then
+      echo "Error IconScout: ${dl_url#ERR:}" >&2
+      exit 1
+    fi
+
+    curl -sS -L -o "$outfile" "$dl_url"
+    echo "$outfile"
+    ;;
+
+  *)
+    echo "Uso: iconscout search \"<query>\" [asset] [price] [limit]" >&2
+    echo "     iconscout download <uuid> <format> [width] [height] [outfile]" >&2
+    exit 1
+    ;;
+esac
