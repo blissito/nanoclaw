@@ -681,11 +681,22 @@ const SUBAGENT_TOOLS = [
   'TeamCreate', 'TeamDelete', 'SendMessage',
 ];
 
-// Disallow the subagent family, EXCEPT any a group opted into via its explicit
-// container_config.allowedTools (preserves the documented per-group override).
+// Interactive/UI tools that BLOCK waiting for input the chat channel can't deliver.
+// The claude_code preset exposes AskUserQuestion (multiple-choice prompt requiring a
+// UI click); over WhatsApp/Telegram there is no UI to answer it and no wiring to feed
+// a reply back, so the agent hangs until the container times out (~30min) and dies —
+// looks like the bot froze (incident ghosty_legal 2026-07-09, on an open-ended
+// "make me a skill" request). The agent must ask in plain text via send_message.
+const CHANNEL_INCOMPATIBLE_TOOLS = [
+  'AskUserQuestion',
+];
+
+// Disallow the subagent family + channel-incompatible interactive tools, EXCEPT any a
+// group opted into via its explicit container_config.allowedTools (preserves the
+// documented per-group override).
 function buildDisallowedTools(containerInput: ContainerInput): string[] {
   const optedIn = new Set(containerInput.allowedTools ?? []);
-  return SUBAGENT_TOOLS.filter(t => !optedIn.has(t));
+  return [...SUBAGENT_TOOLS, ...CHANNEL_INCOMPATIBLE_TOOLS].filter(t => !optedIn.has(t));
 }
 
 /**
