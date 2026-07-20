@@ -958,6 +958,14 @@ export class WhatsAppChannel implements Channel {
                 'pollUpdateMessage',
                 'ephemeralMessage',
                 'viewOnceMessage',
+                // Message edits: WhatsApp delivers an edit as a bare
+                // secretEncryptedMessage (encrypted payload Baileys doesn't
+                // decrypt) or an editedMessage wrapper. Neither carries readable
+                // text here, and surfacing a placeholder made the agent reply
+                // "unsupported attachment" on every edit. Ignore silently.
+                'secretEncryptedMessage',
+                'editedMessage',
+                'keepInChatMessage',
               ];
               const msgType = Object.keys(normalized).find(
                 (k) => !IGNORE_TYPES.includes(k),
