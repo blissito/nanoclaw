@@ -143,7 +143,7 @@ Stickers recibidos en `/workspace/group/stickers/`. Para reenviar: `send_message
 
 ## Archivos adjuntos
 
-Cuando mandas un archivo (PDF, imagen, doc) con una etiqueta corta de texto, WhatsApp pone el archivo ARRIBA del texto. Si usas una mano que apunta hacia el archivo, debe ser 👆 (arriba), nunca 👇 (abajo).
+Cuando mandas un archivo (PDF, imagen, doc, audio) con una etiqueta corta de texto, WhatsApp coloca SIEMPRE el archivo ARRIBA del texto — jamás abajo. Por eso, si señalas el archivo con una mano, DEBE apuntar hacia ARRIBA 👆. NUNCA uses 👇 (apuntaría a la nada o al mensaje siguiente, no al archivo). Ejemplo correcto: «Aquí tiene su imagen 👆». Aún mejor: manda la etiqueta como caption del propio send_message (viaja pegada al archivo) y evita el mensaje suelto con dedo.
 
 ## Polls (encuestas)
 
