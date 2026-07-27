@@ -1490,7 +1490,7 @@ tool('email',
 
 tool('quote',
   'siiqtec_quote_pdf',
-  'Genera una cotización SIIQTEC en PDF (template oficial: header SIIQTEC, RECEPTOR, productos con imagen, totales con envío Ruta SIIQTEC o paquetería, ficha de depósito con datos bancarios). La tool valida cantidades, recalcula montos, valida que las imágenes existan (cae a placeholder S/I si fallan), y particiona automáticamente en páginas si hay >6 productos. NUNCA inventes amounts; pasa qty + unit_price por item y la tool calcula. Por default NO incluye link de pago MercadoPago — pasá include_payment_link=true para añadir el card con QR + botón "Clic para pagar". Cada página lleva la leyenda "Esta cotización es generada con IA y puede tener errores". Devuelve el path local del PDF para mandarlo con send_message.',
+  'Genera una cotización SIIQTEC en PDF (template oficial: header SIIQTEC, RECEPTOR, productos con imagen, totales con envío Ruta SIIQTEC o paquetería, ficha de depósito con datos bancarios). La tool valida cantidades, recalcula montos, valida que las imágenes existan (cae a placeholder S/I si fallan), y particiona automáticamente en páginas si hay >6 productos. NUNCA inventes amounts; pasa qty + unit_price por item y la tool calcula. Los unit_price se verifican contra el catálogo vigente: si un precio no coincide, la tool RECHAZA y no genera PDF — reconsulta la DB antes de cotizar y avisa al cliente si corriges un precio que ya le habías dicho. Por default NO incluye link de pago MercadoPago — pasá include_payment_link=true para añadir el card con QR + botón "Clic para pagar". Cada página lleva la leyenda "Esta cotización es generada con IA y puede tener errores". Devuelve el path local del PDF para mandarlo con send_message.',
   {
     folio: z.string().regex(/^\d{6}-\d{3}$/, 'folio debe ser YYMMDD-NNN').describe('Folio de cotización formato YYMMDD-NNN (ej: 260430-001).'),
     fecha: z.string().optional().describe('Fecha en formato DD/MM/YYYY. Si se omite, usa la fecha de hoy.'),
@@ -1512,8 +1512,19 @@ tool('quote',
           qty: z.number().positive(),
           unit: z.enum(['PZA', 'GARRAFA', 'KG', 'LT', 'CAJA', 'BOLSA', 'PAR', 'JGO']),
           nombre: z.string().min(1),
-          unit_price: z.number().min(0).describe('Precio unitario. La tool calcula el importe (qty × unit_price).'),
+          unit_price: z.number().min(0).describe('Precio unitario VIGENTE en el catálogo. La tool lo verifica contra la DB y rechaza la cotización si no coincide; consulta el catálogo antes de cotizar en vez de usar un precio que recuerdes de mensajes anteriores. La tool calcula el importe (qty × unit_price).'),
           imagen_url: z.string().url().nullable().optional().describe('URL de la imagen del producto. Si falla la verificación, se sustituye por placeholder S/I.'),
+          price_override: z
+            .object({
+              kind: z.enum(['promocion', 'precio_especial_autorizado', 'servicio_sin_sku', 'producto_no_catalogado']),
+              reason: z
+                .string()
+                .min(15)
+                .describe('Explicación concreta y rastreable: qué promo es y de dónde salió. Si el equipo te la autorizó en el grupo admin, cítalo (ej: "Promo autorizada en admin 27-jul: 1 MOSSI 10L + 1 CLOROSIIQ 20L por $250"). No uses "precio acordado" ni "precio del cliente" a secas.'),
+            })
+            .nullable()
+            .optional()
+            .describe('Para precios legítimos que NO están en el catálogo: promos que el equipo te autorizó conversando en el grupo admin, paquetes, fletes y servicios sin SKU. Es normal que una cotización entera de promo lleve override en todas sus líneas. Se registra y se audita. Lo que NO es un override: un precio que sí debería estar en el catálogo — si no coincide, es un error tuyo, reconsulta la DB.'),
         }),
       )
       .min(1)

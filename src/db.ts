@@ -265,6 +265,52 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+
+  // Session age, for the TTL rotation in src/index.ts.
+  //
+  // The backfill matters more than the column. Leaving existing rows NULL and treating NULL as
+  // expired would rotate every pre-existing session on its next message at once — on sofi-0 that
+  // was 114 sessions, each firing an archive plus an LLM summarize call. Seeding from the
+  // transcript's own birthtime instead gives each session its real age (the sofi-0 session that
+  // caused the price incident dates to 2026-05-14) and staggers the rotations naturally.
+  try {
+    database.exec(`ALTER TABLE sessions ADD COLUMN created_at TEXT`);
+    backfillSessionCreatedAt(database);
+  } catch {
+    /* column already exists — backfill already ran */
+  }
+}
+
+/** One-shot: date existing sessions from their transcript file. Runs only in the migration that
+ *  adds the column, so it can't re-stamp rows later. */
+function backfillSessionCreatedAt(database: Database.Database): void {
+  const rows = database
+    .prepare('SELECT group_folder, session_id FROM sessions')
+    .all() as Array<{ group_folder: string; session_id: string }>;
+  const update = database.prepare(
+    'UPDATE sessions SET created_at = ? WHERE group_folder = ?',
+  );
+  const now = new Date().toISOString();
+  for (const row of rows) {
+    let stamp = now;
+    try {
+      const jsonl = path.join(
+        DATA_DIR,
+        'sessions',
+        row.group_folder,
+        '.claude',
+        'projects',
+        '-workspace-group',
+        `${row.session_id}.jsonl`,
+      );
+      const st = fs.statSync(jsonl);
+      const birth = st.birthtime?.getTime?.() || 0;
+      stamp = new Date(birth > 0 ? birth : st.mtime.getTime()).toISOString();
+    } catch {
+      /* transcript missing — treat as new rather than instantly expired */
+    }
+    update.run(stamp, row.group_folder);
+  }
 }
 
 export function initDatabase(): void {
@@ -863,10 +909,39 @@ export function getSession(groupFolder: string): string | undefined {
   return row?.session_id;
 }
 
+/**
+ * Persist the group's current session id.
+ *
+ * NOT `INSERT OR REPLACE`: that deletes and reinserts, which would reset `created_at` on every
+ * single turn — the host writes this row each time the container reports a session id. The TTL
+ * rotation would then never fire, silently, because no session would ever look older than one
+ * message. Age is only reset when the session id actually changes.
+ */
 export function setSession(groupFolder: string, sessionId: string): void {
   db.prepare(
-    'INSERT OR REPLACE INTO sessions (group_folder, session_id) VALUES (?, ?)',
-  ).run(groupFolder, sessionId);
+    `INSERT INTO sessions (group_folder, session_id, created_at) VALUES (?, ?, ?)
+     ON CONFLICT(group_folder) DO UPDATE SET
+       session_id = excluded.session_id,
+       created_at = CASE WHEN sessions.session_id = excluded.session_id
+                    THEN sessions.created_at ELSE excluded.created_at END`,
+  ).run(groupFolder, sessionId, new Date().toISOString());
+}
+
+/** Session id plus its age, for the TTL check at spawn. `created_at` is null only for rows that
+ *  predate the migration and had no readable transcript. */
+export function getSessionRow(
+  groupFolder: string,
+): { sessionId: string; createdAt: string | null } | undefined {
+  const row = db
+    .prepare(
+      'SELECT session_id, created_at FROM sessions WHERE group_folder = ?',
+    )
+    .get(groupFolder) as
+    | { session_id: string; created_at: string | null }
+    | undefined;
+  return row
+    ? { sessionId: row.session_id, createdAt: row.created_at }
+    : undefined;
 }
 
 export function deleteSession(groupFolder: string): void {

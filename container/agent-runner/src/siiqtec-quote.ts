@@ -10,6 +10,13 @@ import fs from 'fs';
 import path from 'path';
 import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
+import {
+  assertCatalogPrices,
+  recordOverrides,
+  type GuardMode,
+  type OverrideRecord,
+  type PriceOverride,
+} from './catalog-price-guard.js';
 
 const execFileP = promisify(execFile);
 
@@ -69,6 +76,9 @@ export type QuoteInput = {
     nombre: string;
     unit_price: number;
     imagen_url?: string | null;
+    /** Escape hatch for legitimate prices that don't live in the catalog (promo bundles,
+     *  freight, services without a SKU). Audited — see catalog-price-guard.ts. */
+    price_override?: PriceOverride | null;
   }>;
   envio:
     | { modo: 'ruta_siiqtec'; dia: string; destino: string }
@@ -82,6 +92,11 @@ export type QuoteResult = {
   total: number;
   paymentUrl: string | null;
   pages: number;
+  /** Whether prices were actually verified against the catalog on this quote. Surfaced so a
+   *  silent, permanent 'skipped:no_key' is visible in the transcript instead of invisible. */
+  price_check: GuardMode;
+  overrides: OverrideRecord[];
+  warnings: string[];
 };
 
 const AI_DISCLAIMER = 'Esta cotización es generada con IA y puede tener errores';
@@ -631,6 +646,10 @@ async function downloadPdf(url: string, dest: string): Promise<number> {
 
 export async function runSiiqtecQuotePdf(input: QuoteInput): Promise<QuoteResult> {
   validate(input);
+  // Before computeTotals: totals are derived from unit_price, so validating afterwards would
+  // just be computing on top of a wrong number. Kept out of validate() so that stays sync+pure.
+  const guard = await assertCatalogPrices(input.items);
+  recordOverrides(input.folio, guard.overrides, GROUP_DIR);
   await pruneBrokenImages(input.items);
   const totals = computeTotals(input);
 
@@ -705,5 +724,8 @@ export async function runSiiqtecQuotePdf(input: QuoteInput): Promise<QuoteResult
     total: totals.total,
     paymentUrl,
     pages: totalPages,
+    price_check: guard.mode,
+    overrides: guard.overrides,
+    warnings: guard.warnings,
   };
 }

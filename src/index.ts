@@ -13,6 +13,7 @@ import {
   IDLE_TIMEOUT,
   MAX_MESSAGES_PER_PROMPT,
   POLL_INTERVAL,
+  SESSION_TTL_DAYS,
   TIMEZONE,
 } from './config.js';
 import { NanoClawHandlers, startCredentialProxy } from './credential-proxy.js';
@@ -39,6 +40,7 @@ import {
   getAllSessions,
   deleteRegisteredGroup,
   deleteSession,
+  getSessionRow,
   deleteTask,
   getTasksForGroup,
   getAllTasks,
@@ -1024,6 +1026,24 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * Whether this group's session has aged out and should be rotated.
+ *
+ * Returns 'age' or undefined so it reads as a reason at the call site. A row with no
+ * `created_at` (predates the migration and had no readable transcript to date it from) is
+ * treated as fresh rather than instantly expired — the alternative is a rotation stampede on
+ * first deploy.
+ */
+function sessionRotateReason(groupFolder: string): 'age' | undefined {
+  if (SESSION_TTL_DAYS <= 0) return undefined;
+  const row = getSessionRow(groupFolder);
+  if (!row?.createdAt) return undefined;
+  const startedAt = Date.parse(row.createdAt);
+  if (!Number.isFinite(startedAt)) return undefined;
+  const ageDays = (Date.now() - startedAt) / 86_400_000;
+  return ageDays >= SESSION_TTL_DAYS ? 'age' : undefined;
+}
+
 async function runAgent(
   group: RegisteredGroup,
   prompt: string,
@@ -1050,6 +1070,21 @@ async function runAgent(
 
   const isMain = group.isMain === true;
   const sessionId = sessions[group.folder];
+
+  // Age-based rotation is decided here, lazily at spawn, rather than in a periodic sweep. A
+  // sweep would rotate every idle session in one pass — on sofi-0 that was 114 conversations
+  // nobody was having, each paying an archive plus an LLM summarize call, and racing whatever
+  // containers were in flight. Deciding at spawn is naturally staggered and only costs
+  // something for conversations that are actually alive.
+  const rotateReason = sessionId
+    ? sessionRotateReason(group.folder)
+    : undefined;
+  if (rotateReason) {
+    logger.info(
+      { group: group.folder, sessionId, ttlDays: SESSION_TTL_DAYS },
+      'Session past TTL — requesting age rotation',
+    );
+  }
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
@@ -1099,6 +1134,7 @@ async function runAgent(
         assistantName: group.trigger.replace(/^@/, '') || ASSISTANT_NAME,
         mcpServers: group.containerConfig?.mcpServers,
         allowedTools: group.containerConfig?.allowedTools,
+        ...(rotateReason && { rotateReason }),
         ...(imageAttachments.length > 0 && { imageAttachments }),
       },
       (proc, containerName) =>

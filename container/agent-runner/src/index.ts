@@ -33,6 +33,8 @@ interface ContainerInput {
   allowedTools?: string[];
   reportToJid?: string;
   script?: string;
+  /** Host says this session has aged past SESSION_TTL_DAYS — rotate it even if it's small. */
+  rotateReason?: 'age';
   imageAttachments?: Array<{ relativePath: string; mediaType: string; publicUrl?: string }>;
 }
 
@@ -1191,6 +1193,10 @@ async function main(): Promise<void> {
   // recent tail WITHOUT resuming (so this path never touches the big file), and
   // start a FRESH session seeded with that summary. The old .jsonl is orphaned
   // and reclaimed by the host maintenance sweep (scripts/session-orphan-sweep.sh).
+  // Size is one reason to rotate; age is the other. A low-traffic chat never reaches 4MB, so it
+  // could stay alive for months and keep serving stale facts out of its own transcript — that's
+  // how a sales agent quoted a price that had changed six weeks earlier. The host decides the
+  // age part (it owns the DB) and signals it via rotateReason; both reasons share this path.
   const SESSION_SIZE_ROTATE_THRESHOLD = 4 * 1024 * 1024; // 4MB
   if (sessionId) {
     const sessionFile = path.join(
@@ -1198,15 +1204,24 @@ async function main(): Promise<void> {
     );
     try {
       const stat = fs.statSync(sessionFile);
-      if (stat.size > SESSION_SIZE_ROTATE_THRESHOLD) {
+      const tooBig = stat.size > SESSION_SIZE_ROTATE_THRESHOLD;
+      const tooOld = containerInput.rotateReason === 'age';
+      if (tooBig || tooOld) {
         const sizeMB = (stat.size / 1024 / 1024).toFixed(1);
-        log(`Session file is ${sizeMB}MB (>${SESSION_SIZE_ROTATE_THRESHOLD / 1024 / 1024}MB) — rotating to a fresh session`);
+        const why = tooBig ? `${sizeMB}MB` : 'antigüedad';
+        log(
+          tooBig
+            ? `Session file is ${sizeMB}MB (>${SESSION_SIZE_ROTATE_THRESHOLD / 1024 / 1024}MB) — rotating to a fresh session`
+            : `Session flagged as aged out by host — rotating to a fresh session`,
+        );
 
         // Notify user before rotating
         const notifyData = {
           type: 'text',
           chatJid: containerInput.chatJid,
-          text: `_Renovando sesión (${sizeMB}MB) para mantener la velocidad… un momento._ ⏳`,
+          text: tooBig
+            ? `_Renovando sesión (${sizeMB}MB) para mantener la velocidad… un momento._ ⏳`
+            : `_Renovando la conversación para mantener la información al día… un momento._ ⏳`,
           groupFolder: containerInput.groupFolder,
           timestamp: new Date().toISOString(),
         };
@@ -1231,7 +1246,10 @@ async function main(): Promise<void> {
           let summary = '';
           try {
             for await (const message of query({
-              prompt: `Resume en 4-6 líneas el estado de esta conversación para poder retomarla: en qué se estaba trabajando, decisiones clave y qué queda pendiente. Sé concreto. Devuelve solo el resumen, sin preámbulo.\n\n---\n${recentText}`,
+              // NO prices in the summary. The carry-forward is prepended as a trusted preamble
+              // to the fresh session, so a price captured here would be laundered into
+              // confident-sounding prose and outlive the very rotation meant to expire it.
+              prompt: `Resume en 4-6 líneas el estado de esta conversación para poder retomarla: en qué se estaba trabajando, decisiones clave y qué queda pendiente. Sé concreto. NO incluyas precios, montos ni totales — esos se reconsultan siempre en la base de datos. Devuelve solo el resumen, sin preámbulo.\n\n---\n${recentText}`,
               options: {
                 cwd: '/workspace/group',
                 systemPrompt: undefined,
@@ -1257,9 +1275,11 @@ async function main(): Promise<void> {
             log(`Rotation summary failed: ${err instanceof Error ? err.message : String(err)}`);
           }
 
+          const staleNote =
+            'Los precios y datos de catálogo que aparezcan en ese archivo pueden estar desactualizados — reconsúltalos en la base de datos antes de usarlos.';
           carryForward = summary.trim()
-            ? `[Contexto de la sesión previa (renovada por tamaño). Resumen:\n${summary.trim()}\n\nEl detalle completo quedó archivado en conversations/${mdName} — léelo con Read (parcial) si necesitas más.]\n\n`
-            : `[La sesión previa se renovó por tamaño; su transcripción quedó archivada en conversations/${mdName}. Léela con Read (parcial) si necesitas contexto.]\n\n`;
+            ? `[Contexto de la sesión previa (renovada por ${why}). Resumen:\n${summary.trim()}\n\nEl detalle completo quedó archivado en conversations/${mdName} — léelo con Read (parcial) si necesitas más. ${staleNote}]\n\n`
+            : `[La sesión previa se renovó por ${why}; su transcripción quedó archivada en conversations/${mdName}. Léela con Read (parcial) si necesitas contexto. ${staleNote}]\n\n`;
         }
 
         // Start fresh: drop the resume so the next query creates a new session,

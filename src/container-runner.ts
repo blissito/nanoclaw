@@ -47,6 +47,9 @@ export interface ContainerInput {
   allowedTools?: string[];
   reportToJid?: string;
   script?: string;
+  /** Set by the host when the session has aged past SESSION_TTL_DAYS. The container already
+   *  rotates on size; this makes it rotate on age through the same archive + carry-forward path. */
+  rotateReason?: 'age';
   imageAttachments?: Array<{
     relativePath: string;
     mediaType: string;
@@ -369,6 +372,17 @@ function buildEnvFile(
   // Collect all secret env vars into the file
   const ebKey = readEnvFile(['EASYBITS_API_KEY']).EASYBITS_API_KEY;
   if (ebKey) envLines.push(`EASYBITS_API_KEY=${ebKey}`);
+
+  // Catalog price guard (container/agent-runner/src/catalog-price-guard.ts). Passed through so
+  // dry-run → enforce is an .env edit plus a service restart, with no container rebuild.
+  const guardEnv = readEnvFile([
+    'QUOTE_GUARD_MODE',
+    'QUOTE_CATALOG_DB_ID',
+    'QUOTE_MAX_OVERRIDES',
+  ]);
+  for (const [k, v] of Object.entries(guardEnv)) {
+    if (v) envLines.push(`${k}=${v}`);
+  }
 
   const openaiKey = readEnvFile(['OPENAI_API_KEY']).OPENAI_API_KEY;
   if (openaiKey) envLines.push(`OPENAI_API_KEY=${openaiKey}`);

@@ -80,6 +80,22 @@ export const MAX_CONCURRENT_CONTAINERS = Math.max(
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
 );
 
+/**
+ * Rotate a conversation's session once it reaches this age, in days. 0 disables it.
+ *
+ * Sessions previously only rotated on size (>4MB), so a low-traffic chat could stay alive for
+ * months and keep serving stale facts out of its own transcript — that's how a WhatsApp sales
+ * agent quoted a customer a price that had changed six weeks earlier. 14 days is ~4x the
+ * observed price-change cadence while still preserving "you quoted me last week" continuity;
+ * 30 days would have permitted that exact incident.
+ *
+ * Ships disabled: enable per droplet once the price guard has been proven.
+ */
+export const SESSION_TTL_DAYS = Math.max(
+  0,
+  parseInt(process.env.SESSION_TTL_DAYS || '0', 10) || 0,
+);
+
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

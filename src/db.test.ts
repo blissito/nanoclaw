@@ -15,6 +15,10 @@ import {
   getReactionsForMessage,
   getReactionsByUser,
   getReactionStats,
+  getSession,
+  getSessionRow,
+  setSession,
+  deleteSession,
   getTaskById,
   storeChatMetadata,
   storeMessage,
@@ -880,5 +884,43 @@ describe('getReactionStats', () => {
 
   it('returns empty for chat with no reactions', () => {
     expect(getReactionStats('empty@g.us')).toEqual([]);
+  });
+});
+
+describe('session age tracking', () => {
+  it('stamps created_at on first write', () => {
+    setSession('grp', 'sess-1');
+    const row = getSessionRow('grp');
+    expect(row?.sessionId).toBe('sess-1');
+    expect(row?.createdAt).toBeTruthy();
+  });
+
+  // The whole TTL feature hinges on this. INSERT OR REPLACE would reset created_at on every
+  // turn — the host rewrites this row each time the container reports its session id — so no
+  // session would ever look older than one message and the TTL would silently never fire.
+  it('preserves created_at when the same session is re-written', async () => {
+    setSession('grp', 'sess-1');
+    const first = getSessionRow('grp')!.createdAt;
+    await new Promise((r) => setTimeout(r, 5));
+    setSession('grp', 'sess-1');
+    expect(getSessionRow('grp')!.createdAt).toBe(first);
+  });
+
+  it('resets created_at when the session actually rotates', async () => {
+    setSession('grp', 'sess-1');
+    const first = getSessionRow('grp')!.createdAt;
+    await new Promise((r) => setTimeout(r, 5));
+    setSession('grp', 'sess-2');
+    const row = getSessionRow('grp')!;
+    expect(row.sessionId).toBe('sess-2');
+    expect(row.createdAt).not.toBe(first);
+  });
+
+  it('still round-trips through the plain accessors', () => {
+    setSession('grp', 'sess-1');
+    expect(getSession('grp')).toBe('sess-1');
+    deleteSession('grp');
+    expect(getSession('grp')).toBeUndefined();
+    expect(getSessionRow('grp')).toBeUndefined();
   });
 });
