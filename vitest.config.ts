@@ -5,7 +5,7 @@ export default defineConfig({
     include: [
       'src/**/*.test.ts',
       'setup/**/*.test.ts',
-      'container/agent-runner/src/**/*.test.ts',
+      'container/agent-runner/tests/**/*.test.ts',
     ],
   },
 });

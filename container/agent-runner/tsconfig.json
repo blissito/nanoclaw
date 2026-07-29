@@ -11,5 +11,10 @@
     "declaration": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  // Tests live in ../tests and must never reach this compile: src/ is mounted
+  // into the container, whose entrypoint re-runs tsc when the source looks newer
+  // than the baked dist. A test file here pulls in `vitest`, which the image
+  // doesn't install — tsc fails, the entrypoint has `set -e`, and EVERY agent
+  // container dies with exit code 2. That took ghosty-0 down on 2026-07-29.
+  "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.spec.ts"]
 }

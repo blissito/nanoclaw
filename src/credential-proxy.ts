@@ -355,6 +355,19 @@ export function startCredentialProxy(
       const parsed = JSON.parse(body.toString());
       if (parsed.model) {
         parsed.model = FALLBACK_MODEL;
+        // The fallback path rejects `thinking.type: "enabled"` with a 400, which
+        // the agent surfaces to the chat as its answer — customers saw the raw
+        // API error (ghosty-0, 2026-07-29). Older baked agent-runners still send
+        // the legacy shape, so translate it here rather than depending on every
+        // container image being current.
+        // Deliberately no output_config.effort: verified against the live API
+        // that a high effort with a small max_tokens spends the whole budget in
+        // thinking and returns an empty text block. Adaptive's own default
+        // balances this, and the legacy budget_tokens doesn't map cleanly onto
+        // effort tiers anyway.
+        if (parsed.thinking?.type === 'enabled') {
+          parsed.thinking = { type: 'adaptive' };
+        }
         return Buffer.from(JSON.stringify(parsed));
       }
     } catch {

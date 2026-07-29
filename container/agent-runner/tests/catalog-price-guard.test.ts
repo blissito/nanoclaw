@@ -12,7 +12,7 @@ import {
   GuardUnavailable,
   type CatalogRow,
   type GuardItem,
-} from './catalog-price-guard.js';
+} from '../src/catalog-price-guard.js';
 
 /** Real rows, copied from the live catalog on 2026-07-27. */
 function row(partial: Partial<CatalogRow> & { sku: string }): CatalogRow {
