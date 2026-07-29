@@ -379,8 +379,8 @@ describe('StatusTracker', () => {
 
       tracker.markReceived('msg1', 'main@s.whatsapp.net', false);
 
-      // Message sits in RECEIVED for longer than CONTAINER_TIMEOUT (queued, waiting for slot)
-      vi.advanceTimersByTime(2_000_000);
+      // Message sits in RECEIVED for longer than CONTAINER_STALL_TIMEOUT (queued, waiting for slot)
+      vi.advanceTimersByTime(3_700_000);
 
       // Now container starts — trackedAt resets on THINKING transition
       tracker.markThinking('msg1');
@@ -394,8 +394,8 @@ describe('StatusTracker', () => {
       );
       expect(failCalls).toHaveLength(0);
 
-      // Advance past CONTAINER_TIMEOUT from THINKING — NOW it should timeout
-      vi.advanceTimersByTime(1_800_001);
+      // Advance past CONTAINER_STALL_TIMEOUT from THINKING — NOW it should timeout
+      vi.advanceTimersByTime(3_600_001);
 
       tracker.heartbeatCheck();
       await tracker.flush();

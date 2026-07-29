@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import { DATA_DIR, CONTAINER_TIMEOUT } from './config.js';
+import { DATA_DIR, CONTAINER_STALL_TIMEOUT } from './config.js';
 import { logger } from './logger.js';
 
 // DONE and FAILED share value 3: both are terminal states with monotonic
@@ -249,7 +249,10 @@ export class StatusTracker {
         return; // Safe for main-chat-only scope. If expanded to multiple chats, loop instead of return.
       }
 
-      if (now - msg.trackedAt > CONTAINER_TIMEOUT) {
+      // Must stay aligned with the reaper's stall window: a long-running job is
+      // legitimately mid-flight for hours, and marking it failed here would fire
+      // a spurious retry while the agent is still working.
+      if (now - msg.trackedAt > CONTAINER_STALL_TIMEOUT) {
         logger.warn(
           { messageId: id, chatJid: msg.chatJid, age: now - msg.trackedAt },
           'Heartbeat: message stuck beyond timeout',

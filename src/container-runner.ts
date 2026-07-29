@@ -9,7 +9,8 @@ import path from 'path';
 import {
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
-  CONTAINER_TIMEOUT,
+  CONTAINER_STALL_TIMEOUT,
+  CONTAINER_MAX_LIFETIME,
   CREDENTIAL_PROXY_PORT,
   DATA_DIR,
   FORMMY_TRAINING_GROUP_FOLDER,
@@ -34,6 +35,11 @@ import { ContainerConfig, RegisteredGroup } from './types.js';
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+// The agent-runner logs one of these per SDK turn, e.g.
+//   [agent-runner] [msg #217] type=assistant
+// A moving counter is our proof the agent is still doing work, even when it
+// has nothing to say to the user yet.
+const PROGRESS_LINE_PATTERN = /\[msg #(\d+)\]/;
 
 export interface ContainerInput {
   prompt: string;
@@ -634,6 +640,7 @@ export async function runContainerAgent(
     let stderr = '';
     let stdoutTruncated = false;
     let stderrTruncated = false;
+    let lastProgressTurn = -1;
 
     container.stdin.write(JSON.stringify(input));
     container.stdin.end();
@@ -701,8 +708,25 @@ export async function runContainerAgent(
       for (const line of lines) {
         if (line) logger.debug({ container: group.folder }, line);
       }
-      // Don't reset timeout on stderr — SDK writes debug logs continuously.
-      // Timeout only resets on actual output (OUTPUT_MARKER in stdout).
+      // Don't reset the stall timeout on arbitrary stderr — the SDK writes debug
+      // logs continuously, so any-stderr would mean a wedged container never
+      // dies. Instead reset only when the agent-runner's turn counter ADVANCES:
+      // that is verifiable forward progress, and a genuinely stuck agent can't
+      // fake it. This is what lets a long job (30+ min of tool calls with no
+      // user-facing output) survive without weakening the stuck-agent guard.
+      for (const line of lines) {
+        const match = line.match(PROGRESS_LINE_PATTERN);
+        if (!match) continue;
+        const turn = parseInt(match[1], 10);
+        // Compare for CHANGE, not increase: the agent-runner restarts the
+        // counter when it rotates an oversized session, so `>` would ignore
+        // every turn after a rotation.
+        if (turn !== lastProgressTurn) {
+          lastProgressTurn = turn;
+          resetTimeout();
+        }
+      }
+
       if (stderrTruncated) return;
       const remaining = CONTAINER_MAX_OUTPUT_SIZE - stderr.length;
       if (chunk.length > remaining) {
@@ -718,17 +742,22 @@ export async function runContainerAgent(
     });
 
     let timedOut = false;
+    let timeoutReason: 'stalled' | 'lifetime' = 'stalled';
     let hadStreamingOutput = false;
-    const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
-    // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
+    const configTimeout =
+      group.containerConfig?.timeout || CONTAINER_STALL_TIMEOUT;
+    // Grace period: the stall timeout must be at least IDLE_TIMEOUT + 30s so the
     // graceful _close sentinel has time to trigger before the hard kill fires.
     const timeoutMs = Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
 
-    const killOnTimeout = () => {
+    const killOnTimeout = (reason: 'stalled' | 'lifetime') => () => {
       timedOut = true;
+      timeoutReason = reason;
       logger.error(
-        { group: group.name, containerName },
-        'Container timeout, stopping gracefully',
+        { group: group.name, containerName, reason },
+        reason === 'lifetime'
+          ? 'Container hit max lifetime, stopping gracefully'
+          : 'Container stalled (no progress), stopping gracefully',
       );
       try {
         stopContainer(containerName);
@@ -741,16 +770,23 @@ export async function runContainerAgent(
       }
     };
 
-    let timeout = setTimeout(killOnTimeout, timeoutMs);
+    let timeout = setTimeout(killOnTimeout('stalled'), timeoutMs);
 
-    // Reset the timeout whenever there's activity (streaming output)
+    // Absolute backstop: fires regardless of progress, never reset.
+    const lifetimeTimer =
+      CONTAINER_MAX_LIFETIME > 0
+        ? setTimeout(killOnTimeout('lifetime'), CONTAINER_MAX_LIFETIME)
+        : null;
+
+    // Reset the stall timeout whenever the agent shows a sign of progress.
     const resetTimeout = () => {
       clearTimeout(timeout);
-      timeout = setTimeout(killOnTimeout, timeoutMs);
+      timeout = setTimeout(killOnTimeout('stalled'), timeoutMs);
     };
 
     container.on('close', (code) => {
       clearTimeout(timeout);
+      if (lifetimeTimer) clearTimeout(lifetimeTimer);
       cleanupEnvFile(containerName);
       const duration = Date.now() - startTime;
 
@@ -766,11 +802,34 @@ export async function runContainerAgent(
             `Container: ${containerName}`,
             `Duration: ${duration}ms`,
             `Exit Code: ${code}`,
+            `Reason: ${timeoutReason}`,
+            `Last Progress Turn: ${lastProgressTurn}`,
             `Had Streaming Output: ${hadStreamingOutput}`,
           ].join('\n'),
         );
 
-        // Timeout after output = idle cleanup, not failure.
+        // Hitting the absolute lifetime cap means we killed an agent that was
+        // still making progress — that's a failure, never report it as success.
+        if (timeoutReason === 'lifetime') {
+          logger.error(
+            {
+              group: group.name,
+              containerName,
+              duration,
+              code,
+              lastProgressTurn,
+            },
+            'Container killed at max lifetime while still progressing',
+          );
+          resolve({
+            status: 'error',
+            result: null,
+            error: `Container exceeded max lifetime (${CONTAINER_MAX_LIFETIME}ms)`,
+          });
+          return;
+        }
+
+        // Stalled after output = idle cleanup, not failure.
         // The agent already sent its response; this is just the
         // container being reaped after the idle period expired.
         if (hadStreamingOutput) {

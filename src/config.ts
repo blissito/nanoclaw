@@ -61,6 +61,22 @@ export const CONTAINER_TIMEOUT = parseInt(
   process.env.CONTAINER_TIMEOUT || '1800000',
   10,
 );
+// How long a container may go without ANY sign of progress before we call it
+// stalled and reap it. Progress = a streamed output marker OR the agent-runner
+// turn counter advancing (see PROGRESS_LINE_PATTERN in container-runner.ts).
+// Long jobs that keep working are never killed by this — only genuinely stuck
+// ones. The longest legitimate silence observed in production is an autocompact
+// (~2.5min), so 60min leaves a wide margin.
+export const CONTAINER_STALL_TIMEOUT = parseInt(
+  process.env.CONTAINER_STALL_TIMEOUT || '3600000',
+  10,
+); // 60min default
+// Absolute backstop on container lifetime, regardless of progress. Guards
+// against a genuinely runaway agent looping forever. Set to 0 to disable.
+export const CONTAINER_MAX_LIFETIME = parseInt(
+  process.env.CONTAINER_MAX_LIFETIME || '259200000',
+  10,
+); // 3 days default, 0 = unlimited
 export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
   process.env.CONTAINER_MAX_OUTPUT_SIZE || '10485760',
   10,
@@ -77,7 +93,7 @@ export const IPC_POLL_INTERVAL = 1000;
 export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10); // 30min default — how long to keep container alive after last result
 export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,
-  parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
+  parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '8', 10) || 8,
 );
 
 /**

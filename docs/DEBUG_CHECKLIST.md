@@ -5,8 +5,10 @@
 ### 1. [FIXED] Resume branches from stale tree position
 When agent teams spawns subagent CLI processes, they write to the same session JSONL. On subsequent `query()` resumes, the CLI reads the JSONL but may pick a stale branch tip (from before the subagent activity), causing the agent's response to land on a branch the host never receives a `result` for. **Fix**: pass `resumeSessionAt` with the last assistant message UUID to explicitly anchor each resume.
 
-### 2. IDLE_TIMEOUT == CONTAINER_TIMEOUT (both 30 min)
-Both timers fire at the same time, so containers always exit via hard SIGKILL (code 137) instead of graceful `_close` sentinel shutdown. The idle timeout should be shorter (e.g., 5 min) so containers wind down between messages, while container timeout stays at 30 min as a safety net for stuck agents.
+### 2. [FIXED] Long jobs reaped mid-work
+The hard timeout only reset on output *to the user* (`OUTPUT_MARKER`), never on the agent's internal activity. An agent that worked 30+ min on tool calls without messaging anyone was killed just before delivering — observed 2026-07-29 on ghosty-0 (`DESCTI_Proyectos_especiales`, killed at 48 min with the finished map already on disk), and misreported as `status: "success"` / "idle cleanup". **Fix**: the reaper now resets on verifiable progress (the agent-runner `[msg #N]` turn counter advancing), governed by `CONTAINER_STALL_TIMEOUT` (60 min of *no progress*) plus a `CONTAINER_MAX_LIFETIME` backstop (3 days, `0` = unlimited). Noisy-but-stuck containers still die, since a repeated turn number doesn't count as progress. Hitting the lifetime cap now resolves as `error`, not `success`.
+
+Note `IDLE_TIMEOUT` still equals the old 30 min and the hard timeout is floored at `IDLE_TIMEOUT + 30s`, so containers can still exit via SIGKILL rather than the graceful `_close` sentinel. Shortening `IDLE_TIMEOUT` (e.g. 5 min) would let them wind down cleanly between messages.
 
 ### 3. Cursor advanced before agent succeeds
 `processGroupMessages` advances `lastAgentTimestamp` before the agent runs. If the container times out, retries find no messages (cursor already past them). Messages are permanently lost on timeout.

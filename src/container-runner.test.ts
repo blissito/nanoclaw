@@ -10,7 +10,8 @@ const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 vi.mock('./config.js', () => ({
   CONTAINER_IMAGE: 'nanoclaw-agent:latest',
   CONTAINER_MAX_OUTPUT_SIZE: 10485760,
-  CONTAINER_TIMEOUT: 1800000, // 30min
+  CONTAINER_STALL_TIMEOUT: 1800000, // 30min
+  CONTAINER_MAX_LIFETIME: 259200000, // 3 days
   CREDENTIAL_PROXY_PORT: 3001,
   DATA_DIR: '/tmp/nanoclaw-test-data',
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
@@ -178,6 +179,77 @@ describe('container-runner timeout behavior', () => {
     expect(result.status).toBe('error');
     expect(result.error).toContain('timed out');
     expect(onOutput).not.toHaveBeenCalled();
+  });
+
+  it('keeps a container alive while it works silently past the stall window', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    // The agent answers once, then goes heads-down on a long job: tool calls
+    // and file writes for hours, with nothing to say to the user yet. Its only
+    // outward sign of life is the turn counter on stderr. This is the exact
+    // shape that used to get reaped mid-work.
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'On it.',
+      newSessionId: 'session-abc',
+    });
+    await vi.advanceTimersByTimeAsync(10);
+
+    for (let turn = 1; turn <= 6; turn++) {
+      // Well past the 1830000ms stall window between each sign of progress
+      await vi.advanceTimersByTimeAsync(1_500_000);
+      fakeProc.stderr.emit(
+        'data',
+        Buffer.from(`[agent-runner] [msg #${turn}] type=assistant\n`),
+      );
+    }
+
+    // Over 2.5 hours in, still alive — nothing was killed.
+    expect(fakeProc.kill).not.toHaveBeenCalled();
+
+    // Now it finally goes quiet for real: past the window with no progress.
+    await vi.advanceTimersByTimeAsync(1_830_001);
+    fakeProc.emit('close', 137);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+  });
+
+  it('reaps a container whose stderr is noisy but makes no progress', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    // A wedged agent still spews SDK debug logs, and can even repeat the same
+    // turn number. Neither counts as progress, so the reaper must still fire.
+    for (let i = 0; i < 5; i++) {
+      await vi.advanceTimersByTimeAsync(300_000);
+      fakeProc.stderr.emit(
+        'data',
+        Buffer.from(
+          '[agent-runner] debug: polling\n[agent-runner] [msg #7] type=assistant\n',
+        ),
+      );
+    }
+
+    await vi.advanceTimersByTimeAsync(1_830_001);
+    fakeProc.emit('close', 137);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('timed out');
   });
 
   it('normal exit after output resolves as success', async () => {
