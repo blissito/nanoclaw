@@ -28,6 +28,141 @@ const EASYBITS_API_BASE = 'https://www.easybits.cloud/api/v2';
 const QUERY_TIMEOUT_MS = 6000;
 const RETRY_DELAY_MS = 400;
 
+/**
+ * Where prices live, in lookup order.
+ *
+ * Two brands share this file and their catalogs are NOT the same shape. TOTEQUIM
+ * (`catalogo_totequim`) keys on `clave`, prices in `precio_publico`, and states its volume
+ * brackets in PROSE. SIIQTEC (`catalogo`) keys on `sku`, prices in
+ * `precio_publico_directo`, and states brackets as numbers.
+ *
+ * ⚠️ They are in DIFFERENT DATABASES, not just different tables. `totequim-tania` also
+ * carried its own `catalogo` table — 200 rows with every price NULL, an import leftover
+ * (dropped 2026-08-03). Pointing the fallback at the same DB would have marked real SIIQTEC
+ * SKUs as unknown, and unknown is fail-CLOSED.
+ *
+ * A droplet that only sells SIIQTEC just leaves QUOTE_CATALOG_DB_ID unset: the TOTEQUIM
+ * source then points at the SIIQTEC DB, finds no `catalogo_totequim` table, fails soft, and
+ * the fallback answers — same behaviour as before this existed. That is what keeps this file
+ * byte-identical across sofi-0 / tania / siiqtec-mkt-0.
+ */
+type CatalogSource = {
+  dbId: string;
+  table: string;
+  /** A key can live in more than one column; matching all of them avoids a false
+   *  `unknown_sku`, which being fail-CLOSED would sink a perfectly good quote. */
+  keyCols: string[];
+  cols: string[];
+  base: string;
+  tiers: Array<[priceCol: string, minCol: string]>;
+  /** Minimums are prose that needs parsing, not numbers. */
+  prose: boolean;
+};
+
+function catalogSources(): CatalogSource[] {
+  return [
+    {
+      dbId: (process.env.QUOTE_CATALOG_DB_ID || '').trim() || DEFAULT_CATALOG_DB_ID,
+      table: (process.env.QUOTE_CATALOG_TABLE || '').trim() || 'catalogo_totequim',
+      keyCols: ['clave', 'clave_alterna'],
+      cols: [
+        'clave', 'clave_alterna', 'nombre', 'presentacion', 'precio_publico',
+        'precio_2', 'condicion_precio_2', 'precio_3', 'condicion_precio_3',
+        'precio_4', 'condicion_precio_4',
+      ],
+      base: 'precio_publico',
+      tiers: [
+        ['precio_2', 'condicion_precio_2'],
+        ['precio_3', 'condicion_precio_3'],
+        ['precio_4', 'condicion_precio_4'],
+      ],
+      prose: true,
+    },
+    {
+      dbId: (process.env.QUOTE_CATALOG_FALLBACK_DB_ID || '').trim() || DEFAULT_CATALOG_DB_ID,
+      table: 'catalogo',
+      keyCols: ['sku'],
+      cols: [
+        'sku', 'producto_id', 'nombre', 'presentacion', 'precio_publico_directo',
+        'precio_2', 'min_piezas_precio_2', 'precio_3', 'min_piezas_precio_3',
+      ],
+      base: 'precio_publico_directo',
+      tiers: [
+        ['precio_2', 'min_piezas_precio_2'],
+        ['precio_3', 'min_piezas_precio_3'],
+      ],
+      prose: false,
+    },
+  ];
+}
+
+/** Spanish numerals that actually show up in the conditions. Not a full number parser —
+ *  "DOS" appears 30 times, the rest of the range never does. */
+const WORD_NUMS: Record<string, number> = {
+  UN: 1, UNA: 1, DOS: 2, TRES: 3, CUATRO: 4, CINCO: 5, SEIS: 6,
+  SIETE: 7, OCHO: 8, NUEVE: 9, DIEZ: 10, DOCE: 12, VEINTICUATRO: 24,
+};
+
+/**
+ * `condicion_precio_N` → the quantity that unlocks that tier.
+ *
+ * The 50 distinct live values in `catalogo_totequim` come in four shapes: "A PARTIR DE 6
+ * PIEZAS" (plus the typos APARTIR / A PASRTIR), "MAS DE 2 PIEZAS", "DE 10 GARRAFAS EN
+ * ADELANTE" and "SOLO POR PAQUETE DE 36 PIEZAS". The rest — 'PIPA', 'NEGOCIABLE SI LLEVA
+ * MAS PRODUCTOS', 'nan', a bare 'SOLO POR PAQUETE DE' — are not volume conditions at all.
+ *
+ * Returning null means THE TIER NEVER QUALIFIES, not that the price is waved through. Accept
+ * an unparseable condition and the guard silently degrades from qualification to mere
+ * membership — which is precisely the hole that let the original incident past.
+ *
+ * "MAS DE N" reads as N+1, not N: it literally means more than N, and when in doubt the
+ * safer side is the one demanding more volume.
+ */
+export function parseCondicionMin(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return null;
+  const s = String(raw)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .trim();
+  if (!s || s === 'NAN') return null;
+
+  const qty = (tok: string): number | null => {
+    const n = Number(tok);
+    if (Number.isFinite(n) && n >= 1) return n;
+    return WORD_NUMS[tok] ?? null;
+  };
+
+  let m = s.match(/M[AÁ]S\s+DE\s+([A-Z]+|\d+)/);
+  if (m) {
+    const n = qty(m[1]);
+    return n === null ? null : n + 1;
+  }
+  m = s.match(/A\s*PA[RS]*TIR\s*(?:DE\s*)?([A-Z]+|\d+)/);
+  if (m) return qty(m[1]);
+  m = s.match(/\bDE\s+(\d+)\s+\w+\s+EN\s+ADELANTE/);
+  if (m) return qty(m[1]);
+  m = s.match(/SOLO\s+POR\s+PAQUETE\s+DE\s+(\d+)/);
+  if (m) return qty(m[1]);
+  return null;
+}
+
+/** Ladder for a raw row under a given schema. Shared by both sources; the prose flag is the
+ *  only thing that differs. */
+function tiersForSource(get: (col: string) => unknown, src: CatalogSource): Tier[] {
+  const out: Tier[] = [];
+  const base = num(get(src.base));
+  if (base !== null && base > 0) out.push({ min: 1, price: base });
+  for (const [priceCol, minCol] of src.tiers) {
+    const price = num(get(priceCol));
+    if (price === null || price <= 0) continue;
+    const min = src.prose ? parseCondicionMin(get(minCol)) : num(get(minCol));
+    if (min === null || !(min >= 1)) continue;
+    out.push({ min, price });
+  }
+  return out.sort((a, b) => a.min - b.min);
+}
+
 /** Half a centavo. Catalog prices are whole pesos or 2 decimals, so this catches $95 vs $95.01
  *  while absorbing float noise from the JSON round-trip. Deliberately NOT a percentage: 1% of
  *  $110 is $1.10, wide enough to wave through a genuinely wrong price. */
@@ -89,6 +224,14 @@ export type CatalogRow = {
   min_piezas_precio_2: unknown;
   precio_3: unknown;
   min_piezas_precio_3: unknown;
+  /**
+   * Ladder computed at index time, for catalogs whose tiers do NOT live in the SIIQTEC
+   * columns above. TOTEQUIM (`catalogo_totequim`) is the case that forced this: its
+   * minimums are PROSE ("A PARTIR DE DOS GARRAFAS"), not numbers, so they can't be read
+   * off `min_piezas_precio_*`. When present this wins; when absent `parseTiers` falls
+   * back to the SIIQTEC columns, which is what keeps sofi-0 behaving exactly as before.
+   */
+  tiers?: Tier[];
 };
 
 export type Tier = { min: number; price: number };
@@ -119,8 +262,15 @@ export function num(x: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Extract the price ladder from one catalog row, dropping null/empty/zero tiers. */
+/**
+ * Turn a catalog row into its price ladder, in ascending order of minimum quantity.
+ *
+ * A row that arrived with `tiers` already computed (a non-SIIQTEC schema — see the field's
+ * note) keeps them; everything else is read off the SIIQTEC columns, dropping
+ * null/empty/zero tiers.
+ */
 export function parseTiers(row: CatalogRow): Tier[] {
+  if (row.tiers) return row.tiers;
   const out: Tier[] = [];
   const direct = num(row.precio_publico_directo);
   if (direct !== null && direct > 0) out.push({ min: 1, price: direct });
@@ -327,25 +477,19 @@ export function currentMode(): 'enforce' | 'dry-run' | 'off' {
   return 'dry-run';
 }
 
-function catalogDbId(): string {
-  return (process.env.QUOTE_CATALOG_DB_ID || '').trim() || DEFAULT_CATALOG_DB_ID;
-}
-
-/** One query for every SKU in the quote. N queries per quote would be N round-trips on the
- *  critical path of a customer conversation. */
-export async function fetchCatalogRows(skus: string[]): Promise<Map<string, CatalogRow[]>> {
+/** One query per source for every SKU in the quote. Per-SKU queries would be N round-trips on
+ *  the critical path of a customer conversation. */
+async function querySource(src: CatalogSource, keys: string[]): Promise<{ cols?: unknown; rows?: unknown }> {
   const key = (process.env.EASYBITS_API_KEY || '').trim();
   if (!key) throw new GuardUnavailable('EASYBITS_API_KEY no está definida');
-  if (!skus.length) return new Map();
 
-  const placeholders = skus.map(() => '?').join(',');
-  const sql =
-    'SELECT sku, producto_id, nombre, presentacion, precio_publico_directo, ' +
-    'precio_2, min_piezas_precio_2, precio_3, min_piezas_precio_3 ' +
-    `FROM catalogo WHERE sku IN (${placeholders})`;
+  const placeholders = keys.map(() => '?').join(',');
+  const where = src.keyCols.map((c) => `${c} IN (${placeholders})`).join(' OR ');
+  const sql = `SELECT ${src.cols.join(', ')} FROM ${src.table} WHERE ${where}`;
+  const args = src.keyCols.flatMap(() => keys);
 
-  const body = JSON.stringify({ sql, args: skus });
-  const url = `${EASYBITS_API_BASE}/databases/${catalogDbId()}/query`;
+  const body = JSON.stringify({ sql, args });
+  const url = `${EASYBITS_API_BASE}/databases/${src.dbId}/query`;
 
   let lastErr: unknown;
   for (let attempt = 1; attempt <= 2; attempt++) {
@@ -357,8 +501,7 @@ export async function fetchCatalogRows(skus: string[]): Promise<Map<string, Cata
         signal: AbortSignal.timeout(QUERY_TIMEOUT_MS),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = (await res.json()) as { cols?: unknown; rows?: unknown };
-      return indexRows(json);
+      return (await res.json()) as { cols?: unknown; rows?: unknown };
     } catch (e) {
       lastErr = e;
       if (attempt === 1) await sleep(RETRY_DELAY_MS);
@@ -367,11 +510,56 @@ export async function fetchCatalogRows(skus: string[]): Promise<Map<string, Cata
   throw new GuardUnavailable(`catálogo inalcanzable: ${(lastErr as Error)?.message || lastErr}`);
 }
 
+/**
+ * Resolve keys across the sources, in order, falling through only for what's still missing.
+ *
+ * Errors from a LATER source are swallowed as long as an earlier one answered: a droplet that
+ * only sells one brand will always have the other source fail (missing table, or a DB it can't
+ * see), and that must not read as "catalog down". If NOTHING answered, the first error stands
+ * and the caller fails open.
+ */
+export async function fetchCatalogRows(skus: string[]): Promise<Map<string, CatalogRow[]>> {
+  if (!skus.length) return new Map();
+  const found = new Map<string, CatalogRow[]>();
+  let pending = skus.map((k) => k.trim()).filter(Boolean);
+  let firstErr: unknown = null;
+
+  for (const src of catalogSources()) {
+    if (!pending.length) break;
+    try {
+      const idx = indexRows(await querySource(src, pending), src);
+      for (const [k, v] of idx) if (!found.has(k)) found.set(k, v);
+      pending = pending.filter((k) => !found.has(k));
+    } catch (e) {
+      if (firstErr === null) firstErr = e;
+    }
+  }
+  if (!found.size && firstErr !== null) {
+    throw firstErr instanceof GuardUnavailable
+      ? firstErr
+      : new GuardUnavailable(`catálogo inalcanzable: ${(firstErr as Error)?.message || firstErr}`);
+  }
+  return found;
+}
+
 /** Signals "we could not check", which is always fail-open. Distinct from QuotePriceError,
  *  which means "we checked and it's wrong". */
 export class GuardUnavailable extends Error {}
 
-export function indexRows(json: { cols?: unknown; rows?: unknown }): Map<string, CatalogRow[]> {
+/**
+ * Index a catalog response by key.
+ *
+ * `src` defaults to the SIIQTEC schema so a one-argument call behaves exactly as it did
+ * before this file learned about TOTEQUIM. Rows from a prose-tier schema carry their ladder
+ * precomputed (`CatalogRow.tiers`), because prose can't be read off the numeric columns later.
+ *
+ * One row gets indexed under EVERY one of its key columns — a clave that only appears as
+ * `clave_alterna` still resolves, instead of becoming a fail-CLOSED `unknown_sku`.
+ */
+export function indexRows(
+  json: { cols?: unknown; rows?: unknown },
+  src: CatalogSource = catalogSources()[1],
+): Map<string, CatalogRow[]> {
   const cols = json?.cols;
   const rows = json?.rows;
   if (!Array.isArray(cols) || !Array.isArray(rows)) {
@@ -385,10 +573,10 @@ export function indexRows(json: { cols?: unknown; rows?: unknown }): Map<string,
       const i = idx(name);
       return i >= 0 ? raw[i] : null;
     };
-    const sku = String(at('sku') ?? '').trim();
-    if (!sku) continue;
+    const keys = src.keyCols.map((c) => String(at(c) ?? '').trim()).filter(Boolean);
+    if (!keys.length) continue;
     const row: CatalogRow = {
-      sku,
+      sku: keys[0],
       producto_id: (at('producto_id') as string) ?? null,
       nombre: (at('nombre') as string) ?? null,
       presentacion: (at('presentacion') as string) ?? null,
@@ -397,10 +585,13 @@ export function indexRows(json: { cols?: unknown; rows?: unknown }): Map<string,
       min_piezas_precio_2: at('min_piezas_precio_2'),
       precio_3: at('precio_3'),
       min_piezas_precio_3: at('min_piezas_precio_3'),
+      ...(src.prose && { tiers: tiersForSource(at, src) }),
     };
-    const list = out.get(sku);
-    if (list) list.push(row);
-    else out.set(sku, [row]);
+    for (const k of keys) {
+      const list = out.get(k);
+      if (list) list.push(row);
+      else out.set(k, [row]);
+    }
   }
   return out;
 }
@@ -457,6 +648,83 @@ export function recordOverrides(folio: string, overrides: OverrideRecord[], grou
   } catch (e) {
     console.error(`[quote-guard] no se pudo escribir quote-overrides.log: ${(e as Error).message}`);
   }
+  void auditToDb(
+    'quote_overrides',
+    'CREATE TABLE IF NOT EXISTS quote_overrides (ts TEXT, folio TEXT, sku TEXT, nombre TEXT, ' +
+      'qty REAL, unit_price REAL, kind TEXT, reason TEXT, catalogo TEXT)',
+    'INSERT INTO quote_overrides (ts, folio, sku, nombre, qty, unit_price, kind, reason, catalogo) ' +
+      'VALUES (?,?,?,?,?,?,?,?,?)',
+    overrides.map((o) => [ts, folio, o.sku, o.nombre, o.qty, o.unit_price, o.kind, o.reason, o.catalog ?? null]),
+  );
+}
+
+/**
+ * Persist rejections. The twin of recordOverrides, and the reason enforce can be switched on
+ * without flying blind.
+ *
+ * The sink that matters is the DURABLE one. A rejection used to exist only as container
+ * stderr, which nobody captures: sofi-0 ran a full week in dry-run and left ZERO recoverable
+ * `WOULD REJECT` anywhere — exactly the week of data needed to decide about enforcing.
+ *
+ * Called on BOTH paths and BEFORE the throw: in enforce the throw ends the flow, and that is
+ * precisely when knowing what got blocked is worth most.
+ */
+export function recordRejections(folio: string, rejections: Rejection[], mode: 'enforce' | 'dry-run'): void {
+  if (!rejections.length) return;
+  const ts = new Date().toISOString();
+  const flat = rejections.map((r) => ({
+    ts,
+    folio,
+    mode,
+    sku: r.sku,
+    nombre: r.nombre,
+    tipo: r.type,
+    qty: r.type === 'unknown_sku' ? null : r.qty,
+    enviado: r.type === 'unknown_sku' ? null : r.sent,
+    esperado: r.type === 'unknown_sku' ? null : r.expected,
+    requiere_qty: (r as { requiresQty?: number }).requiresQty ?? null,
+    catalogo:
+      r.type === 'unknown_sku'
+        ? null
+        : r.rows.map((x) => `${x.presentacion}: ${describeTiers(x.tiers)}`).join(' | '),
+  }));
+
+  for (const f of flat) console.error(JSON.stringify({ tag: 'quote-price-rejection', ...f }));
+
+  void auditToDb(
+    'quote_rejections',
+    'CREATE TABLE IF NOT EXISTS quote_rejections (ts TEXT, folio TEXT, mode TEXT, sku TEXT, ' +
+      'nombre TEXT, tipo TEXT, qty REAL, enviado REAL, esperado REAL, requiere_qty REAL, catalogo TEXT)',
+    'INSERT INTO quote_rejections (ts, folio, mode, sku, nombre, tipo, qty, enviado, esperado, ' +
+      'requiere_qty, catalogo) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+    flat.map((f) => [f.ts, f.folio, f.mode, f.sku, f.nombre, f.tipo, f.qty, f.enviado, f.esperado, f.requiere_qty, f.catalogo]),
+  );
+}
+
+/**
+ * Best-effort append to the catalog DB, shared by overrides and rejections.
+ *
+ * NEVER throws and is never awaited by the quote path: auditing must not add latency to a
+ * customer conversation, and must not cost anyone their quote — which is the exact failure
+ * this file exists to prevent.
+ */
+async function auditToDb(label: string, ddl: string, insert: string, rows: unknown[][]): Promise<void> {
+  try {
+    const key = (process.env.EASYBITS_API_KEY || '').trim();
+    if (!key) return;
+    const url = `${EASYBITS_API_BASE}/databases/${catalogSources()[0].dbId}/query`;
+    const post = (sql: string, args?: unknown[]): Promise<Response> =>
+      fetch(url, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sql, args }),
+        signal: AbortSignal.timeout(QUERY_TIMEOUT_MS),
+      });
+    await post(ddl);
+    for (const args of rows) await post(insert, args);
+  } catch (e) {
+    console.error(`[quote-guard] no se pudo registrar en ${label}: ${(e as Error).message}`);
+  }
 }
 
 /**
@@ -466,7 +734,7 @@ export function recordOverrides(folio: string, overrides: OverrideRecord[], grou
  * infrastructure problems — those come back as a `skipped:*` mode plus a warning, because a
  * catalog blip must not block a sale.
  */
-export async function assertCatalogPrices(items: GuardItem[]): Promise<GuardResult> {
+export async function assertCatalogPrices(items: GuardItem[], folio = 'sin-folio'): Promise<GuardResult> {
   const mode = currentMode();
   const overrides: OverrideRecord[] = items
     .filter((it) => it.price_override)
@@ -521,6 +789,9 @@ export async function assertCatalogPrices(items: GuardItem[]): Promise<GuardResu
 
   if (rejections.length) {
     const message = buildRejectionMessage(rejections);
+    // Recorded BEFORE the throw: in enforce the throw ends the flow, and that is exactly
+    // when knowing what got blocked is worth most.
+    recordRejections(folio, rejections, mode === 'enforce' ? 'enforce' : 'dry-run');
     if (mode === 'enforce') throw new QuotePriceError(message);
     for (const r of rejections) {
       if (r.type === 'unknown_sku') {

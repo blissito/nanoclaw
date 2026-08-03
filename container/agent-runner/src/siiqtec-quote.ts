@@ -648,7 +648,7 @@ export async function runSiiqtecQuotePdf(input: QuoteInput): Promise<QuoteResult
   validate(input);
   // Before computeTotals: totals are derived from unit_price, so validating afterwards would
   // just be computing on top of a wrong number. Kept out of validate() so that stays sync+pure.
-  const guard = await assertCatalogPrices(input.items);
+  const guard = await assertCatalogPrices(input.items, input.folio);
   recordOverrides(input.folio, guard.overrides, GROUP_DIR);
   await pruneBrokenImages(input.items);
   const totals = computeTotals(input);

@@ -9,6 +9,7 @@ import {
   buildRejectionMessage,
   overrideCapExceeded,
   indexRows,
+  parseCondicionMin,
   GuardUnavailable,
   type CatalogRow,
   type GuardItem,
@@ -333,5 +334,100 @@ describe('indexRows', () => {
 
   it('treats an unexpected shape as "could not check", not as "no prices"', () => {
     expect(() => indexRows({ error: 'boom' } as never)).toThrow(GuardUnavailable);
+  });
+});
+
+/**
+ * TOTEQUIM: the schema that forced the multi-source rework. Keys on `clave`, prices in
+ * `precio_publico`, and volume brackets written as PROSE. Values below are verbatim from the
+ * live `catalogo_totequim` on 2026-08-03.
+ */
+describe('parseCondicionMin', () => {
+  it('reads the four shapes that actually occur', () => {
+    expect(parseCondicionMin('A partir de 6 piezas')).toBe(6);
+    expect(parseCondicionMin('DE 10 GARRAFAS EN ADELANTE')).toBe(10);
+    expect(parseCondicionMin('SOLO POR PAQUETE DE 36 PIEZAS')).toBe(36);
+  });
+
+  it('survives the typos in the data', () => {
+    expect(parseCondicionMin('APARTIR 2 TAMBOS')).toBe(2);
+    expect(parseCondicionMin('A PASRTIR DE 12 BOTELLAS')).toBe(12);
+    expect(parseCondicionMin('APARTIR DE 2 CUÑETES')).toBe(2);
+  });
+
+  it('reads spelled-out numerals', () => {
+    expect(parseCondicionMin('A PARTIR DE DOS GARRAFAS')).toBe(2);
+  });
+
+  it('reads "MAS DE N" as N+1, erring toward demanding more volume', () => {
+    expect(parseCondicionMin('MAS DE 2 PIEZAS')).toBe(3);
+    expect(parseCondicionMin(
+      'MAS DE 6 PIEZAS, O SOLAMENTE CLIENTE REGISTRADO COMO REVENDEDOR O FABRICANTE S01 O S02',
+    )).toBe(7);
+  });
+
+  it('refuses anything that is not a volume condition', () => {
+    for (const junk of [
+      'nan', 'PIPA', 'NEGOCIABLE SI LLEVA MAS PRODUCTOS', 'SOLO POR PAQUETE DE',
+      'SOLO ENVASE A CAMBIO, RECOLECTANDO EN PLANTA  O ENVIOS LOCALES O RUTAS FORANEAS PROPIAS',
+      null, undefined, '',
+    ]) {
+      expect(parseCondicionMin(junk)).toBeNull();
+    }
+  });
+});
+
+describe('TOTEQUIM schema (prose tiers)', () => {
+  const TOTEQUIM = {
+    dbId: 'x', table: 'catalogo_totequim',
+    keyCols: ['clave', 'clave_alterna'],
+    cols: [], base: 'precio_publico',
+    tiers: [['precio_2', 'condicion_precio_2'], ['precio_3', 'condicion_precio_3']] as Array<[string, string]>,
+    prose: true,
+  };
+  const resp = {
+    cols: ['clave', 'clave_alterna', 'nombre', 'presentacion', 'precio_publico',
+      'precio_2', 'condicion_precio_2', 'precio_3', 'condicion_precio_3'],
+    rows: [['38317', 'ACE-1L', 'Esencia Ace Totessence Basic', 'BOTELLA 1LT', 265,
+      255, 'A partir de 6 piezas', 240, 'A PARTIR DE 12 PIEZAS']],
+  };
+
+  it('builds the ladder from prose conditions', () => {
+    const m = indexRows(resp, TOTEQUIM as never);
+    expect(parseTiers(m.get('38317')![0])).toEqual([
+      { min: 1, price: 265 },
+      { min: 6, price: 255 },
+      { min: 12, price: 240 },
+    ]);
+  });
+
+  it('resolves a row by its alternate key too', () => {
+    const m = indexRows(resp, TOTEQUIM as never);
+    expect(m.get('ACE-1L')).toHaveLength(1);
+  });
+
+  it('drops a tier whose condition is not about volume', () => {
+    const m = indexRows({
+      cols: ['clave', 'precio_publico', 'precio_2', 'condicion_precio_2'],
+      rows: [['9', 100, 90, 'NEGOCIABLE SI LLEVA MAS PRODUCTOS']],
+    }, TOTEQUIM as never);
+    expect(parseTiers(m.get('9')![0])).toEqual([{ min: 1, price: 100 }]);
+  });
+
+  it('rejects the incident: a tier price without the volume it requires', () => {
+    const m = indexRows(resp, TOTEQUIM as never);
+    const { rejections } = checkItems(
+      [{ sku: '38317', qty: 3, nombre: 'Esencia Ace', unit_price: 240 }],
+      m,
+    );
+    expect(rejections).toHaveLength(1);
+    expect(rejections[0].type).toBe('insufficient_qty');
+    expect((rejections[0] as { requiresQty: number }).requiresQty).toBe(12);
+  });
+
+  it('accepts the tier once the quantity reaches it', () => {
+    const m = indexRows(resp, TOTEQUIM as never);
+    expect(checkItems([{ sku: '38317', qty: 12, nombre: 'x', unit_price: 240 }], m).rejections)
+      .toHaveLength(0);
   });
 });
