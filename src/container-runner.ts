@@ -384,6 +384,8 @@ function buildEnvFile(
   const guardEnv = readEnvFile([
     'QUOTE_GUARD_MODE',
     'QUOTE_CATALOG_DB_ID',
+    'QUOTE_CATALOG_TABLE',
+    'QUOTE_CATALOG_FALLBACK_DB_ID',
     'QUOTE_MAX_OVERRIDES',
   ]);
   for (const [k, v] of Object.entries(guardEnv)) {
