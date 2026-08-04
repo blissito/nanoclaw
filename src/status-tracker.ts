@@ -16,7 +16,11 @@ export enum StatusState {
 }
 
 const DONE_EMOJI = '\u{2705}';
-const FAILED_EMOJI = '\u{26A0}\u{FE0F}';
+/** Exported so the tests assert against the real value instead of a copy. A duplicated
+ *  literal here is what let the suite drift silently: it kept filtering reactions by the
+ *  old ❌ long after this became ⚠️, so every "did it fail?" assertion matched nothing and
+ *  read as a failure that never happened. */
+export const FAILED_EMOJI = '\u{26A0}\u{FE0F}';
 const RECOVERED_EMOJI = '\u{1F7E2}';
 
 const CLEANUP_DELAY_MS = 5000;

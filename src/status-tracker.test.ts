@@ -22,7 +22,9 @@ import {
   StatusTracker,
   StatusState,
   StatusTrackerDeps,
+  FAILED_EMOJI,
 } from './status-tracker.js';
+import { CONTAINER_STALL_TIMEOUT } from './config.js';
 
 function makeDeps() {
   return {
@@ -93,7 +95,7 @@ describe('StatusTracker', () => {
       await tracker.flush();
 
       const emojis = deps.sendReaction.mock.calls.map((c) => c[2]);
-      expect(emojis).toEqual(['\u{1F440}', '\u{274C}']);
+      expect(emojis).toEqual(['\u{1F440}', FAILED_EMOJI]);
     });
 
     it('rejects FAILED after DONE', async () => {
@@ -159,7 +161,7 @@ describe('StatusTracker', () => {
       await tracker.flush();
 
       const failCalls = deps.sendReaction.mock.calls.filter(
-        (c) => c[2] === '\u{274C}',
+        (c) => c[2] === FAILED_EMOJI,
       );
       expect(failCalls).toHaveLength(2);
       expect(deps.sendMessage).toHaveBeenCalledWith(
@@ -285,7 +287,7 @@ describe('StatusTracker', () => {
       await tracker.flush();
 
       const failCalls = deps.sendReaction.mock.calls.filter(
-        (c) => c[2] === '❌',
+        (c) => c[2] === FAILED_EMOJI,
       );
       expect(failCalls).toHaveLength(1);
       expect(deps.sendMessage).not.toHaveBeenCalled();
@@ -330,7 +332,7 @@ describe('StatusTracker', () => {
       await tracker.flush();
 
       const failCalls = deps.sendReaction.mock.calls.filter(
-        (c) => c[2] === '❌',
+        (c) => c[2] === FAILED_EMOJI,
       );
       expect(failCalls).toHaveLength(1);
       expect(deps.sendMessage).not.toHaveBeenCalled();
@@ -357,14 +359,15 @@ describe('StatusTracker', () => {
       tracker.markReceived('msg1', 'main@s.whatsapp.net', false);
       tracker.markThinking('msg1');
 
-      // Advance time beyond container timeout (default 1800000ms = 30min)
-      vi.advanceTimersByTime(1_800_001);
+      // Beyond the stall timeout — derived from the constant so a change to
+      // CONTAINER_STALL_TIMEOUT can't leave this test asserting the old window.
+      vi.advanceTimersByTime(CONTAINER_STALL_TIMEOUT + 1);
 
       tracker.heartbeatCheck();
       await tracker.flush();
 
       const failCalls = deps.sendReaction.mock.calls.filter(
-        (c) => c[2] === '❌',
+        (c) => c[2] === FAILED_EMOJI,
       );
       expect(failCalls).toHaveLength(1);
       expect(deps.sendMessage).toHaveBeenCalledWith(
@@ -380,7 +383,7 @@ describe('StatusTracker', () => {
       tracker.markReceived('msg1', 'main@s.whatsapp.net', false);
 
       // Message sits in RECEIVED for longer than CONTAINER_STALL_TIMEOUT (queued, waiting for slot)
-      vi.advanceTimersByTime(3_700_000);
+      vi.advanceTimersByTime(CONTAINER_STALL_TIMEOUT + 100_000);
 
       // Now container starts — trackedAt resets on THINKING transition
       tracker.markThinking('msg1');
@@ -390,18 +393,18 @@ describe('StatusTracker', () => {
       await tracker.flush();
 
       const failCalls = deps.sendReaction.mock.calls.filter(
-        (c) => c[2] === '❌',
+        (c) => c[2] === FAILED_EMOJI,
       );
       expect(failCalls).toHaveLength(0);
 
       // Advance past CONTAINER_STALL_TIMEOUT from THINKING — NOW it should timeout
-      vi.advanceTimersByTime(3_600_001);
+      vi.advanceTimersByTime(CONTAINER_STALL_TIMEOUT + 1);
 
       tracker.heartbeatCheck();
       await tracker.flush();
 
       const failCallsAfter = deps.sendReaction.mock.calls.filter(
-        (c) => c[2] === '❌',
+        (c) => c[2] === FAILED_EMOJI,
       );
       expect(failCallsAfter).toHaveLength(1);
     });

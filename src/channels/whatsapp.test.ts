@@ -180,6 +180,11 @@ describe('WhatsAppChannel', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    // Un test que falle DESPUÉS de vi.useFakeTimers() y ANTES de su
+    // useRealTimers() deja los timers falsos puestos para todo el archivo: los
+    // 37 tests siguientes se colgaban 5s cada uno y reportaban timeout, tapando
+    // por completo la única falla real. Restaurar aquí acota el daño a un test.
+    vi.useRealTimers();
   });
 
   /**
@@ -306,7 +311,7 @@ describe('WhatsAppChannel', () => {
   // --- QR code and auth ---
 
   describe('authentication', () => {
-    it('exits process when QR code is emitted (no auth state)', async () => {
+    it('writes the QR to disk and keeps the daemon alive', async () => {
       vi.useFakeTimers();
       const mockExit = vi
         .spyOn(process, 'exit')
@@ -315,19 +320,26 @@ describe('WhatsAppChannel', () => {
       const opts = createTestOpts();
       const channel = new WhatsAppChannel(opts);
 
-      // Start connect but don't await (it won't resolve - process exits)
       channel.connect().catch(() => {});
 
       // Flush microtasks so connectInternal registers handlers
       await vi.advanceTimersByTimeAsync(0);
 
-      // Emit QR code event
       fakeSocket._ev.emit('connection.update', { qr: 'some-qr-data' });
-
-      // Advance timer past the 1000ms setTimeout before exit
       await vi.advanceTimersByTimeAsync(1500);
 
-      expect(mockExit).toHaveBeenCalledWith(1);
+      // El QR se escribe para que el control plane lo lea del volumen y lo
+      // renderice. Estar sin parear NO es motivo para morirse: este proceso
+      // comparte espacio con el canal WABA, el proxy de credenciales y la
+      // admin-api, así que salir los tumba a todos mientras el usuario aún
+      // está escaneando.
+      const fs = await import('fs');
+      expect(fs.default.writeFileSync).toHaveBeenCalledWith(
+        expect.stringContaining('qr-code.txt'),
+        'some-qr-data',
+      );
+      expect(mockExit).not.toHaveBeenCalled();
+
       mockExit.mockRestore();
       vi.useRealTimers();
     });
@@ -351,7 +363,7 @@ describe('WhatsAppChannel', () => {
       // The channel should attempt to reconnect (calls connectInternal again)
     });
 
-    it('exits on loggedOut disconnect', async () => {
+    it('survives a loggedOut disconnect without exiting or wiping creds', async () => {
       const mockExit = vi
         .spyOn(process, 'exit')
         .mockImplementation(() => undefined as never);
@@ -361,11 +373,14 @@ describe('WhatsAppChannel', () => {
 
       await connectChannel(channel);
 
-      // Disconnect with loggedOut reason (401)
+      // 401 = WhatsApp invalidó el dispositivo vinculado.
       triggerDisconnect(401);
 
       expect(channel.isConnected()).toBe(false);
-      expect(mockExit).toHaveBeenCalledWith(0);
+      // Salir haría crash-loop de los otros listeners que comparten el proceso,
+      // y borrar store/auth tiraría una sesión que quizá queremos inspeccionar.
+      // Re-parear es una acción explícita del operador, nunca un efecto colateral.
+      expect(mockExit).not.toHaveBeenCalled();
       mockExit.mockRestore();
     });
 
@@ -622,7 +637,7 @@ describe('WhatsAppChannel', () => {
       );
     });
 
-    it('handles message with no extractable text (e.g. voice note without caption)', async () => {
+    it('never drops an audio message silently', async () => {
       const opts = createTestOpts();
       const channel = new WhatsAppChannel(opts);
 
@@ -644,8 +659,14 @@ describe('WhatsAppChannel', () => {
         },
       ]);
 
-      // Skipped — no text content to process
-      expect(opts.onMessage).not.toHaveBeenCalled();
+      // Este test afirmaba lo contrario —que un audio sin texto se descartaba— y
+      // eso ERA el bug (c28e50b): un audio reenviado desaparecía sin log, sin
+      // adjunto y sin aviso, y el agente respondía "no veo ningún audio". Ahora
+      // todo audio deja rastro: se guarda el archivo y se describe en el texto.
+      expect(opts.onMessage).toHaveBeenCalledTimes(1);
+      const [, msg] = vi.mocked(opts.onMessage).mock.calls[0];
+      expect(msg.content).toMatch(/attachments\/audio-\d+\.ogg/);
+      expect(msg.content).not.toBe('');
     });
 
     it('uses sender JID when pushName is absent', async () => {
