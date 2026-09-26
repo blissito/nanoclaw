@@ -64,6 +64,12 @@ const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_MESSAGES_DIR = '/workspace/ipc/messages';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
+const SLOW_NOTICE_MS = 30_000;
+const SLOW_NOTICES = [
+  '_Dame un momento, ya estoy en eso…_ ⏳',
+  '_Voy, me tardo tantito…_ ⏳',
+  '_Estoy revisando, ahorita te digo…_ ⏳',
+];
 
 /**
  * Push-based async iterable for streaming user messages to the SDK.
@@ -196,7 +202,9 @@ function archiveTranscriptToFile(
 /**
  * Manda un aviso corto al chat vía IPC (el host lo entrega como mensaje normal).
  */
+let lastNoticeAt = 0;
 function notifyChat(containerInput: ContainerInput, text: string): void {
+  lastNoticeAt = Date.now();
   try {
     fs.mkdirSync(IPC_MESSAGES_DIR, { recursive: true });
     const file = path.join(IPC_MESSAGES_DIR, `${Date.now()}-notify.json`);
@@ -779,6 +787,27 @@ async function runQuery(
     }
   }
 
+  // Aviso de "sigo en eso": si pasan SLOW_NOTICE_MS sin nada visible para el
+  // usuario (ni resultado ni send_message), manda un aviso una vez por turno.
+  // Incidente ProbandoBot 2026-09-26: 3–5 min buscando en la web en silencio.
+  let slowNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+  const disarmSlowNotice = () => {
+    if (slowNoticeTimer) clearTimeout(slowNoticeTimer);
+    slowNoticeTimer = null;
+  };
+  function armSlowNotice(): void {
+    if (containerInput.isScheduledTask || slowNoticeTimer) return;
+    slowNoticeTimer = setTimeout(() => {
+      slowNoticeTimer = null;
+      // Ya se avisó (p. ej. el del compactado): no encimar otro.
+      if (Date.now() - lastNoticeAt < SLOW_NOTICE_MS) return;
+      log('Slow turn — sending "un momento" notice');
+      const pick = SLOW_NOTICES[Math.floor(Math.random() * SLOW_NOTICES.length)];
+      notifyChat(containerInput, pick);
+    }, SLOW_NOTICE_MS);
+  }
+  armSlowNotice();
+
   // Poll IPC for follow-up messages and _close sentinel during the query
   let ipcPolling = true;
   let closedDuringQuery = false;
@@ -795,6 +824,7 @@ async function runQuery(
     for (const text of messages) {
       log(`Piping IPC message into active query (${text.length} chars)`);
       stream.push(text);
+      armSlowNotice();
     }
     setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
   };
@@ -890,6 +920,11 @@ async function runQuery(
     log(`[msg #${messageCount}] type=${msgType}`);
 
     if (message.type === 'assistant' && 'uuid' in message) {
+      const content = (message as { message?: { content?: Array<{ type: string; name?: string }> } })
+        .message?.content;
+      if (content?.some((b) => b.type === 'tool_use' && b.name?.endsWith('send_message'))) {
+        disarmSlowNotice();
+      }
       lastAssistantUuid = (message as { uuid: string }).uuid;
       const am = message as { message?: { model?: string } };
       if (am.message?.model) lastModel = am.message.model;
@@ -909,6 +944,7 @@ async function runQuery(
     }
 
     if (message.type === 'result') {
+      disarmSlowNotice();
       resultCount++;
       // SDK result.usage uses snake_case (BetaUsage from @anthropic-ai/sdk).
       // Per-model breakdown lives in modelUsage with camelCase fields.
@@ -953,6 +989,7 @@ async function runQuery(
   }
 
   ipcPolling = false;
+  disarmSlowNotice();
   log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}, numTurns: ${numTurns}`);
   return { newSessionId, lastAssistantUuid, closedDuringQuery, numTurns };
 }
