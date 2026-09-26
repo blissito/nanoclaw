@@ -194,11 +194,36 @@ function archiveTranscriptToFile(
 }
 
 /**
- * Archive the full transcript to conversations/ before compaction.
+ * Manda un aviso corto al chat vía IPC (el host lo entrega como mensaje normal).
  */
-function createPreCompactHook(assistantName?: string): HookCallback {
+function notifyChat(containerInput: ContainerInput, text: string): void {
+  try {
+    fs.mkdirSync(IPC_MESSAGES_DIR, { recursive: true });
+    const file = path.join(IPC_MESSAGES_DIR, `${Date.now()}-notify.json`);
+    fs.writeFileSync(`${file}.tmp`, JSON.stringify({
+      type: 'message',
+      chatJid: containerInput.chatJid,
+      text,
+      groupFolder: containerInput.groupFolder,
+      timestamp: new Date().toISOString(),
+    }));
+    fs.renameSync(`${file}.tmp`, file);
+  } catch (err) {
+    log(`Failed to send notice: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
+ * Archive the full transcript to conversations/ before compaction.
+ * Con `containerInput`, avisa al chat cuando el compactado es automático
+ * (tarda minutos y el usuario cree que el bot no responde).
+ */
+function createPreCompactHook(assistantName?: string, containerInput?: ContainerInput): HookCallback {
   return async (input, _toolUseId, _context) => {
     const preCompact = input as PreCompactHookInput;
+    if (containerInput && !containerInput.isScheduledTask && preCompact.trigger === 'auto') {
+      notifyChat(containerInput, '_Ordenando mi memoria de esta conversación… dame un par de minutos._ ⏳');
+    }
     try {
       const archived = archiveTranscriptToFile(
         preCompact.transcript_path, preCompact.session_id, assistantName,
@@ -854,7 +879,7 @@ async function runQuery(
       settingSources: ['project', 'user'],
       mcpServers: buildMcpServers(containerInput, mcpServerPath),
       hooks: {
-        PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
+        PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName, containerInput)] }],
         UserPromptSubmit: [{ hooks: [dateInjectHook] }],
         PreToolUse: [{ hooks: [readAttachmentGuardHook, bashExtractGuardHook] }],
       },
@@ -1216,18 +1241,12 @@ async function main(): Promise<void> {
         );
 
         // Notify user before rotating
-        const notifyData = {
-          type: 'text',
-          chatJid: containerInput.chatJid,
-          text: tooBig
+        notifyChat(
+          containerInput,
+          tooBig
             ? `_Renovando sesión (${sizeMB}MB) para mantener la velocidad… un momento._ ⏳`
             : `_Renovando la conversación para mantener la información al día… un momento._ ⏳`,
-          groupFolder: containerInput.groupFolder,
-          timestamp: new Date().toISOString(),
-        };
-        fs.mkdirSync(IPC_MESSAGES_DIR, { recursive: true });
-        const notifyFile = path.join(IPC_MESSAGES_DIR, `${Date.now()}-rotate-notify.json`);
-        fs.writeFileSync(notifyFile, JSON.stringify(notifyData));
+        );
 
         // Archive the full transcript to markdown (does NOT resume the session).
         const archived = archiveTranscriptToFile(sessionFile, sessionId, containerInput.assistantName);
