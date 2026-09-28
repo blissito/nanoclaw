@@ -148,6 +148,8 @@ describe('handleSessionCommand', () => {
     });
     expect(result).toEqual({ handled: true, success: true });
     expect(deps.clearSession).toHaveBeenCalledTimes(1);
+    // El contenedor vivo se cierra: si no, el siguiente mensaje sigue en la sesión vieja.
+    expect(deps.closeStdin).toHaveBeenCalledTimes(1);
     expect(deps.sendMessage).toHaveBeenCalledWith(
       expect.stringMatching(/limpia/i),
     );

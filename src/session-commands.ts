@@ -114,6 +114,10 @@ export async function handleSessionCommand(opts: {
   // the purpose. Messages after /clear remain pending and will run in the
   // new (no-resume) session on the next poll.
   if (command === '/clear') {
+    // Cerrar el contenedor vivo ANTES: si sigue abierto, el siguiente mensaje se le entuba
+    // (`queue.sendMessage`) y corre en la sesión VIEJA que tiene en memoria — «Sesión limpia» y
+    // acto seguido un autocompact de la conversación llena (visto 2026-09-28, 5:19 p. m.).
+    deps.closeStdin();
     await deps.clearSession();
     await deps.sendMessage('Sesión limpia. 🧹');
     deps.advanceCursor(cmdMsg.timestamp);
